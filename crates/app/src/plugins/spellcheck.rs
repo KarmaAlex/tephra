@@ -120,7 +120,22 @@ pub fn words(text: &str) -> Vec<Range<usize>> {
             }
         }
     }
-    // URLs and HTML tags
+    // HTML tags (<br>, <span …>, </div>)
+    let b = text.as_bytes();
+    let mut i = 0;
+    while let Some(p) = text[i..].find('<') {
+        let at = i + p;
+        let next = b.get(at + 1).copied().unwrap_or(b' ');
+        if next.is_ascii_alphabetic() || next == b'/' {
+            if let Some(e) = text[at + 1..].find(['>', '\n', '<']).map(|e| at + 1 + e).filter(|e| b[*e] == b'>') {
+                skip.push(at..e + 1);
+                i = e + 1;
+                continue;
+            }
+        }
+        i = at + 1;
+    }
+    // URLs
     let mut i = 0;
     while let Some(p) = text[i..].find("://") {
         let at = i + p;
@@ -158,6 +173,10 @@ pub fn words(text: &str) -> Vec<Range<usize>> {
 
 pub struct Checker {
     dicts: Arc<OnceLock<Vec<(String, Dictionary)>>>,
+    /// Accept words in capitals (acronyms: TCP, ENDIF).
+    ignore_caps: bool,
+    /// Accept words with capitals inside (code names: makeSet, SonarQube).
+    ignore_mixed: bool,
     custom: RefCell<HashSet<String>>,
     revision: Cell<u64>,
     words_file: PathBuf,
@@ -174,7 +193,13 @@ impl Checker {
             return true;
         }
         let custom = self.custom.borrow();
-        let ok = |w: &str| !w.is_empty() && (custom.contains(w) || custom.contains(&w.to_lowercase()) || dicts.iter().any(|(_, d)| d.check(w)));
+        let skip_case = |w: &str| {
+            let letters: Vec<char> = w.chars().filter(|c| c.is_alphabetic()).collect();
+            let caps = letters.len() >= 2 && letters.iter().all(|c| c.is_uppercase());
+            let mixed = letters.iter().skip(1).any(|c| c.is_uppercase()) && letters.iter().any(|c| c.is_lowercase());
+            (self.ignore_caps && caps) || (self.ignore_mixed && mixed)
+        };
+        let ok = |w: &str| !w.is_empty() && (skip_case(w.trim_matches('\'')) || custom.contains(w) || custom.contains(&w.to_lowercase()) || dicts.iter().any(|(_, d)| d.check(w)));
         let w = word.replace('’', "'");
         if ok(&w) {
             return true;
@@ -186,18 +211,44 @@ impl Checker {
         false
     }
 
-    pub fn suggest(&self, word: &str) -> Vec<String> {
+    /// Suggestions, from the language the surrounding `context` is written in first; a
+    /// suggestion differing only by accents (perchè → perché) leads.
+    pub fn suggest(&self, word: &str, context: &str) -> Vec<String> {
         let Some(dicts) = self.dicts.get() else { return Vec::new() };
+        // which dictionary knows most of the context's words (that the others don't)
+        let ctx_words: Vec<&str> = words(context).into_iter().map(|r| &context[r]).collect();
+        let mut order: Vec<(usize, usize)> = dicts
+            .iter()
+            .enumerate()
+            .map(|(i, (_, d))| (ctx_words.iter().filter(|w| d.check(w) && !dicts.iter().enumerate().any(|(j, (_, o))| j != i && o.check(w))).count(), i))
+            .collect();
+        order.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        let fold = |w: &str| -> String {
+            w.to_lowercase()
+                .chars()
+                .map(|c| match c {
+                    'à' | 'á' | 'â' | 'ä' => 'a',
+                    'è' | 'é' | 'ê' | 'ë' => 'e',
+                    'ì' | 'í' | 'î' | 'ï' => 'i',
+                    'ò' | 'ó' | 'ô' | 'ö' => 'o',
+                    'ù' | 'ú' | 'û' | 'ü' => 'u',
+                    c => c,
+                })
+                .collect()
+        };
         let mut out: Vec<String> = Vec::new();
-        for (_, d) in dicts {
+        for (_, i) in order {
+            let d = &dicts[i].1;
             let mut s = Vec::new();
             d.suggest(word, &mut s);
             for x in s {
-                if !out.contains(&x) {
+                if !out.contains(&x) && x != word {
                     out.push(x);
                 }
             }
         }
+        let target = fold(word);
+        out.sort_by_key(|x| fold(x) != target); // stable: accent fixes first
         out.truncate(6);
         out
     }
@@ -263,6 +314,8 @@ impl SpellCheck {
                 enabled_by_default: true,
                 settings: vec![
                     SettingSpec { key: "languages", label: "Languages", description: "Comma-separated, e.g. en_US, it_IT. A word is accepted if any language knows it.", kind: SettingKind::Text, default: Value::from("en_US, it_IT") },
+                    SettingSpec { key: "ignoreUppercase", label: "Ignore words in capitals", description: "Acronyms like TCP or ENDIF are not flagged.", kind: SettingKind::Toggle, default: Value::Bool(true) },
+                    SettingSpec { key: "ignoreMixedCase", label: "Ignore mixed-case words", description: "Code names like makeSet or SonarQube are not flagged.", kind: SettingKind::Toggle, default: Value::Bool(true) },
                     SettingSpec { key: "dictionaryFolders", label: "Extra dictionary folders", description: "Comma-separated folders with .aff/.dic files (system ones are found automatically).", kind: SettingKind::Text, default: Value::from("") },
                 ],
                 code_languages: &[],
@@ -303,7 +356,8 @@ impl Plugin for SpellCheck {
                 let _ = dicts.set(v);
             });
         }
-        let checker = Rc::new(Checker { dicts: dicts.clone(), custom: RefCell::new(custom), revision: Cell::new(0), words_file });
+        let flag = |k: &str| settings.get(k).and_then(Value::as_bool).unwrap_or(true);
+        let checker = Rc::new(Checker { dicts: dicts.clone(), ignore_caps: flag("ignoreUppercase"), ignore_mixed: flag("ignoreMixedCase"), custom: RefCell::new(custom), revision: Cell::new(0), words_file });
         reg.text_decorator(Rc::new(Decorator(checker.clone())));
 
         let c = checker.clone();
@@ -326,7 +380,8 @@ impl Plugin for SpellCheck {
             }
             let mut out = Vec::new();
             if sel.is_empty() && !c.is_correct(&word) {
-                for s in c.suggest(&word) {
+                let line = e.doc.line_text(e.doc.line_of(sel.head));
+                for s in c.suggest(&word, &line) {
                     let range = range.clone();
                     let label = s.clone();
                     out.push(MenuEntry {
@@ -388,7 +443,7 @@ mod tests {
         let dicts = Arc::new(OnceLock::new());
         let _ = dicts.set(vec![("en".to_string(), en), ("it".to_string(), it)]);
         let dir = std::env::temp_dir().join(format!("ol-spell-{}", std::process::id()));
-        Checker { dicts, custom: RefCell::new(HashSet::new()), revision: Cell::new(0), words_file: dir.join("dictionary.txt") }
+        Checker { dicts, ignore_caps: true, ignore_mixed: true, custom: RefCell::new(HashSet::new()), revision: Cell::new(0), words_file: dir.join("dictionary.txt") }
     }
 
     #[test]
@@ -399,6 +454,9 @@ mod tests {
         let t = "---\ntitel: x\n---\n```\nnott\n```\n$$\nfrakk\n$$\n> [!note] Titel";
         let w: Vec<&str> = words(t).into_iter().map(|r| &t[r]).collect();
         assert_eq!(w, vec!["Titel"]);
+        let t = "riga<br>altra <span class=\"x\">testo</span> a < b";
+        let w: Vec<&str> = words(t).into_iter().map(|r| &t[r]).collect();
+        assert_eq!(w, vec!["riga", "altra", "testo", "a", "b"]);
     }
 
     #[test]
@@ -407,13 +465,96 @@ mod tests {
         assert!(c.is_correct("cats") && c.is_correct("gatti") && c.is_correct("the"));
         assert!(c.is_correct("l'albero"), "elision: l' + albero");
         assert!(!c.is_correct("catz"));
+        assert!(c.is_correct("TCP") && c.is_correct("makeSet") && c.is_correct("l'TCP"), "acronyms and code names");
+        assert!(!c.is_correct("Catz"), "a capitalised word is still checked");
         assert_eq!(c.misspelled("the catz and gatti"), vec![4..8, 9..12]);
-        assert!(c.suggest("catz").contains(&"cat".to_string()) || c.suggest("catz").contains(&"cats".to_string()));
+        assert!(c.suggest("catz", "").contains(&"cat".to_string()) || c.suggest("catz", "").contains(&"cats".to_string()));
         c.add_word("catz");
         assert!(c.is_correct("catz"));
         assert_eq!(c.revision.get(), 1);
         assert!(std::fs::read_to_string(&c.words_file).unwrap().contains("catz"));
         let _ = std::fs::remove_dir_all(c.words_file.parent().unwrap());
+    }
+
+    /// Spell-checks every fixture note with the system en_US + it_IT dictionaries and writes the
+    /// flagged words (unique, with counts) to $OBSIDILIGHT_SPELL_REPORT. Run on demand:
+    /// `OBSIDILIGHT_SPELL_REPORT=reports/spell.txt cargo test -p obsidilight fixture_spell -- --ignored`
+    #[test]
+    #[ignore]
+    fn fixture_spell_report() {
+        let out = std::env::var("OBSIDILIGHT_SPELL_REPORT").expect("set OBSIDILIGHT_SPELL_REPORT");
+        let home = std::env::var("HOME").unwrap();
+        let root = Path::new(&home).join("dev/vault-fixture");
+        let t = std::time::Instant::now();
+        let mut v = Vec::new();
+        for l in ["en_US", "it_IT"] {
+            let t1 = std::time::Instant::now();
+            v.push((l.to_string(), load_dictionary(Path::new(&format!("/usr/share/hunspell/{l}.dic"))).unwrap()));
+            eprintln!("load {l}: {} ms", t1.elapsed().as_millis());
+        }
+        let dicts = Arc::new(OnceLock::new());
+        let _ = dicts.set(v);
+        let c = Checker { dicts, ignore_caps: true, ignore_mixed: true, custom: RefCell::new(HashSet::new()), revision: Cell::new(0), words_file: std::env::temp_dir().join("unused.txt") };
+        eprintln!("both loaded: {} ms", t.elapsed().as_millis());
+        for w in ["perchè", "qualcosa", "efficente", "algoritmo", "propietà", "sopratutto", "recieve"] {
+            let t = std::time::Instant::now();
+            let ctx = if w == "recieve" { "we will recieve the packet" } else { "il grafo e la sua struttura" };
+            eprintln!("SUGGEST {w}: ok={} {:?} ({} ms)", c.is_correct(w), c.suggest(w, ctx), t.elapsed().as_millis());
+        }
+        fn md(d: &Path, out: &mut Vec<PathBuf>) {
+            for e in std::fs::read_dir(d).into_iter().flatten().flatten() {
+                let p = e.path();
+                if e.file_name().to_string_lossy().starts_with('.') {
+                    continue;
+                }
+                if p.is_dir() { md(&p, out) } else if p.extension().is_some_and(|x| x == "md") { out.push(p) }
+            }
+        }
+        let mut files = Vec::new();
+        md(&root, &mut files);
+        let mut flagged: std::collections::BTreeMap<String, usize> = Default::default();
+        let mut accepted: std::collections::BTreeSet<String> = Default::default();
+        let (mut total, mut bad) = (0usize, 0usize);
+        let t2 = std::time::Instant::now();
+        for f in &files {
+            let text = std::fs::read_to_string(f).unwrap_or_default();
+            for r in words(&text) {
+                total += 1;
+                let w = &text[r];
+                if !c.is_correct(w) {
+                    bad += 1;
+                    *flagged.entry(w.to_string()).or_default() += 1;
+                } else if !w.contains(['\'', '’']) {
+                    accepted.insert(w.to_string());
+                }
+            }
+        }
+        let ms = t2.elapsed().as_millis();
+        eprintln!("{} notes, {total} words checked in {ms} ms, {bad} flagged ({} unique)", files.len(), flagged.len());
+        let mut list: Vec<(String, usize)> = flagged.into_iter().collect();
+        list.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        std::fs::write(&out, list.iter().map(|(w, n)| format!("{n}\t{w}\n")).collect::<String>()).unwrap();
+        std::fs::write(format!("{out}.accepted"), accepted.into_iter().collect::<Vec<_>>().join("\n") + "\n").unwrap();
+    }
+
+    /// With the system's en_US + it_IT installed: Italian text, elisions, mixed languages.
+    #[test]
+    fn system_italian_and_english() {
+        let dir = Path::new("/usr/share/hunspell");
+        let (Ok(en), Ok(it)) = (load_dictionary(&dir.join("en_US.dic")), load_dictionary(&dir.join("it_IT.dic"))) else {
+            return eprintln!("system dictionaries absent: skipped");
+        };
+        let dicts = Arc::new(OnceLock::new());
+        let _ = dicts.set(vec![("en_US".to_string(), en), ("it_IT".to_string(), it)]);
+        let c = Checker { dicts, ignore_caps: true, ignore_mixed: true, custom: RefCell::new(HashSet::new()), revision: Cell::new(0), words_file: std::env::temp_dir().join("unused.txt") };
+        let t = "Dell'albero l'algoritmo calcola il cammino minimo, perché è efficiente: the shortest path tree.";
+        assert!(c.misspelled(t).is_empty(), "{:?}", c.misspelled(t).iter().map(|r| &t[r.clone()]).collect::<Vec<_>>());
+        let t = "il grafo è connesso perchè l'algoritmo è efficente";
+        let bad: Vec<&str> = c.misspelled(t).into_iter().map(|r| &t[r]).collect();
+        assert_eq!(bad, vec!["perchè", "efficente"]);
+        assert_eq!(c.suggest("perchè", t).first().map(String::as_str), Some("perché"));
+        assert_eq!(c.suggest("efficente", t).first().map(String::as_str), Some("efficiente"));
+        assert_eq!(c.suggest("recieve", "we recieve the packets").first().map(String::as_str), Some("receive"));
     }
 
     #[test]
