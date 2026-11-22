@@ -3,9 +3,11 @@
 //! private hooks. Plugins are first-party and in-process; the shape is meant to allow
 //! third-party plugins later (sandboxing is out of scope).
 
+#![allow(dead_code)] // API surface for plugins; not every entry point has a user yet
+
 use std::rc::Rc;
 
-use gpui_kit::component::IconName;
+use gpui_kit::assets::IconName;
 use gpui_kit::*;
 use serde_json::Value;
 
@@ -81,7 +83,7 @@ pub struct CalloutStyle {
     pub color: Hsla,
     pub look: CalloutLook,
     /// Header icon (Obsidian look).
-    pub icon: Option<gpui_kit::assets::IconName>,
+    pub icon: Option<IconName>,
     /// Text shown for the type (e.g. "Theorem") next to the title. None = Obsidian's rule:
     /// the title alone, or the capitalised type when there is no title.
     pub label: Option<String>,

@@ -5,6 +5,8 @@
 //! maps tabstop ranges through edits and mirrors typing into repeated tabstops. Everything here
 //! runs against a [`Backend`], so the same code drives the live editor and headless tests.
 
+#![allow(dead_code)] // API surface for plugins; not every entry point has a user yet
+
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 

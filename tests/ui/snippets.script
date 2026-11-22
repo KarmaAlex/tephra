@@ -1,0 +1,15 @@
+wait 600
+key ctrl-end
+type mk
+state
+type xsr
+state
+key tab
+key tab
+state
+key enter
+type dm
+state
+type @a/
+state
+quit

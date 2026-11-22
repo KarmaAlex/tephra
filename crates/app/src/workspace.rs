@@ -15,7 +15,7 @@ use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::list::ListItem;
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::tree::{tree, TreeItem, TreeState};
-use gpui_kit::component::{h_flex, v_flex, ActiveTheme as _, Icon, IconName, Sizable as _};
+use gpui_kit::component::{h_flex, v_flex, ActiveTheme as _, Icon, IconName, Selectable as _, Sizable as _};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use obsidilight_core::index::{is_note, is_sync_conflict};
@@ -23,8 +23,9 @@ use obsidilight_core::links::link_path;
 
 use crate::editor::{Editor, EditorEvent};
 use crate::embeds::{SharedVault, Vault};
+use crate::plugins::{run_action, MenuTarget, PluginHost};
 
-actions!(workspace, [CloseTab, NextTab, PrevTab, NewNote, NewFolder, OpenInNewTab, RenameItem, DeleteItem, ToggleSidebar]);
+actions!(workspace, [CloseTab, NextTab, PrevTab, NewNote, NewFolder, OpenInNewTab, RenameItem, DeleteItem, ToggleSidebar, ToggleRightSidebar, OpenSettings]);
 
 pub const CONTEXT: &str = "Workspace";
 
@@ -36,7 +37,17 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-shift-tab", PrevTab, c),
         KeyBinding::new("ctrl-n", NewNote, c),
         KeyBinding::new("ctrl-shift-b", ToggleSidebar, c),
+        KeyBinding::new("ctrl-,", OpenSettings, c),
     ]);
+}
+
+/// `ctrl-alt-k` style hotkey vs a key press.
+fn hotkey_matches(hotkey: &str, k: &Keystroke) -> bool {
+    let parts: Vec<&str> = hotkey.split('-').collect();
+    let Some((key, mods)) = parts.split_last() else { return false };
+    let has = |m: &str| mods.iter().any(|x| x.eq_ignore_ascii_case(m));
+    let m = &k.modifiers;
+    key.eq_ignore_ascii_case(&k.key) && m.control == has("ctrl") && m.alt == has("alt") && m.shift == has("shift") && m.platform == (has("cmd") || has("super"))
 }
 
 pub struct Workspace {
@@ -49,6 +60,9 @@ pub struct Workspace {
     /// The tree entry a context menu was opened on: (vault path, is folder).
     menu_target: Rc<RefCell<Option<(String, bool)>>>,
     sidebar: bool,
+    /// Right sidebar (plugin views) shown, and which view.
+    right_sidebar: bool,
+    right_view: usize,
     _watcher: Option<notify::RecommendedWatcher>,
     _subs: Vec<Subscription>,
 }
@@ -81,6 +95,8 @@ impl Workspace {
             focus: cx.focus_handle(),
             menu_target: Rc::default(),
             sidebar: true,
+            right_sidebar: false,
+            right_view: 0,
             _watcher: None,
             _subs: subs,
         };
@@ -93,6 +109,115 @@ impl Workspace {
         }
         window.focus(&this.focus, cx);
         this
+    }
+
+    pub fn active_editor(&self) -> Option<Entity<Editor>> {
+        self.tabs.get(self.active).cloned()
+    }
+
+    /// The narrow strip on the far left: file tree toggle, plugin buttons, settings.
+    fn render_ribbon(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme().clone();
+        let items: Vec<_> = cx.try_global::<PluginHost>().map(|h| h.reg.ribbon.iter().map(|(_, r)| r.clone()).collect()).unwrap_or_default();
+        let has_views = cx.try_global::<PluginHost>().is_some_and(|h| !h.reg.sidebar_views.is_empty());
+        let weak = cx.entity().downgrade();
+        v_flex()
+            .w(px(40.))
+            .h_full()
+            .flex_none()
+            .items_center()
+            .gap_1()
+            .py_2()
+            .border_r_1()
+            .border_color(theme.border)
+            .bg(theme.sidebar)
+            .child(Button::new("ribbon-files").ghost().small().icon(gpui_kit::assets::IconName::Folder).tooltip("Files (Ctrl+Shift+B)").on_click(cx.listener(|ws, _, _, cx| {
+                ws.sidebar = !ws.sidebar;
+                cx.notify();
+            })))
+            .children(items.into_iter().enumerate().map(|(i, it)| {
+                let weak = weak.clone();
+                Button::new(("ribbon", i)).ghost().small().icon(it.icon).tooltip(it.tooltip.clone()).on_click(move |_, window, cx| {
+                    let editor = weak.upgrade().and_then(|ws| ws.read(cx).active_editor());
+                    run_action(&it.run, editor, window, cx);
+                })
+            }))
+            .child(div().flex_1())
+            .when(has_views, |d| {
+                d.child(Button::new("ribbon-right").ghost().small().icon(gpui_kit::assets::IconName::PanelRight).tooltip("Right sidebar").on_click(cx.listener(|ws, _, _, cx| {
+                    ws.right_sidebar = !ws.right_sidebar;
+                    cx.notify();
+                })))
+            })
+            .child(Button::new("ribbon-settings").ghost().small().icon(gpui_kit::assets::IconName::Settings).tooltip("Settings (Ctrl+,)").on_click(|_, window, cx| crate::settings_ui::open(window, cx)))
+    }
+
+    /// Plugin views on the right; a row of icons picks the view.
+    fn render_right_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let views: Vec<_> = cx.try_global::<PluginHost>().map(|h| h.reg.sidebar_views.iter().map(|(_, v)| v.clone()).collect()).unwrap_or_default();
+        if !self.right_sidebar || views.is_empty() {
+            return None;
+        }
+        let ix = self.right_view.min(views.len() - 1);
+        let theme = cx.theme().clone();
+        let editor = self.active_editor();
+        let body = (views[ix].render)(editor.as_ref(), window, cx);
+        Some(
+            v_flex()
+                .w(px(300.))
+                .h_full()
+                .flex_none()
+                .border_l_1()
+                .border_color(theme.border)
+                .bg(theme.sidebar)
+                .child(h_flex().gap_1().px_2().py_1().border_b_1().border_color(theme.border).children(views.iter().enumerate().map(|(i, v)| {
+                    Button::new(("right-view", i)).ghost().xsmall().selected(i == ix).icon(v.icon).tooltip(v.title.clone()).on_click(cx.listener(move |ws, _, _, cx| {
+                        ws.right_view = i;
+                        cx.notify();
+                    }))
+                })))
+                .child(div().flex_1().min_h_0().overflow_hidden().p_2().child(body))
+                .into_any_element(),
+        )
+    }
+
+    /// Plugin status items for the active editor.
+    fn render_status_bar(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let items: Vec<_> = cx.try_global::<PluginHost>().map(|h| h.reg.status.iter().map(|(_, s)| s.clone()).collect()).unwrap_or_default();
+        let editor = self.active_editor();
+        let texts: Vec<SharedString> = {
+            let e = editor.as_ref().map(|e| e.read(cx));
+            items.iter().filter_map(|s| (s.text)(e)).collect()
+        };
+        if texts.is_empty() {
+            return None;
+        }
+        let theme = cx.theme();
+        Some(
+            h_flex()
+                .justify_end()
+                .gap_4()
+                .px_3()
+                .py_0p5()
+                .border_t_1()
+                .border_color(theme.border)
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .children(texts)
+                .into_any_element(),
+        )
+    }
+
+    /// Plugin command hotkeys (default bindings from their manifests' commands).
+    fn on_key_capture(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let cmds: Vec<(String, crate::plugins::api::Action)> =
+            cx.try_global::<PluginHost>().map(|h| h.reg.commands.iter().filter_map(|(_, c)| Some((c.hotkey.clone()?, c.run.clone()))).collect()).unwrap_or_default();
+        let hit = cmds.into_iter().find(|(h, _)| hotkey_matches(h, &ev.keystroke)).map(|(_, r)| r);
+        if let Some(run) = hit {
+            let editor = self.active_editor();
+            run_action(&run, editor, window, cx);
+            cx.stop_propagation();
+        }
     }
 
     fn rel(&self, p: &Path) -> String {
@@ -607,6 +732,7 @@ impl Workspace {
         let weak = cx.entity().downgrade();
         let root = self.vault.borrow().root.clone();
         let target = self.menu_target.clone();
+        let menu_ws = cx.entity().downgrade();
         v_flex()
             .w(px(280.))
             .h_full()
@@ -657,16 +783,32 @@ impl Workspace {
                             })
                         })
                 })
-                .context_menu(move |_ix, entry, menu, _w, _cx| {
+                .context_menu(move |_ix, entry, menu, _w, cx| {
                     let id = entry.item().id.to_string();
                     let folder = entry.is_folder();
-                    *target.borrow_mut() = Some((id.strip_prefix("dir:").unwrap_or(&id).to_string(), folder));
-                    menu.when(!folder, |m| m.menu("Open in new tab", Box::new(OpenInNewTab)))
+                    let rel = id.strip_prefix("dir:").unwrap_or(&id).to_string();
+                    *target.borrow_mut() = Some((rel.clone(), folder));
+                    let mut menu = menu
+                        .when(!folder, |m| m.menu("Open in new tab", Box::new(OpenInNewTab)))
                         .menu("New note here", Box::new(NewNote))
                         .menu("New folder here", Box::new(NewFolder))
                         .separator()
                         .menu("Rename or move…", Box::new(RenameItem))
-                        .menu("Delete", Box::new(DeleteItem))
+                        .menu("Delete", Box::new(DeleteItem));
+                    let items: Vec<_> = cx.try_global::<PluginHost>().map(|h| h.reg.menu_items.iter().filter(|(_, m)| m.target == MenuTarget::File).map(|(_, m)| m.clone()).collect()).unwrap_or_default();
+                    if !items.is_empty() {
+                        menu = menu.separator();
+                    }
+                    for it in items {
+                        let rel = rel.clone();
+                        let weak = menu_ws.clone();
+                        menu = menu.item(gpui_kit::component::menu::PopupMenuItem::new(it.label.clone()).on_click(move |_, window, cx| {
+                            let editor = weak.upgrade().and_then(|ws| ws.read(cx).active_editor());
+                            let mut ctx = crate::plugins::ActionCtx { window, cx, editor };
+                            (it.run)(&mut ctx, Some(&rel));
+                        }));
+                    }
+                    menu
                 })
                 .flex_1(),
             )
@@ -691,8 +833,10 @@ impl Render for Workspace {
             })
             .collect();
         let active = self.tabs.get(self.active).cloned();
-        let _ = window;
         let sidebar = self.sidebar.then(|| self.render_sidebar(cx).into_any_element());
+        let ribbon = self.render_ribbon(cx).into_any_element();
+        let right = self.render_right_sidebar(window, cx);
+        let status = self.render_status_bar(cx);
         div()
             .id("workspace")
             .key_context(CONTEXT)
@@ -714,6 +858,12 @@ impl Render for Workspace {
                 let n = ws.tabs.len().max(1);
                 let a = (ws.active + n - 1) % n;
                 ws.activate(a, w, cx)
+            }))
+            .capture_key_down(cx.listener(Self::on_key_capture))
+            .on_action(cx.listener(|_, _: &OpenSettings, w, cx| crate::settings_ui::open(w, cx)))
+            .on_action(cx.listener(|ws, _: &ToggleRightSidebar, _, cx| {
+                ws.right_sidebar = !ws.right_sidebar;
+                cx.notify();
             }))
             .on_action(cx.listener(|ws, _: &ToggleSidebar, _, cx| {
                 ws.sidebar = !ws.sidebar;
@@ -757,6 +907,7 @@ impl Render for Workspace {
                     ws.delete_dialog(p, folder, w, cx)
                 }
             }))
+            .child(ribbon)
             .children(sidebar)
             .child(
                 v_flex()
@@ -785,7 +936,9 @@ impl Render for Workspace {
                             .text_color(theme.muted_foreground)
                             .child("No file open — pick one on the left, or Ctrl+N for a new note")
                             .into_any_element(),
-                    }),
+                    })
+                    .children(status),
             )
+            .children(right)
     }
 }

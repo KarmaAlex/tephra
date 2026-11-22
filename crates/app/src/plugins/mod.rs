@@ -8,6 +8,7 @@ pub mod academic_notes;
 pub mod api;
 pub mod desmos;
 pub mod latex_suite;
+pub mod word_count;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -31,11 +32,18 @@ pub struct PluginHost {
 
 impl Global for PluginHost {}
 
+/// Runs a plugin action with the active editor.
+pub fn run_action(run: &api::Action, editor: Option<Entity<crate::editor::Editor>>, window: &mut Window, cx: &mut App) {
+    let mut ctx = ActionCtx { window, cx, editor };
+    run(&mut ctx);
+}
+
 /// Every plugin shipped with the app, in load order (earlier plugins win style conflicts).
 pub fn bundled(vault_root: &Path) -> Vec<Box<dyn Plugin>> {
     vec![
         Box::new(academic_notes::AcademicNotes::new()),
         Box::new(latex_suite::LatexSuite::new(vault_root)),
+        Box::new(word_count::WordCount::new()),
         Box::new(desmos::Desmos::new()),
     ]
 }
@@ -74,8 +82,13 @@ impl PluginHost {
     pub fn init(cx: &mut App, vault_root: &Path) {
         let mut host = Self::new(Some(vault_root.join(".obsidilight")), bundled(vault_root));
         let ids: Vec<&'static str> = host.plugins.iter().map(|p| p.manifest().id).filter(|id| host.enabled.contains(*id)).collect();
+        let timing = std::env::var_os("OBSIDILIGHT_TIMING").is_some();
         for id in ids {
+            let t = std::time::Instant::now();
             host.load_plugin(id);
+            if timing {
+                eprintln!("TIMING plugin {id} {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
+            }
         }
         cx.set_global(host);
     }
@@ -86,6 +99,7 @@ impl PluginHost {
     pub fn is_enabled(&self, id: &str) -> bool {
         self.enabled.contains(id)
     }
+    #[cfg(test)]
     pub fn is_loaded(&self, id: &str) -> bool {
         self.loaded.contains(id)
     }
@@ -218,9 +232,9 @@ mod tests {
             r.code_block_renderer("x", Nop);
             r.editor_hook(Rc::new(Nop));
             r.command(Command { id: "c".into(), name: "C".into(), hotkey: Some("ctrl-alt-k".into()), run: run.clone() });
-            r.ribbon(RibbonItem { id: "r".into(), icon: gpui_kit::component::IconName::Star, tooltip: "R".into(), run: run.clone() });
+            r.ribbon(RibbonItem { id: "r".into(), icon: gpui_kit::assets::IconName::Star, tooltip: "R".into(), run: run.clone() });
             r.status_item(StatusItem { id: "s".into(), text: Rc::new(|_| None) });
-            r.sidebar_view(SidebarView { id: "v".into(), title: "V".into(), icon: gpui_kit::component::IconName::Star, render: Rc::new(|_, _, _| div().into_any_element()) });
+            r.sidebar_view(SidebarView { id: "v".into(), title: "V".into(), icon: gpui_kit::assets::IconName::Star, render: Rc::new(|_, _, _| div().into_any_element()) });
             r.menu_item(MenuItem { id: "m".into(), label: "M".into(), target: MenuTarget::File, run: Rc::new(|_, _| {}) });
             r.settings_tab(SettingsTab { id: "t".into(), title: "T".into(), render: Rc::new(|_, _| div().into_any_element()) });
         }

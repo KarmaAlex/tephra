@@ -94,15 +94,6 @@ pub fn open_bracket_for(close: char) -> Option<char> {
     }
 }
 
-pub fn close_bracket_for(open: char) -> Option<char> {
-    match open {
-        '(' => Some(')'),
-        '[' => Some(']'),
-        '{' => Some('}'),
-        _ => None,
-    }
-}
-
 /// An enclosing construct at a position inside math, innermost last.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Frame {

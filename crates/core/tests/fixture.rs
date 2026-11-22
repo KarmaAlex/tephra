@@ -167,13 +167,36 @@ fn index_build_and_rename_plans() {
     eprintln!("index build: {ms:.0} ms");
     assert!(ms < 2000.0, "full index took {ms:.0} ms (budget 2 s)");
     let notes: Vec<_> = idx.notes().collect();
-    assert_eq!(notes.len(), 233);
+    // every Markdown file outside dot-folders is a note (the fixture grows as it is used)
+    fn md_files(d: &std::path::Path) -> usize {
+        std::fs::read_dir(d).into_iter().flatten().flatten().map(|e| {
+            let p = e.path();
+            let name = e.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') { 0 } else if p.is_dir() { md_files(&p) } else { usize::from(name.ends_with(".md")) }
+        }).sum()
+    }
+    assert!(notes.len() >= 233);
+    assert_eq!(notes.len(), md_files(&root));
     let links: usize = notes.iter().map(|n| n.links.len()).sum();
     let unresolved: Vec<String> = notes.iter().flat_map(|n| n.links.iter().filter(|l| l.resolved.is_none()).map(move |l| format!("{}: line {}", n.path, l.line + 1))).collect();
     let callouts: usize = notes.iter().map(|n| n.callouts.len()).sum();
     eprintln!("{links} links, {} unresolved, {callouts} callouts", unresolved.len());
-    assert!(unresolved.is_empty(), "unresolved links:\n{}", unresolved.join("\n"));
-    assert_eq!(callouts, 199, "callout count changed (grep finds 199)");
+    // a link may dangle (notes not written yet), but never when its target file exists
+    let stems: std::collections::HashSet<String> = idx
+        .files()
+        .map(|f| f.rsplit('/').next().unwrap_or(f).trim_end_matches(".md").to_lowercase())
+        .collect();
+    let wrong: Vec<String> = notes
+        .iter()
+        .flat_map(|n| n.links.iter().filter(|l| l.resolved.is_none()).map(move |l| (n.path.clone(), l)))
+        .filter(|(_, l)| {
+            let t = l.target.split(['#', '|']).next().unwrap_or("").trim();
+            !t.is_empty() && stems.contains(&t.rsplit('/').next().unwrap_or(t).trim_end_matches(".md").to_lowercase())
+        })
+        .map(|(p, l)| format!("{p}: line {}", l.line + 1))
+        .collect();
+    assert!(wrong.is_empty(), "links to existing files left unresolved:\n{}", wrong.join("\n"));
+    assert!(callouts >= 199, "callouts went missing (grep finds 199 in the snapshot)");
 
     // rename a sample of targets (notes and images) and check every link still resolves
     let mut targets: Vec<String> = idx.files().filter(|f| !idx.backlinks(f).is_empty()).cloned().collect();

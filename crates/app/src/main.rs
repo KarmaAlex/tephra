@@ -13,6 +13,7 @@ mod icons;
 mod math;
 mod plugins;
 mod script;
+mod settings_ui;
 mod workspace;
 
 use std::path::PathBuf;

@@ -446,6 +446,16 @@ impl Plugin for LatexSuite {
             canon.starts_with(&root).then(|| std::fs::read_to_string(canon).ok()).flatten()
         };
         let engine = Engine::load(settings, &read);
+        let summary = format!("{} snippets loaded.", engine.snippets.len());
+        let errors = engine.errors.clone();
+        reg.settings_tab(SettingsTab {
+            id: "status".into(),
+            title: "Snippets status".into(),
+            render: Rc::new(move |_, _| {
+                use gpui_kit::{div, IntoElement as _, ParentElement as _, Styled as _};
+                div().flex().flex_col().gap_1().text_sm().child(summary.clone()).children(errors.iter().map(|e| div().text_color(gpui_kit::red()).child(e.clone()))).into_any_element()
+            }),
+        });
         reg.editor_hook(Rc::new(Hook(engine)));
     }
 }

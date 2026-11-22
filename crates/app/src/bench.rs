@@ -40,8 +40,13 @@ async fn type_text(editor: &WeakEntity<Editor>, cx: &mut AsyncApp, text: &str) -
     let mut work = Vec::new();
     for ch in text.chars() {
         let _ = editor.update(cx, |e, cx| {
-            let h = e.doc.selection().head;
-            e.edit(h..h, &ch.to_string(), EditKind::Insert, cx);
+            // like a real keystroke: plugin hooks (snippets) first, timed from the key press
+            e.perf.pending_edit = Some(std::time::Instant::now());
+            let s = ch.to_string();
+            if !e.run_char_hooks(&s, cx) {
+                let h = e.doc.selection().head;
+                e.edit(h..h, &s, EditKind::Insert, cx);
+            }
         });
         cx.background_executor().timer(Duration::from_millis(40)).await;
         let _ = editor.update(cx, |e, _| {

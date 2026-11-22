@@ -7,7 +7,7 @@ use gpui_kit::*;
 
 gpui_kit::assets::icon_assets!(
     pub ExtraIcons,
-    [Pencil, ClipboardList, Info, CircleCheck, Flame, Check, CircleQuestionMark, TriangleAlert, X, Zap, Bug, List, Quote, Puzzle, Settings, Sigma]
+    [Pencil, ClipboardList, Info, CircleCheck, Flame, Check, CircleQuestionMark, TriangleAlert, X, Zap, Bug, List, Quote, Puzzle, Settings, Sigma, Folder, PanelRight, Star, Hash, ListOrdered]
 );
 
 pub struct AppAssets;

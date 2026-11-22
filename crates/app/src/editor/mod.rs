@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use gpui_kit::base::text::editor_host::{LeafGeometry, RenderContext};
 use gpui_kit::base::text::MarkdownExtensions;
 use gpui_kit::component::ActiveTheme as _;
+use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use obsidilight_core::file::{self, DiskState, SaveOutcome};
@@ -742,6 +743,7 @@ impl Render for Editor {
         }
         let content = div().w_full().max_w(px(760.)).mx_auto().px_8().py_6().flex().flex_col().children(children);
         let editor = cx.entity();
+        let menu_editor = editor.downgrade();
         let status = self.status.clone();
         let root = div().id("editor").key_context(CONTEXT).track_focus(&self.focus).size_full().flex().flex_col().bg(theme.background).text_color(theme.foreground);
         self.perf.render_end = Some(Instant::now());
@@ -769,5 +771,23 @@ impl Render for Editor {
                     .track_scroll(&self.scroll)
                     .child(EditorElement::new(editor, content.into_any_element(), decorations, self.scroll.clone())),
             )
+            .context_menu(move |menu, _, cx| {
+                let mut menu = menu.menu("Cut", Box::new(Cut)).menu("Copy", Box::new(Copy)).menu("Paste", Box::new(Paste));
+                let items: Vec<_> = cx
+                    .try_global::<PluginHost>()
+                    .map(|h| h.reg.menu_items.iter().filter(|(_, m)| m.target == crate::plugins::MenuTarget::Editor).map(|(_, m)| m.clone()).collect())
+                    .unwrap_or_default();
+                if !items.is_empty() {
+                    menu = menu.separator();
+                }
+                for it in items {
+                    let weak = menu_editor.clone();
+                    menu = menu.item(gpui_kit::component::menu::PopupMenuItem::new(it.label.clone()).on_click(move |_, window, cx| {
+                        let mut ctx = crate::plugins::ActionCtx { window, cx, editor: weak.upgrade() };
+                        (it.run)(&mut ctx, None);
+                    }));
+                }
+                menu
+            })
     }
 }
