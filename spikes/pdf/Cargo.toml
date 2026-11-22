@@ -1,0 +1,15 @@
+[package]
+name = "spike-pdf"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+typst = "0.15.1"
+typst-pdf = "0.15.1"
+typst-layout = "0.15.1"
+typst-kit = { version = "0.15.1", features = ["embedded-fonts", "scan-fonts"] }
+chrono = "0.4"
+
+[profile.release]
+debug = false

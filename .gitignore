@@ -16,3 +16,7 @@ reports/
 bench/work/
 spikes/gpui/assets/mathjax-svg.js
 spikes/tauri/dist/
+spikes/pdf/node_modules
+spikes/gpui/js/node_modules
+spikes/gpui/assets/cm6-headless.js
+spikes/*/target/

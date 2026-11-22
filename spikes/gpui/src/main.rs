@@ -165,6 +165,44 @@ fn mathbench(path: &str) {
         items.len(), fails, load_ms, times.iter().sum::<f64>(), pct(0.5), pct(0.95), pct(1.0));
 }
 
+/// Headless @codemirror/state + @lezer/markdown inside QuickJS: cost of mirroring the
+/// buffer so Latex Suite-style function snippets can run against the real CM6/Lezer API.
+fn cm6bench(bundle_path: &str, note_path: &str) {
+    use rquickjs::CatchResultExt as _;
+    let rt = rquickjs::Runtime::new().expect("runtime");
+    let ctx = rquickjs::Context::full(&rt).expect("context");
+    let bundle = std::fs::read_to_string(bundle_path).expect("bundle");
+    let note = std::fs::read_to_string(note_path).expect("note");
+    ctx.with(|ctx| {
+        let t = Instant::now();
+        if let Err(e) = ctx.eval::<(), _>(bundle).catch(&ctx) { panic!("eval bundle: {e}"); }
+        let load_ms = t.elapsed().as_secs_f64() * 1000.0;
+        let cm6: rquickjs::Object = ctx.globals().get("cm6").expect("cm6");
+        let load: rquickjs::Function = cm6.get("load").unwrap();
+        let ty: rquickjs::Function = cm6.get("type").unwrap();
+        let probe: rquickjs::Function = cm6.get("dmProbe").unwrap();
+        let t = Instant::now();
+        let _: i32 = load.call((note.clone(),)).expect("load");
+        let parse_ms = t.elapsed().as_secs_f64() * 1000.0;
+        // type 100 chars in the middle of the note, one call per keystroke
+        let mut pos = note.chars().take(note.chars().count() / 2).map(|c| c.len_utf16()).sum::<usize>() as i32;
+        let mut times = Vec::new();
+        for ch in "the quick brown fox jumps over the lazy dog $x^2$ and more text to type here ok ".chars().cycle().take(100) {
+            let t = Instant::now();
+            let _: i32 = ty.call((pos, ch.to_string())).expect("type");
+            times.push(t.elapsed().as_secs_f64() * 1000.0);
+            pos += 1;
+        }
+        let t = Instant::now();
+        let r: String = probe.call((pos,)).expect("probe");
+        let probe_ms = t.elapsed().as_secs_f64() * 1000.0;
+        times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let p = |q: f64| times[((times.len() as f64 * q) as usize).min(times.len() - 1)];
+        print!("CM6BENCH bundle_load_ms={load_ms:.1} full_parse_ms={parse_ms:.1} keystroke_p50_ms={:.2} p95_ms={:.2} max_ms={:.2} dm_probe_ms={probe_ms:.2} probe={r}", p(0.5), p(0.95), p(1.0));
+    });
+    println!(" js_heap_mib={:.1}", rt.memory_usage().memory_used_size as f64 / 1048576.0);
+}
+
 fn unescape_json_string(s: &str) -> String {
     // minimal JSON string decoder for the first string literal in `s`
     let mut out = String::new();
@@ -187,6 +225,10 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(String::as_str) == Some("--mathbench") {
         mathbench(&args[2]);
+        return;
+    }
+    if args.get(1).map(String::as_str) == Some("--cm6bench") {
+        cm6bench(&args[2], &args[3]);
         return;
     }
     let t0 = Instant::now();
