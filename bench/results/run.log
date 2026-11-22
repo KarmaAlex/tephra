@@ -1,0 +1,39 @@
+qwen3.6-35b            t1-wikilink    #1 fmt=1 comp=1 pass=7/16 tok=11960 639.36s
+qwen3.6-35b            t1-wikilink    #2 fmt=1 comp=1 pass=15/16 tok=9502 365.45s
+qwen3.6-35b            t1-wikilink    #3 fmt=1 comp=1 pass=16/16 tok=11235 434.74s
+qwen3.6-35b            low     t1-wikilink    #2 fmt=1 comp=0 pass=0/16 tok=1246 43.99s
+qwen3.6-35b            low     t1-wikilink    #3 fmt=1 comp=0 pass=0/16 tok=1321 50.73s
+qwen3.6-35b            low     t2-headings    #1 fmt=1 comp=0 pass=0/16 tok=3496 130.22s
+qwen3.6-35b            low     t2-headings    #2 fmt=1 comp=0 pass=0/16 tok=3820 136.57s
+qwen3.6-35b            low     t2-headings    #3 fmt=1 comp=1 pass=12/16 tok=2550 87.3s
+qwen3.6-35b            low     t3-highlight   #1 fmt=1 comp=0 pass=0/10 tok=2377 82.87s
+qwen3.6-35b            low     t3-highlight   #2 fmt=1 comp=0 pass=0/10 tok=3899 133.42s
+qwen3.6-35b            low     t3-highlight   #3 fmt=1 comp=0 pass=0/10 tok=1859 63.69s
+qwen3.6-35b            low     t4-mathranges  #1 fmt=1 comp=1 pass=3/22 tok=2305 80.04s
+qwen3.6-35b            low     t4-mathranges  #2 fmt=1 comp=1 pass=20/22 tok=2717 93.23s
+qwen3.6-35b            low     t4-mathranges  #3 fmt=1 comp=1 pass=20/22 tok=2233 76.16s
+qwen3.6-35b            low     t5-callouts    #1 fmt=1 comp=0 pass=15/15 tok=2792 96.56s
+qwen3.6-35b            low     t5-callouts    #2 fmt=1 comp=1 pass=2/15 tok=2183 76.73s
+qwen3.6-35b            low     t5-callouts    #3 fmt=1 comp=0 pass=1/15 tok=2229 78.24s
+qwen3.6-35b            low     t6-css         #1 fmt=1 comp=1 pass=7/9 tok=697 25.69s
+qwen3.6-35b            low     t6-css         #2 fmt=1 comp=1 pass=7/9 tok=711 24.41s
+qwen3.6-35b            low     t6-css         #3 fmt=1 comp=1 pass=7/9 tok=697 24.53s
+qwen3.6-35b            low     t7-bugfix      #1 fmt=1 comp=1 pass=8/8 tok=446 17.2s
+qwen3.6-35b            low     t7-bugfix      #2 fmt=1 comp=1 pass=8/8 tok=446 16.49s
+qwen3.6-35b            low     t7-bugfix      #3 fmt=1 comp=1 pass=8/8 tok=446 16.19s
+qwen3.6-35b            low     t8-multifile   #1 fmt=1 comp=1 pass=6/6 tok=333 13.21s
+qwen3.6-35b            low     t8-multifile   #2 fmt=1 comp=1 pass=6/6 tok=284 10.39s
+qwen3.6-35b            low     t8-multifile   #3 fmt=1 comp=1 pass=6/6 tok=342 12.31s
+qwen3.6-35b            low     t9-longdiff    #1 fmt=1 comp=0 pass=0/7 tok=360 26.93s
+qwen3.6-35b            low     t9-longdiff    #2 fmt=1 comp=1 pass=3/7 tok=362 13.45s
+qwen3.6-35b            low     t9-longdiff    #3 fmt=1 comp=0 pass=0/7 tok=394 31.03s
+gpt-oss-20b            low     t1-wikilink    #1 fmt=1 comp=1 pass=6/16 tok=1128 61.55s
+gpt-oss-20b            low     t1-wikilink    #2 fmt=1 comp=1 pass=16/16 tok=1102 40.89s
+gpt-oss-20b            low     t1-wikilink    #3 fmt=1 comp=1 pass=14/16 tok=970 36.0s
+gpt-oss-20b            low     t2-headings    #1 fmt=1 comp=1 pass=11/16 tok=1748 67.26s
+gpt-oss-20b            low     t2-headings    #2 fmt=1 comp=0 pass=0/16 tok=1317 127.66s
+gpt-oss-20b            low     t2-headings    #3 fmt=1 comp=0 pass=0/16 tok=1441 77.42s
+gpt-oss-20b            low     t3-highlight   #1 fmt=1 comp=0 pass=0/10 tok=1725 69.41s
+gpt-oss-20b            low     t3-highlight   #2 fmt=1 comp=0 pass=0/10 tok=1628 70.54s
+gpt-oss-20b            low     t3-highlight   #3 fmt=1 comp=0 pass=0/10 tok=2008 85.39s
+gpt-oss-20b            low     t4-mathranges  #1 fmt=1 comp=1 pass=6/22 tok=2231 94.93s
