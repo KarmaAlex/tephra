@@ -1,24 +1,28 @@
-//! The open vault's files (for embed resolution) and pasted-image saving.
-//! `.obsidian/` is only ever read.
+//! The open vault, shared by the workspace and every editor: the index (link resolution,
+//! metadata) plus attachment handling (pasted/dropped images). `.obsidian/` is only read.
 
+use std::cell::RefCell;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
-use obsidilight_core::links::resolve_link;
+use obsidilight_core::index::VaultIndex;
+
+pub type SharedVault = Rc<RefCell<Vault>>;
 
 pub struct Vault {
     pub root: PathBuf,
-    files: Vec<String>,
+    pub index: VaultIndex,
     /// From `.obsidian/app.json` `attachmentFolderPath` (vault-relative, "" = root).
     attachment_dir: String,
 }
 
 impl Vault {
-    /// The vault containing `note`: the nearest ancestor with a `.obsidian` folder, else the note's folder.
-    pub fn for_note(note: &Path) -> Self {
-        let dir = note.parent().unwrap_or(Path::new(".")).to_path_buf();
-        let root = dir.ancestors().find(|a| a.join(".obsidian").is_dir()).map(Path::to_path_buf).unwrap_or(dir);
-        Self::open(root)
+    /// The vault containing `p` (a note or a folder): the nearest ancestor with `.obsidian/`,
+    /// else the folder itself / the note's folder.
+    pub fn root_for(p: &Path) -> PathBuf {
+        let dir = if p.is_dir() { p.to_path_buf() } else { p.parent().unwrap_or(Path::new(".")).to_path_buf() };
+        dir.ancestors().find(|a| a.join(".obsidian").is_dir()).map(Path::to_path_buf).unwrap_or(dir)
     }
 
     pub fn open(root: PathBuf) -> Self {
@@ -27,43 +31,37 @@ impl Vault {
             .and_then(|s| json_string_field(&s, "attachmentFolderPath"))
             .map(|s| s.trim_start_matches("./").trim_end_matches('/').to_string())
             .unwrap_or_default();
-        let mut v = Self { root, files: Vec::new(), attachment_dir };
-        v.rescan();
-        v
-    }
-
-    pub fn rescan(&mut self) {
-        fn rec(root: &Path, d: &Path, out: &mut Vec<String>) {
-            let Ok(rd) = std::fs::read_dir(d) else { return };
-            for e in rd.flatten() {
-                if e.file_name().to_string_lossy().starts_with('.') {
-                    continue;
-                }
-                let p = e.path();
-                if p.is_dir() {
-                    rec(root, &p, out);
-                } else if let Ok(rel) = p.strip_prefix(root) {
-                    out.push(rel.to_string_lossy().replace('\\', "/"));
-                }
-            }
-        }
-        self.files.clear();
-        let root = self.root.clone();
-        rec(&root, &root, &mut self.files);
-        self.files.sort();
+        let index = VaultIndex::build(&root);
+        Self { root, index, attachment_dir }
     }
 
     pub fn relative(&self, p: &Path) -> String {
         p.strip_prefix(&self.root).unwrap_or(p).to_string_lossy().replace('\\', "/")
     }
 
-    /// Resolves an embed/link target from the note at `from` (absolute path).
+    /// Resolves a link target from the note at `from` (absolute path) to an absolute path.
     pub fn resolve(&self, target: &str, from: &Path) -> Option<PathBuf> {
-        let refs: Vec<&str> = self.files.iter().map(String::as_str).collect();
-        resolve_link(target, &refs, &self.relative(from)).map(|r| self.root.join(r))
+        self.index.resolve(target, &self.relative(from)).map(|r| self.root.join(r))
     }
 
-    /// Saves pasted/dropped image bytes as `<attachments>/Pasted image YYYYMMDDHHmmss.png`
+    fn attachments(&self) -> io::Result<PathBuf> {
+        let dir = self.root.join(&self.attachment_dir);
+        std::fs::create_dir_all(&dir)?;
+        Ok(dir)
+    }
+
+    fn write_new(&mut self, dir: &Path, name: &str, bytes: &[u8]) -> io::Result<()> {
+        use std::io::Write as _;
+        // create_new: never overwrite an existing file
+        let mut f = std::fs::OpenOptions::new().write(true).create_new(true).open(dir.join(name))?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+        let rel = self.relative(&dir.join(name));
+        self.index.add_file(&rel);
+        Ok(())
+    }
+
+    /// Saves pasted image bytes as `<attachments>/Pasted image YYYYMMDDHHmmss.png`
     /// (Obsidian's naming) and returns the file name to embed.
     pub fn save_pasted_image(&mut self, bytes: &[u8], is_png: bool) -> io::Result<String> {
         let png = if is_png {
@@ -74,8 +72,7 @@ impl Vault {
             img.write_to(&mut io::Cursor::new(&mut out), image::ImageFormat::Png).map_err(io::Error::other)?;
             out
         };
-        let dir = self.root.join(&self.attachment_dir);
-        std::fs::create_dir_all(&dir)?;
+        let dir = self.attachments()?;
         let stamp = chrono::Local::now().format("%Y%m%d%H%M%S");
         let mut name = format!("Pasted image {stamp}.png");
         let mut n = 1;
@@ -83,24 +80,14 @@ impl Vault {
             name = format!("Pasted image {stamp} {n}.png");
             n += 1;
         }
-        // create_new: never overwrite an existing file
-        use std::io::Write as _;
-        let mut f = std::fs::OpenOptions::new().write(true).create_new(true).open(dir.join(&name))?;
-        f.write_all(&png)?;
-        f.sync_all()?;
-        let rel = self.relative(&dir.join(&name));
-        self.files.push(rel);
-        self.files.sort();
+        self.write_new(&dir, &name, &png)?;
         Ok(name)
     }
-}
 
-impl Vault {
-    /// Copies a dropped image file into the attachment folder (keeping its name; ` 1`, ` 2`…
+    /// Copies a dropped file into the attachment folder (keeping its name; ` 1`, ` 2`…
     /// appended if taken) and returns the name to embed. Never overwrites.
     pub fn import_file(&mut self, src: &Path) -> io::Result<String> {
-        let dir = self.root.join(&self.attachment_dir);
-        std::fs::create_dir_all(&dir)?;
+        let dir = self.attachments()?;
         let stem = src.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "image".into());
         let ext = src.extension().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
         let mut name = src.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "image".into());
@@ -109,12 +96,8 @@ impl Vault {
             name = format!("{stem} {n}.{ext}");
             n += 1;
         }
-        let mut out = std::fs::OpenOptions::new().write(true).create_new(true).open(dir.join(&name))?;
-        io::copy(&mut std::fs::File::open(src)?, &mut out)?;
-        out.sync_all()?;
-        let rel = self.relative(&dir.join(&name));
-        self.files.push(rel);
-        self.files.sort();
+        let bytes = std::fs::read(src)?;
+        self.write_new(&dir, &name, &bytes)?;
         Ok(name)
     }
 }

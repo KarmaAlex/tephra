@@ -1,7 +1,7 @@
 //! obsidilight: a lightweight, Obsidian-compatible notes app.
 //!
-//! M1a: opens one note in the live-preview editor.
-//!   obsidilight <path/to/note.md>
+//! Opens a vault (file tree + tabs), optionally with one note open:
+//!   obsidilight <vault-folder | path/to/note.md>
 //! Env: OBSIDILIGHT_BENCH=1 runs the typing benchmark, prints `REPORT {json}` and exits.
 //!      OBSIDILIGHT_SCRIPT=<file> replays scripted input (see script.rs).
 
@@ -11,6 +11,7 @@ mod editor;
 mod embeds;
 mod math;
 mod script;
+mod workspace;
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -19,39 +20,39 @@ use gpui_kit::*;
 
 fn main() {
     let t0 = Instant::now();
-    let Some(path) = std::env::args_os().nth(1).map(PathBuf::from) else {
-        eprintln!("usage: obsidilight <note.md>");
+    let Some(arg) = std::env::args_os().nth(1).map(PathBuf::from) else {
+        eprintln!("usage: obsidilight <vault-folder | note.md>");
         std::process::exit(2);
     };
+    let arg = std::fs::canonicalize(&arg).unwrap_or(arg);
+    let root = embeds::Vault::root_for(&arg);
+    let note = arg.is_file().then(|| arg.clone());
+    let title: SharedString = root.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default().into();
     gpui_kit::application().with_assets(gpui_kit::assets::Assets).run(move |cx| {
         gpui_kit::init(cx);
         editor::bind_keys(cx);
-        open_note(path, cx, move |editor, window, cx| {
+        workspace::bind_keys(cx);
+        let opts = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size(px(1280.), px(860.)), cx))),
+            titlebar: Some(TitlebarOptions { title: Some(title), ..Default::default() }),
+            app_id: Some("obsidilight".into()),
+            ..Default::default()
+        };
+        let result = gpui_kit::open_window(opts, cx, move |window, cx| {
+            let ws = cx.new(|cx| workspace::Workspace::new(root, window, cx));
             window.on_next_frame(move |_, _| println!("READY {:.1}", t0.elapsed().as_secs_f64() * 1000.0));
-            script::start(editor.clone(), window, cx);
-            if std::env::var_os("OBSIDILIGHT_BENCH").is_some() {
-                bench::start(editor, window, cx);
+            if let Some(note) = note {
+                let editor = ws.update(cx, |ws, cx| ws.open_path(note, false, window, cx));
+                script::start(editor.clone(), window, cx);
+                if std::env::var_os("OBSIDILIGHT_BENCH").is_some() {
+                    bench::start(editor, window, cx);
+                }
             }
+            ws
         });
+        if let Err(e) = result {
+            eprintln!("could not open window: {e}");
+            std::process::exit(1);
+        }
     });
-}
-
-/// Opens a note in a new window (one note per window until tabs arrive in M1b).
-pub fn open_note(path: PathBuf, cx: &mut App, setup: impl FnOnce(Entity<editor::Editor>, &mut Window, &mut App) + 'static) {
-    let path = std::fs::canonicalize(&path).unwrap_or(path);
-    let title: SharedString = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default().into();
-    let opts = WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size(px(1000.), px(860.)), cx))),
-        titlebar: Some(TitlebarOptions { title: Some(title), ..Default::default() }),
-        app_id: Some("obsidilight".into()),
-        ..Default::default()
-    };
-    let result = gpui_kit::open_window(opts, cx, move |window, cx| {
-        let editor = cx.new(|cx| editor::Editor::open(path, window, cx));
-        setup(editor.clone(), window, cx);
-        editor
-    });
-    if let Err(e) = result {
-        eprintln!("could not open window: {e}");
-    }
 }

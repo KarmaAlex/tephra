@@ -8,7 +8,6 @@ pub mod projection;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::PathBuf;
-use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use gpui_kit::base::text::editor_host::{FlowPosition, LeafGeometry, RenderContext};
@@ -19,7 +18,7 @@ use gpui_kit::*;
 use obsidilight_core::file::{self, DiskState, SaveOutcome};
 use obsidilight_core::{Document, EditKind, Selection};
 
-use crate::embeds::Vault;
+use crate::embeds::SharedVault;
 use element::EditorElement;
 use projection::{Palette, Projection, ProjectionInput};
 
@@ -100,7 +99,7 @@ pub struct Editor {
     pub doc: Document,
     pub path: PathBuf,
     disk: Option<DiskState>,
-    pub vault: Vault,
+    pub vault: SharedVault,
     pub focus: FocusHandle,
     scroll: ScrollHandle,
     proj: Projection,
@@ -121,20 +120,28 @@ pub struct Editor {
     heights: measured::Heights,
     measured_once: bool,
     pub perf: Perf,
-    _watcher: Option<notify::RecommendedWatcher>,
 }
 
+/// What an editor asks of its workspace.
+#[derive(Clone, Debug)]
+pub enum EditorEvent {
+    /// The file was written (the index should re-read it).
+    Saved(PathBuf),
+    /// Ctrl+click on an internal link (`target` = link text without alias).
+    OpenLink { target: String, new_tab: bool },
+}
+
+impl EventEmitter<EditorEvent> for Editor {}
+
 impl Editor {
-    pub fn open(path: PathBuf, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn open(path: PathBuf, vault: SharedVault, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let (doc, disk, status) = match file::load(&path) {
             Ok(l) => (Document::new(&l.text), Some(l.disk), None),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => (Document::new(""), None, None),
             Err(e) => (Document::new(""), None, Some(format!("Cannot open: {e}. Editing disabled for this file.").into())),
         };
-        let vault = Vault::for_note(&path);
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
-        let watcher = Self::watch(&path, cx);
         let mut this = Self {
             doc,
             path,
@@ -155,7 +162,6 @@ impl Editor {
             heights: Default::default(),
             measured_once: false,
             perf: Perf::default(),
-            _watcher: watcher,
         };
         this.proj.version = u64::MAX;
         this
@@ -163,35 +169,14 @@ impl Editor {
 
     // ---- external changes -------------------------------------------------
 
-    fn watch(path: &std::path::Path, cx: &mut Context<Self>) -> Option<notify::RecommendedWatcher> {
-        use notify::Watcher as _;
-        let (tx, rx) = mpsc::channel::<()>();
-        let target = path.to_path_buf();
-        let mut w = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-            if let Ok(ev) = res {
-                if ev.paths.iter().any(|p| p == &target) {
-                    let _ = tx.send(());
-                }
-            }
-        })
-        .ok()?;
-        // watch the folder: atomic saves replace the file (rename), which a file watch would lose
-        w.watch(path.parent()?, notify::RecursiveMode::NonRecursive).ok()?;
-        cx.spawn(async move |this, cx| loop {
-            cx.background_executor().timer(Duration::from_millis(250)).await;
-            let mut changed = false;
-            while rx.try_recv().is_ok() {
-                changed = true;
-            }
-            if changed && this.update(cx, |e, cx| e.on_disk_changed(cx)).is_err() {
-                break;
-            }
-        })
-        .detach();
-        Some(w)
+    /// Something outside this note changed (e.g. a linked file appeared): rebuild the projection.
+    pub fn invalidate(&mut self, cx: &mut Context<Self>) {
+        self.proj.version = u64::MAX;
+        cx.notify();
     }
 
-    fn on_disk_changed(&mut self, cx: &mut Context<Self>) {
+    /// The workspace's vault watcher saw this file change.
+    pub fn on_disk_changed(&mut self, cx: &mut Context<Self>) {
         let Ok(l) = file::load(&self.path) else { return };
         if Some(l.disk) == self.disk {
             return; // our own save, or no real change
@@ -224,6 +209,7 @@ impl Editor {
                 self.disk = Some(d);
                 self.doc.mark_saved();
                 self.status = None;
+                cx.emit(EditorEvent::Saved(self.path.clone()));
             }
             Ok(SaveOutcome::Conflict { .. }) => {
                 self.status = Some("Not saved: the file on disk is newer than the version you opened. Your text is kept in the editor.".into());
@@ -291,7 +277,7 @@ impl Editor {
         if self.proj.version != self.doc.version() || self.proj.sel != self.doc.selection() {
             let t = Instant::now();
             let text = self.doc.text();
-            let vault = &self.vault;
+            let vault = self.vault.borrow();
             let path = &self.path;
             let resolve = |target: &str| vault.resolve(target, path);
             let theme = cx.theme();
@@ -381,7 +367,8 @@ impl Editor {
     pub fn paste_item(&mut self, item: ClipboardItem, cx: &mut Context<Self>) {
         for entry in item.entries() {
             if let ClipboardEntry::Image(img) = entry {
-                match self.vault.save_pasted_image(&img.bytes, img.format == ImageFormat::Png) {
+                let saved = self.vault.borrow_mut().save_pasted_image(&img.bytes, img.format == ImageFormat::Png);
+                match saved {
                     Ok(name) => {
                         let r = self.doc.selection().range();
                         self.edit(r, &format!("![[{name}]]"), EditKind::Other, cx);
@@ -398,7 +385,7 @@ impl Editor {
     }
 
     /// Ctrl+click on a link: external URLs open in the browser, wikilinks open the note.
-    pub fn open_link(&mut self, target: &str, cx: &mut Context<Self>) {
+    pub fn open_link(&mut self, target: &str, new_tab: bool, cx: &mut Context<Self>) {
         if target.starts_with("tag:") || target.is_empty() {
             return;
         }
@@ -410,13 +397,37 @@ impl Editor {
             }
             return;
         }
-        let note = target.split('#').next().unwrap_or(target);
-        match self.vault.resolve(note, &self.path) {
-            Some(p) => {
-                println!("OPEN_NOTE {}", p.display());
-                crate::open_note(p, cx, |_, _, _| {});
+        cx.emit(EditorEvent::OpenLink { target: target.to_string(), new_tab });
+        cx.notify();
+    }
+
+    /// Moves the caret to `#Heading` or `#^block-id` (the part after `#` in a link).
+    pub fn go_to_subpath(&mut self, sub: &str, cx: &mut Context<Self>) {
+        let text = self.doc.text();
+        let found = if let Some(id) = sub.strip_prefix('^') {
+            let pat = format!("^{id}");
+            let mut off = 0;
+            let mut hit = None;
+            for line in text.split('\n') {
+                let t = line.trim_end();
+                if t.ends_with(&pat) && t[..t.len() - pat.len()].chars().next_back().is_none_or(|c| c.is_whitespace() || c == '>') {
+                    hit = Some(off);
+                    break;
+                }
+                off += line.len() + 1;
             }
-            None => self.status = Some(format!("No note named \"{note}\" (creating notes from links arrives in M1b)").into()),
+            hit
+        } else {
+            // `[[note#A#B]]` targets heading B (under A)
+            let want = sub.rsplit('#').next().unwrap_or(sub).trim().to_lowercase();
+            obsidilight_core::markdown::parse_blocks(&text)
+                .into_iter()
+                .find(|b| matches!(b.kind, obsidilight_core::markdown::BlockKind::Heading { .. }) && text[b.content.clone()].trim().to_lowercase() == want)
+                .map(|b| b.range.start)
+        };
+        match found {
+            Some(off) => self.set_selection(Selection::caret(off), false, cx),
+            None => self.status = Some(format!("\"{sub}\" not found in this note").into()),
         }
         cx.notify();
     }
@@ -430,7 +441,8 @@ impl Editor {
         let mut embeds = Vec::new();
         for p in paths.paths() {
             if crate::embeds::is_image(p) {
-                match self.vault.import_file(p) {
+                let imported = self.vault.borrow_mut().import_file(p);
+                match imported {
                     Ok(name) => embeds.push(format!("![[{name}]]")),
                     Err(e) => self.status = Some(format!("Could not import {}: {e}", p.display()).into()),
                 }
@@ -535,7 +547,8 @@ impl Render for Editor {
             .on_link_click(move |url, ev, _, cx| {
                 if ev.modifiers().secondary(cx) {
                     let url = url.to_string();
-                    let _ = weak.update(cx, |e, cx| e.open_link(&url, cx));
+                    let new_tab = ev.modifiers().shift;
+                    let _ = weak.update(cx, |e, cx| e.open_link(&url, new_tab, cx));
                 }
             });
         for (k, ranges) in &proj.muted {
