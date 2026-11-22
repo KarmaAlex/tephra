@@ -1,7 +1,6 @@
 //! Desmos: not built yet (HANDOFF §5.3 "don't build yet"). The slot exists so the toggle and the
 //! `desmos-graph` code-block hook are in place; blocks show as code with a note.
 
-use gpui_kit::*;
 use serde_json::{Map, Value};
 
 use super::api::*;

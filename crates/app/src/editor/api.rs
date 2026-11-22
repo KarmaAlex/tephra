@@ -11,11 +11,26 @@ use std::path::{Path, PathBuf};
 use obsidilight_core::markdown::{find_math, parse_blocks, BlockKind};
 use obsidilight_core::{Document, EditKind, Selection};
 
-/// Tabstop groups of an expanded snippet: group `index` is the current one; ranges of one group
-/// are edited together (mirrors). Reaching the last group ends the session.
+/// One tabstop group: its ranges are edited together (mirrors).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TabstopGroup {
+    pub ranges: Vec<Range<usize>>,
+    /// The outer snippet's group a nested snippet was expanded in: skipped by navigation.
+    pub embed: bool,
+}
+
+impl TabstopGroup {
+    fn contains(&self, sel: &Range<usize>) -> bool {
+        self.ranges.iter().any(|r| r.start <= sel.start && sel.end <= r.end)
+    }
+}
+
+/// Tabstops of expanded snippets (Latex Suite's `tabstopsStateField`). `index` is the group
+/// holding the selection; when the selection leaves every group, or enters the last one, the
+/// session ends.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TabstopSession {
-    pub groups: Vec<Vec<Range<usize>>>,
+    pub groups: Vec<TabstopGroup>,
     pub index: usize,
 }
 
@@ -36,7 +51,7 @@ impl TabstopSession {
             }
         };
         for g in &mut self.groups {
-            for r in g.iter_mut() {
+            for r in g.ranges.iter_mut() {
                 let s = map_pos(r.start, false);
                 let e = map_pos(r.end, true).max(s);
                 *r = s..e;
@@ -44,13 +59,23 @@ impl TabstopSession {
         }
     }
 
-    pub fn current(&self) -> Option<&Vec<Range<usize>>> {
+    pub fn current(&self) -> Option<&TabstopGroup> {
         self.groups.get(self.index)
     }
 
-    /// The selection lies inside some tabstop (any group).
-    pub fn contains(&self, sel: &Range<usize>) -> bool {
-        self.groups.iter().flatten().any(|r| r.start <= sel.start && sel.end <= r.end)
+    /// The selection moved: re-derive the current group. False = the session is over.
+    pub fn on_selection(&mut self, sel: &Range<usize>) -> bool {
+        self.index = self.groups.iter().position(|g| g.contains(sel)).unwrap_or(self.groups.len());
+        !(self.groups.len() <= 1 || self.index + 1 >= self.groups.len())
+    }
+}
+
+/// Updates (or ends) the session after a selection change.
+pub fn tabstops_on_selection(ts: &mut Option<TabstopSession>, sel: &Range<usize>) {
+    if let Some(s) = ts.as_mut() {
+        if !s.on_selection(sel) {
+            *ts = None;
+        }
     }
 }
 
@@ -62,7 +87,7 @@ pub fn apply_edit(doc: &mut Document, ts: &mut Option<TabstopSession>, range: Ra
     let end = doc.clamp(range.end).max(start);
     let removed = end - start;
     let mirror = ts.as_ref().and_then(|s| {
-        let g = s.current()?;
+        let g = &s.current()?.ranges;
         if g.len() < 2 {
             return None;
         }
@@ -74,12 +99,12 @@ pub fn apply_edit(doc: &mut Document, ts: &mut Option<TabstopSession>, range: Ra
         s.map(start, removed, text.len());
     }
     let Some((i, rel)) = mirror else { return };
-    let n = ts.as_ref().and_then(|s| s.current().map(Vec::len)).unwrap_or(0);
+    let n = ts.as_ref().and_then(|s| s.current().map(|g| g.ranges.len())).unwrap_or(0);
     for j in 0..n {
         if j == i {
             continue;
         }
-        let Some(r) = ts.as_ref().and_then(|s| s.current().and_then(|g| g.get(j).cloned())) else { continue };
+        let Some(r) = ts.as_ref().and_then(|s| s.current().and_then(|g| g.ranges.get(j).cloned())) else { continue };
         let a = (r.start + rel).min(r.end);
         let b = (a + removed).min(r.end);
         doc.replace_joined(a..b, text);
@@ -106,8 +131,8 @@ pub trait Backend {
     fn tabstops(&mut self) -> &mut Option<TabstopSession>;
     /// An edit through the editor's normal path (undo, autosave, tabstop mapping/mirroring).
     fn edit(&mut self, r: Range<usize>, text: &str, kind: EditKind);
-    /// `nav`: a tabstop move (does not end the session).
-    fn select(&mut self, sel: Selection, nav: bool);
+    /// Sets the selection; the tabstop session follows it ([`tabstops_on_selection`]).
+    fn select(&mut self, sel: Selection);
     fn path(&self) -> &Path;
 }
 
@@ -141,10 +166,10 @@ impl<'a> EditorApi<'a> {
     }
 
     pub fn set_caret(&mut self, at: usize) {
-        self.b.select(Selection::caret(at), false);
+        self.b.select(Selection::caret(at));
     }
     pub fn set_selection(&mut self, sel: Selection) {
-        self.b.select(sel, false);
+        self.b.select(sel);
     }
     pub fn replace(&mut self, r: Range<usize>, text: &str, kind: EditKind) {
         self.b.edit(r, text, kind);
@@ -157,56 +182,60 @@ impl<'a> EditorApi<'a> {
         let start = self.b.doc().clamp(r.start);
         self.b.edit(start..r.end, text, kind);
         if tabstops.is_empty() {
-            self.b.select(Selection::caret(start + text.len()), true);
+            self.b.select(Selection::caret(start + text.len()));
             return;
         }
         let mut idx: Vec<usize> = tabstops.iter().map(|(i, _)| *i).collect();
         idx.sort_unstable();
         idx.dedup();
-        let groups: Vec<Vec<Range<usize>>> =
-            idx.iter().map(|i| tabstops.iter().filter(|(j, _)| j == i).map(|(_, r)| start + r.start..start + r.end).collect()).collect();
-        let first = groups[0][0].clone();
+        let groups: Vec<TabstopGroup> = idx
+            .iter()
+            .map(|i| TabstopGroup { ranges: tabstops.iter().filter(|(j, _)| j == i).map(|(_, r)| start + r.start..start + r.end).collect(), embed: false })
+            .collect();
+        let first = groups[0].ranges[0].clone();
         let ts = self.b.tabstops();
         match ts.as_mut() {
-            // nested expansion inside a tabstop: the new groups come first, then the rest of
-            // the outer snippet's
-            Some(s) if s.index < s.groups.len() => {
-                let at = s.index;
-                s.groups.remove(at);
+            // nested expansion: the group it happened in is embedded (skipped from now on) and the
+            // new groups go before it
+            Some(s) => {
+                let at = s.index.min(s.groups.len());
+                if let Some(g) = s.groups.get_mut(at) {
+                    g.embed = true;
+                }
                 for (k, g) in groups.into_iter().enumerate() {
                     s.groups.insert(at + k, g);
                 }
-                s.index = at;
             }
-            _ => *ts = Some(TabstopSession { groups, index: 0 }),
+            None => *ts = Some(TabstopSession { groups, index: 0 }),
         }
-        self.b.select(Selection::new(first.start, first.end), true);
-        self.end_session_if_last();
-    }
-
-    fn end_session_if_last(&mut self) {
-        let ts = self.b.tabstops();
-        if ts.as_ref().is_some_and(|s| s.index + 1 >= s.groups.len()) {
-            *ts = None;
-        }
+        self.b.select(Selection::new(first.start, first.end));
     }
 
     pub fn has_tabstops(&mut self) -> bool {
         self.b.tabstops().is_some()
     }
 
-    /// Moves to the next (or previous) tabstop group; false when there is none.
+    /// Moves to the next (or previous) tabstop group, skipping embedded groups and groups the
+    /// selection already equals; when the selection lies inside the target, goes to its end.
+    /// False when there is nowhere to go.
     pub fn next_tabstop(&mut self, backwards: bool) -> bool {
         let Some(s) = self.b.tabstops().clone() else { return false };
-        let target = if backwards { s.index.checked_sub(1) } else { Some(s.index + 1) };
-        let Some(i) = target.filter(|i| *i < s.groups.len()) else { return false };
-        let r = s.groups[i][0].clone();
-        if let Some(t) = self.b.tabstops().as_mut() {
-            t.index = i;
+        let cur = self.selection().range();
+        let mut i = s.index as isize;
+        loop {
+            i += if backwards { -1 } else { 1 };
+            let Some(g) = (i >= 0).then(|| s.groups.get(i as usize)).flatten() else { return false };
+            if g.embed {
+                continue;
+            }
+            let r = g.ranges[0].clone();
+            let target = if g.contains(&cur) { r.end..r.end } else { r };
+            if target == cur {
+                continue;
+            }
+            self.b.select(Selection::new(target.start, target.end));
+            return true;
         }
-        self.b.select(Selection::new(r.start, r.end), true);
-        self.end_session_if_last();
-        true
     }
 
     /// The math the offset is in (between the delimiters, inclusive), if any.
@@ -271,11 +300,9 @@ impl Backend for Headless {
     fn edit(&mut self, r: Range<usize>, text: &str, kind: EditKind) {
         apply_edit(&mut self.doc, &mut self.tabstops, r, text, kind);
     }
-    fn select(&mut self, sel: Selection, nav: bool) {
+    fn select(&mut self, sel: Selection) {
         self.doc.set_selection(sel);
-        if !nav && self.tabstops.as_ref().is_some_and(|s| !s.contains(&sel.range())) {
-            self.tabstops = None;
-        }
+        tabstops_on_selection(&mut self.tabstops, &self.doc.selection().range());
     }
     fn path(&self) -> &Path {
         &self.path
@@ -288,15 +315,17 @@ mod tests {
 
     #[test]
     fn tabstop_mapping() {
-        let mut s = TabstopSession { groups: vec![vec![5..5], vec![10..12]], index: 0 };
+        let g = |r: Range<usize>| TabstopGroup { ranges: vec![r], embed: false };
+        let mut s = TabstopSession { groups: vec![g(5..5), g(10..12)], index: 0 };
+        let ranges = |s: &TabstopSession| s.groups.iter().map(|g| g.ranges[0].clone()).collect::<Vec<_>>();
         s.map(5, 0, 3); // typing "abc" at the first (empty) tabstop: it grows, the next shifts
-        assert_eq!(s.groups, vec![vec![5..8], vec![13..15]]);
+        assert_eq!(ranges(&s), vec![5..8, 13..15]);
         s.map(6, 1, 0); // delete inside the first
-        assert_eq!(s.groups, vec![vec![5..7], vec![12..14]]);
+        assert_eq!(ranges(&s), vec![5..7, 12..14]);
         s.map(0, 2, 0); // delete before everything
-        assert_eq!(s.groups, vec![vec![3..5], vec![10..12]]);
+        assert_eq!(ranges(&s), vec![3..5, 10..12]);
         s.map(11, 3, 1); // replace across the end of the second
-        assert_eq!(s.groups[1], vec![10..12]);
+        assert_eq!(ranges(&s)[1], 10..12);
     }
 
     #[test]
@@ -326,6 +355,23 @@ mod tests {
         assert_eq!(h.doc.text(), "\\begin{pm}\\end{pm}$");
         assert!(h.doc.undo() && h.doc.undo());
         assert_eq!(h.doc.text(), "\\begin{}\\end{}$");
+    }
+
+    #[test]
+    fn nested_snippet_embeds_the_outer_group() {
+        let mut h = Headless::new("");
+        // outer: "^{$0}$1" ; inside $0 expand "\\frac{$0}{$1}$2"
+        EditorApi::new(&mut h).insert_snippet(0..0, "^{}", &[(0, 2..2), (1, 3..3)], EditKind::Other);
+        assert_eq!(h.marked(), "^{|}");
+        EditorApi::new(&mut h).insert_snippet(2..2, "\\frac{}{}", &[(0, 6..6), (1, 8..8), (2, 9..9)], EditKind::Other);
+        assert_eq!(h.marked(), "^{\\frac{|}{}}");
+        assert!(EditorApi::new(&mut h).next_tabstop(false));
+        assert_eq!(h.marked(), "^{\\frac{}{|}}");
+        assert!(EditorApi::new(&mut h).next_tabstop(false)); // inner $2 (end of \frac{}{})
+        assert_eq!(h.marked(), "^{\\frac{}{}|}");
+        assert!(EditorApi::new(&mut h).next_tabstop(false)); // embedded outer $0 skipped -> outer $1
+        assert_eq!(h.marked(), "^{\\frac{}{}}|");
+        assert!(h.tabstops.is_none());
     }
 
     #[test]

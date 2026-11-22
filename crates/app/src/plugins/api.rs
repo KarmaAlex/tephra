@@ -22,6 +22,8 @@ pub enum SettingKind {
     Number,
     /// (value, label) pairs.
     Choice(Vec<(&'static str, &'static str)>),
+    /// Stored and passed to the plugin, not shown (imported advanced values).
+    Hidden,
 }
 
 #[derive(Clone, Debug)]

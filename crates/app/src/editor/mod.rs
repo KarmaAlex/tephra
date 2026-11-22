@@ -133,8 +133,6 @@ pub struct Editor {
     folds: HashMap<String, bool>,
     /// Snippet tabstops (plugins create them through [`EditorApi::insert_snippet`]).
     pub tabstops: Option<TabstopSession>,
-    /// Set while a tabstop move changes the selection (it must not end the session).
-    selecting_tabstop: bool,
     /// `PluginHost::generation` the projection was built with.
     plugin_gen: u64,
     pub perf: Perf,
@@ -182,7 +180,6 @@ impl Editor {
             folds: HashMap::new(),
             mode: ViewMode::LivePreview,
             tabstops: None,
-            selecting_tabstop: false,
             plugin_gen: 0,
             perf: Perf::default(),
         };
@@ -298,9 +295,7 @@ impl Editor {
 
     pub fn set_selection(&mut self, sel: Selection, keep_goal: bool, cx: &mut Context<Self>) {
         self.doc.set_selection(sel);
-        if !self.selecting_tabstop && self.tabstops.as_ref().is_some_and(|s| !s.contains(&self.doc.selection().range())) {
-            self.tabstops = None;
-        }
+        api::tabstops_on_selection(&mut self.tabstops, &self.doc.selection().range());
         if !keep_goal {
             self.goal_x = None;
         }
@@ -623,10 +618,8 @@ impl api::Backend for Live<'_, '_> {
     fn edit(&mut self, r: Range<usize>, text: &str, kind: EditKind) {
         self.e.edit(r, text, kind, self.cx);
     }
-    fn select(&mut self, sel: Selection, nav: bool) {
-        self.e.selecting_tabstop = nav;
+    fn select(&mut self, sel: Selection) {
         self.e.set_selection(sel, false, self.cx);
-        self.e.selecting_tabstop = false;
     }
     fn path(&self) -> &std::path::Path {
         &self.e.path

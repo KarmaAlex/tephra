@@ -34,8 +34,8 @@ spikes:
 mathjax-bundle:  ## MathJax SVG bundle for the GPUI spike's embedded QuickJS
 	cd tools/corpus && ../../spikes/tauri/node_modules/.bin/esbuild mathjax-entry.js --bundle --minify --format=iife --platform=neutral --main-fields=module,main --target=es2020 '--define:PACKAGE_VERSION="3.2.1"' '--banner:js=var require=function(m){throw new Error("require("+m+") unavailable")};var __dirname="/";' --outfile=../../crates/app/assets/mathjax-svg.js && cp ../../crates/app/assets/mathjax-svg.js ../../spikes/gpui/assets/
 
-cm6-bundle:      ## headless CM6 + Lezer Markdown bundle for QuickJS (snippet function bridge)
-	cd spikes/gpui/js && ../../tauri/node_modules/.bin/esbuild cm6-entry.js --bundle --minify --format=iife --platform=neutral --main-fields=module,main --target=es2020 --outfile=../assets/cm6-headless.js
+cm6-bundle:      ## headless CM6 state + Lezer Markdown (GFM) for the LaTeX snippets plugin's function snippets
+	NODE_PATH=$(CURDIR)/spikes/gpui/js/node_modules spikes/tauri/node_modules/.bin/esbuild tools/cm6/entry.js --bundle --minify --format=iife --platform=neutral --main-fields=module,main --target=es2020 --outfile=crates/app/assets/cm6-headless.js
 
 ui-smoke: build    ## scripted UI test on a temp copy of the perf note (needs a display)
 	tests/ui/smoke.sh
