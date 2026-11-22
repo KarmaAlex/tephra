@@ -41,3 +41,4 @@ ui-smoke: build    ## scripted UI test on a temp copy of the perf note (needs a 
 	tests/ui/smoke.sh
 	tests/ui/links.sh
 	tests/ui/watcher.sh
+	tests/ui/idle.sh

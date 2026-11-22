@@ -525,6 +525,22 @@ impl Workspace {
         let (tx, rx) = mpsc::channel::<PathBuf>();
         let mut w = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
             if let Ok(ev) = res {
+                use notify::event::{EventKind, ModifyKind};
+                // Only real changes. Access events (open/read/close) and metadata changes must be
+                // ignored: re-indexing reads files and listing folders opens them, so reacting to
+                // those would re-trigger itself forever (this caused ~1 s UI stalls every second).
+                let relevant = match ev.kind {
+                    EventKind::Create(_) | EventKind::Remove(_) => true,
+                    EventKind::Modify(ModifyKind::Metadata(_)) => false,
+                    EventKind::Modify(_) => true,
+                    EventKind::Access(_) | EventKind::Other | EventKind::Any => false,
+                };
+                if !relevant {
+                    return;
+                }
+                if std::env::var_os("OBSIDILIGHT_TIMING").is_some() {
+                    eprintln!("EVENT {:?} {:?}", ev.kind, ev.paths.first().and_then(|p| p.file_name()));
+                }
                 for p in ev.paths {
                     let _ = tx.send(p);
                 }
@@ -559,10 +575,10 @@ impl Workspace {
     }
 
     fn on_files_changed(&mut self, rels: &[String], cx: &mut Context<Self>) {
+        let t = std::time::Instant::now();
+        let log = std::env::var_os("OBSIDILIGHT_TIMING").is_some();
         let before = self.vault.borrow().index.files().count();
-        for rel in rels {
-            self.vault.borrow_mut().index.refresh(rel);
-        }
+        self.vault.borrow_mut().index.refresh_batch(rels);
         let root = self.vault.borrow().root.clone();
         for e in &self.tabs {
             let p = e.read(cx).path.clone();
@@ -579,6 +595,9 @@ impl Workspace {
             e.update(cx, |e, cx| e.invalidate(cx));
         }
         cx.notify();
+        if log {
+            eprintln!("TIMING files_changed {} paths ({:?}…) took {:.1} ms", rels.len(), rels.first(), t.elapsed().as_secs_f64() * 1000.0);
+        }
     }
 
     // ---- rendering ------------------------------------------------------------------

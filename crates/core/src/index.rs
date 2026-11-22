@@ -272,30 +272,75 @@ impl VaultIndex {
 
     /// Applies a watcher event for `rel`: re-reads the file from disk, or removes it if gone.
     pub fn refresh(&mut self, rel: &str) {
-        if hidden(rel) {
-            return;
-        }
-        let p = self.root.join(rel);
-        if p.is_file() {
-            if is_note(rel) {
-                if let Ok(text) = std::fs::read_to_string(&p) {
-                    self.upsert_note(rel, &text);
+        self.refresh_batch(&[rel.to_string()]);
+    }
+
+    /// Applies a batch of watcher events with a single link-resolution pass at the end.
+    /// A folder path indexes only that folder's contents (a folder moved in), never the vault.
+    pub fn refresh_batch(&mut self, rels: &[String]) {
+        let mut touched = false;
+        for rel in rels {
+            if hidden(rel) {
+                continue;
+            }
+            let p = self.root.join(rel);
+            if p.is_file() {
+                touched |= self.load_file(rel);
+            } else if p.is_dir() {
+                let mut inside = Vec::new();
+                fn rec(root: &Path, d: &Path, out: &mut Vec<String>) {
+                    let Ok(rd) = std::fs::read_dir(d) else { return };
+                    for e in rd.flatten() {
+                        if e.file_name().to_string_lossy().starts_with('.') {
+                            continue;
+                        }
+                        let p = e.path();
+                        if p.is_dir() {
+                            rec(root, &p, out);
+                        } else if let Ok(r) = p.strip_prefix(root) {
+                            out.push(r.to_string_lossy().replace('\\', "/"));
+                        }
+                    }
+                }
+                rec(&self.root, &p, &mut inside);
+                for f in inside {
+                    if !self.files.contains(&f) {
+                        touched |= self.load_file(&f);
+                    }
                 }
             } else {
-                self.add_file(rel);
+                let prefix = format!("{rel}/");
+                let gone: Vec<String> = self.files.iter().filter(|f| *f == rel || f.starts_with(&prefix)).cloned().collect();
+                for f in gone {
+                    self.files.remove(&f);
+                    self.resolver.remove(&f);
+                    self.notes.remove(&f);
+                    touched = true;
+                }
             }
-        } else if p.is_dir() {
-            // a folder appeared (moved in): index its contents
-            let fresh = Self::build(&self.root);
-            *self = fresh;
-        } else {
-            let gone: Vec<String> = self.files.iter().filter(|f| *f == rel || f.starts_with(&format!("{rel}/"))).cloned().collect();
-            for f in gone {
-                self.files.remove(&f);
-                self.resolver.remove(&f);
-                self.notes.remove(&f);
-            }
+        }
+        if touched {
             self.resolve_all();
+        }
+    }
+
+    /// (Re)reads one existing file into the index; no resolution pass. Returns whether anything changed.
+    fn load_file(&mut self, rel: &str) -> bool {
+        if self.files.insert(rel.to_string()) {
+            self.resolver.add(rel);
+        }
+        if is_note(rel) {
+            match std::fs::read_to_string(self.root.join(rel)) {
+                Ok(text) => {
+                    let meta = parse_note(rel, &text);
+                    let changed = self.notes.get(rel) != Some(&meta);
+                    self.notes.insert(rel.to_string(), meta);
+                    changed
+                }
+                Err(_) => false,
+            }
+        } else {
+            true
         }
     }
 
