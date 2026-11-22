@@ -86,6 +86,23 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                         w.dispatch_event(PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position: p, click_count: count, modifiers, ..Default::default() }), cx);
                     });
                 }
+                "clickat" => {
+                    // clickat <offset> [ctrl]: click just right of where a document offset is drawn
+                    let off = num(0) as usize;
+                    let active = ws.update(cx, |ws, _| ws.tabs.get(ws.active).cloned()).ok().flatten().unwrap_or_else(|| editor.clone());
+                    let at = active.update(cx, |e, _| e.caret_bounds(off));
+                    let Some(b) = at else {
+                        println!("CLICKAT {off}: not on screen");
+                        continue;
+                    };
+                    let p = point(b.origin.x + px(3.), b.center().y);
+                    let modifiers = Modifiers { control: rest.split_whitespace().any(|w| w == "ctrl"), ..Default::default() };
+                    let _ = handle.update(cx, |_, w, cx| {
+                        w.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position: p, modifiers, ..Default::default() }), cx);
+                        w.dispatch_event(PlatformInput::MouseDown(MouseDownEvent { button: MouseButton::Left, position: p, click_count: 1, modifiers, ..Default::default() }), cx);
+                        w.dispatch_event(PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position: p, click_count: 1, modifiers, ..Default::default() }), cx);
+                    });
+                }
                 "drag" => {
                     let (a, b) = (point(px(num(0)), px(num(1))), point(px(num(2)), px(num(3))));
                     let _ = handle.update(cx, |_, w, cx| {

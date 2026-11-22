@@ -156,6 +156,7 @@ pub struct Projection {
     pub muted: HashMap<u64, Vec<Range<usize>>>,
     pub version: u64,
     pub sel: Selection,
+    pub mode: ViewMode,
 }
 
 impl Projection {
@@ -602,9 +603,22 @@ fn sel_signature(sel: &Range<usize>, block: &Range<usize>) -> (usize, usize) {
     }
 }
 
+/// Obsidian's three ways of showing a note.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ViewMode {
+    /// Rendered, with the construct under the caret revealed.
+    #[default]
+    LivePreview,
+    /// Every construct shows its Markdown.
+    Source,
+    /// Rendered, nothing revealed, read-only.
+    Reading,
+}
+
 pub struct ProjectionInput<'a> {
     pub text: &'a str,
     pub sel: Selection,
+    pub mode: ViewMode,
     pub version: u64,
     pub palette: Palette,
     pub resolve: &'a dyn Fn(&str) -> Option<PathBuf>,
@@ -612,8 +626,13 @@ pub struct ProjectionInput<'a> {
 
 pub fn project(inp: &ProjectionInput) -> Projection {
     let text = inp.text;
-    let sel = inp.sel.range();
-    let mut proj = Projection { version: inp.version, sel: inp.sel, ..Default::default() };
+    // the reveal rule does the work: reading reveals nothing, source reveals everything
+    let sel = match inp.mode {
+        ViewMode::LivePreview => inp.sel.range(),
+        ViewMode::Source => 0..usize::MAX,
+        ViewMode::Reading => usize::MAX..usize::MAX,
+    };
+    let mut proj = Projection { version: inp.version, sel: inp.sel, mode: inp.mode, ..Default::default() };
     let blocks = parse_blocks(text);
     for (bi, b) in blocks.iter().enumerate() {
         let rev = sel.start <= b.range.end && sel.end >= b.range.start;
@@ -693,7 +712,11 @@ pub fn project(inp: &ProjectionInput) -> Projection {
                 let k = key(bi, 0);
                 let mut lb = new_leaf(b.range.clone());
                 // the bullet/number is drawn by the list; the source marker stays hidden
-                lb.hidden(b.marker.clone());
+                if inp.mode == ViewMode::Source {
+                    lb.text(b.marker.clone(), &TextMark::default(), true);
+                } else {
+                    lb.hidden(b.marker.clone());
+                }
                 let inl = parse_inline(text, b.content.clone());
                 lb.inlines(&inl, b.content.clone(), &TextMark::default());
                 let para = lb.finish(k, &mut proj);
@@ -703,6 +726,10 @@ pub fn project(inp: &ProjectionInput) -> Projection {
                     None
                 };
                 indent = b.indent as f32 * 6.0;
+                if inp.mode == ViewMode::Source {
+                    // source mode: the marker is text, so no drawn bullet
+                    nodes.push((ProjNode::Block(BlockNode::Paragraph(para)), vec![k]));
+                } else {
                 nodes.push((
                     ProjNode::Block(BlockNode::List {
                         children: vec![BlockNode::ListItem {
@@ -718,6 +745,7 @@ pub fn project(inp: &ProjectionInput) -> Projection {
                     }),
                     vec![k],
                 ));
+                }
             }
             BlockKind::Code { lang, closed } => {
                 let open_line = b.range.start..text[b.range.start..].find('\n').map(|i| b.range.start + i).unwrap_or(b.range.end);
@@ -797,7 +825,7 @@ mod tests {
 
     fn proj(text: &str, caret: usize) -> Projection {
         let none = |_: &str| None;
-        project(&ProjectionInput { text, sel: Selection::caret(caret), version: 0, palette: Palette { highlight: hsla(0.15, 1., 0.5, 0.4) }, resolve: &none })
+        project(&ProjectionInput { text, sel: Selection::caret(caret), mode: ViewMode::LivePreview, version: 0, palette: Palette { highlight: hsla(0.15, 1., 0.5, 0.4) }, resolve: &none })
     }
 
     /// The leaf text the renderer sees (atoms as U+FFFC).
@@ -919,7 +947,7 @@ mod tests {
     fn unresolved_wikilinks_are_dimmed() {
         let t = "[[Esiste]] e [[Manca]]\n\nx";
         let resolve = |target: &str| (target == "Esiste").then(|| PathBuf::from("/v/Esiste.md"));
-        let p = project(&ProjectionInput { text: t, sel: Selection::caret(t.len()), version: 0, palette: Palette { highlight: gpui_kit::hsla(0., 0., 0., 1.) }, resolve: &resolve });
+        let p = project(&ProjectionInput { text: t, sel: Selection::caret(t.len()), mode: ViewMode::LivePreview, version: 0, palette: Palette { highlight: gpui_kit::hsla(0., 0., 0., 1.) }, resolve: &resolve });
         assert_eq!(p.muted[&p.leaves[0].0], vec![9..14]); // "Esiste e Manca": only "Manca"
     }
 
@@ -947,6 +975,19 @@ mod tests {
         assert_eq!(c.children.len(), 2);
         let ProjNode::Callout(pf) = &c.children[1] else { panic!() };
         assert_eq!((pf.label.as_str(), pf.title_empty), ("Proof", true));
+    }
+
+    #[test]
+    fn source_and_reading_modes() {
+        let none = |_: &str| None;
+        let t = "# H\n- **b** $x$\n> [!thm] T\n> c";
+        let mk = |mode| project(&ProjectionInput { text: t, sel: Selection::caret(0), mode, version: 0, palette: Palette { highlight: hsla(0., 0., 0., 1.) }, resolve: &none });
+        let src = mk(ViewMode::Source);
+        assert_eq!(leaf_text(&src, src.leaves[0].0), "# H");
+        assert_eq!(leaf_text(&src, src.leaves[1].0), "- **b** $x$");
+        let read = mk(ViewMode::Reading);
+        assert_eq!(leaf_text(&read, read.leaves[0].0), "H"); // caret on the heading, but nothing revealed
+        assert!(matches!(read.blocks[2].node, ProjNode::Callout(_)));
     }
 
     #[test]

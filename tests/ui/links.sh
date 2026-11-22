@@ -8,8 +8,9 @@ mkdir -p "$TMP/.obsidian"
 printf 'vedi [[empty]] e [sito](https://example.com) fine\n\naltro\n' > "$TMP/links.md"
 : > "$TMP/empty.md"
 OUT=$(OBSIDILIGHT_SCRIPT=tests/ui/links.script timeout 30 target/release/obsidilight "$TMP/links.md")
-echo "$OUT" | grep -E "STATE|OPEN"
-[[ $(echo "$OUT" | grep -c OPEN_) == 2 ]] || { echo "links: expected exactly 2 opens (the Ctrl+clicks)"; exit 1; }
-echo "$OUT" | grep -q "OPEN_NOTE .*empty.md" && echo "$OUT" | grep -q "OPEN_URL https://example.com"
-echo "$OUT" | grep "STATE" | head -1 | grep -q "sel=8..8" || { echo "links: plain click should place the caret in the link"; exit 1; }
+echo "$OUT" | grep -E "STATE|OPEN|TABS"
+echo "$OUT" | grep "STATE" | head -1 | grep -q "sel=9..9" || { echo "links: plain click should place the caret in the link"; exit 1; }
+echo "$OUT" | grep "TABS" | head -1 | grep -q '\["links.md"\]' || { echo "links: plain click must not open anything"; exit 1; }
+echo "$OUT" | grep -q "OPEN_URL https://example.com" || { echo "links: Ctrl+click on the URL should open it"; exit 1; }
+echo "$OUT" | grep "TABS" | tail -1 | grep -q '\["empty.md"\]' || { echo "links: Ctrl+click on [[empty]] should open empty.md in the tab"; exit 1; }
 echo "ui-links: OK"

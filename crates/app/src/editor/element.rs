@@ -84,7 +84,8 @@ impl Element for EditorElement {
             let e = self.editor.read(cx);
             (e.focus.clone(), cx.theme().caret)
         };
-        if focus.is_focused(window) {
+        let reading = self.editor.read(cx).mode == super::ViewMode::Reading;
+        if focus.is_focused(window) && !reading {
             if let Some(c) = *caret {
                 window.paint_quad(fill(c, caret_color));
             }

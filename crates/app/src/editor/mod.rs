@@ -21,6 +21,7 @@ use obsidilight_core::{Document, EditKind, Selection};
 use crate::embeds::SharedVault;
 use element::EditorElement;
 use gpui_kit::component::h_flex;
+pub use projection::ViewMode;
 use projection::{Palette, ProjNode, Projection, ProjectionInput};
 
 actions!(
@@ -29,7 +30,7 @@ actions!(
         MoveLeft, MoveRight, MoveUp, MoveDown, MoveWordLeft, MoveWordRight, MoveLineStart, MoveLineEnd, MoveDocStart, MoveDocEnd,
         SelectLeft, SelectRight, SelectUp, SelectDown, SelectWordLeft, SelectWordRight, SelectLineStart, SelectLineEnd,
         SelectDocStart, SelectDocEnd, SelectAll, PageUp, PageDown, Backspace, Delete, DeleteWordLeft, DeleteWordRight,
-        Newline, Tab, Undo, Redo, Copy, Cut, Paste, Save
+        Newline, Tab, Undo, Redo, Copy, Cut, Paste, Save, ToggleReading, ToggleSource
     ]
 );
 
@@ -76,6 +77,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-x", Cut, c),
         KeyBinding::new("ctrl-v", Paste, c),
         KeyBinding::new("ctrl-s", Save, c),
+        KeyBinding::new("ctrl-e", ToggleReading, c),
+        KeyBinding::new("ctrl-shift-e", ToggleSource, c),
     ]);
 }
 
@@ -120,6 +123,7 @@ pub struct Editor {
     /// Measured block heights by block hash (virtualized rendering).
     heights: measured::Heights,
     measured_once: bool,
+    pub mode: ViewMode,
     /// Callout fold state by callout identity (true = collapsed); absent = the file's default.
     folds: HashMap<String, bool>,
     pub perf: Perf,
@@ -165,6 +169,7 @@ impl Editor {
             heights: Default::default(),
             measured_once: false,
             folds: HashMap::new(),
+            mode: ViewMode::LivePreview,
             perf: Perf::default(),
         };
         this.proj.version = u64::MAX;
@@ -264,7 +269,7 @@ impl Editor {
     // ---- editing primitives -----------------------------------------------
 
     pub fn edit(&mut self, range: Range<usize>, text: &str, kind: EditKind, cx: &mut Context<Self>) {
-        if self.status.as_ref().is_some_and(|s| s.starts_with("Cannot open")) {
+        if self.mode == ViewMode::Reading || self.status.as_ref().is_some_and(|s| s.starts_with("Cannot open")) {
             return;
         }
         if self.perf.pending_edit.is_none() {
@@ -301,7 +306,7 @@ impl Editor {
     // ---- projection --------------------------------------------------------
 
     pub(crate) fn projection(&mut self, cx: &App) -> &Projection {
-        if self.proj.version != self.doc.version() || self.proj.sel != self.doc.selection() {
+        if self.proj.version != self.doc.version() || self.proj.sel != self.doc.selection() || self.proj.mode != self.mode {
             let t = Instant::now();
             let text = self.doc.text();
             let vault = self.vault.borrow();
@@ -311,6 +316,7 @@ impl Editor {
             self.proj = projection::project(&ProjectionInput {
                 text: &text,
                 sel: self.doc.selection(),
+                mode: self.mode,
                 version: self.doc.version(),
                 palette: Palette { highlight: theme.yellow.opacity(0.35) },
                 resolve: &resolve,
@@ -515,14 +521,14 @@ impl Editor {
                 e.edit(r, "\t", EditKind::Insert, cx)
             }))
             .on_action(cx.listener(|e, _: &Undo, _, cx| {
-                if e.doc.undo() {
+                if e.mode != ViewMode::Reading && e.doc.undo() {
                     e.autoscroll = true;
                     e.schedule_save(cx);
                     cx.notify();
                 }
             }))
             .on_action(cx.listener(|e, _: &Redo, _, cx| {
-                if e.doc.redo() {
+                if e.mode != ViewMode::Reading && e.doc.redo() {
                     e.autoscroll = true;
                     e.schedule_save(cx);
                     cx.notify();
@@ -546,6 +552,16 @@ impl Editor {
                 }
             }))
             .on_action(cx.listener(|e, _: &Save, _, cx| e.save(cx)))
+            .on_action(cx.listener(|e, _: &ToggleReading, _, cx| {
+                e.mode = if e.mode == ViewMode::Reading { ViewMode::LivePreview } else { ViewMode::Reading };
+                e.autoscroll = true;
+                cx.notify();
+            }))
+            .on_action(cx.listener(|e, _: &ToggleSource, _, cx| {
+                e.mode = if e.mode == ViewMode::Source { ViewMode::LivePreview } else { ViewMode::Source };
+                e.autoscroll = true;
+                cx.notify();
+            }))
     }
 }
 
@@ -702,6 +718,16 @@ impl Render for Editor {
             .on_mouse_up(MouseButton::Left, cx.listener(input::on_mouse_up))
             .on_drop(cx.listener(|e, paths: &ExternalPaths, window, cx| e.drop_files(paths, window, cx)))
             .when_some(status, |d, s| d.child(div().px_4().py_1().bg(theme.warning.opacity(0.2)).text_sm().child(s)))
+            .when(self.mode != ViewMode::LivePreview, |d| {
+                d.child(
+                    div()
+                        .px_4()
+                        .py_0p5()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(if self.mode == ViewMode::Reading { "Reading view (Ctrl+E to edit)" } else { "Source mode (Ctrl+Shift+E for live preview)" }),
+                )
+            })
             .child(
                 div()
                     .id("editor-scroll")

@@ -2,16 +2,15 @@
 # Expects tests/ui/links.sh's note: "vedi [[empty]] e [sito](https://example.com) fine"
 key ctrl-end
 wait 200
-click 194 34
+clickat 9
 wait 300
 state
+ws-tabs
 key ctrl-end
 wait 300
-click 194 34 1 ctrl
+clickat 18 ctrl
+wait 300
+clickat 9 ctrl
 wait 800
-key ctrl-end
-wait 300
-click 255 34 1 ctrl
-wait 300
-state
+ws-tabs
 quit
