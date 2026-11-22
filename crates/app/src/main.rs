@@ -5,6 +5,7 @@
 //! Env: OBSIDILIGHT_BENCH=1 runs the typing benchmark, prints `REPORT {json}` and exits.
 //!      OBSIDILIGHT_SCRIPT=<file> replays scripted input (see script.rs).
 
+mod app_settings;
 mod atoms;
 mod bench;
 mod editor;
@@ -35,6 +36,7 @@ fn main() {
         gpui_kit::init(cx);
         editor::bind_keys(cx);
         workspace::bind_keys(cx);
+        app_settings::AppSettings::init(cx, &root);
         plugins::PluginHost::init(cx, &root);
         let opts = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size(px(1280.), px(860.)), cx))),

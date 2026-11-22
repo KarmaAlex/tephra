@@ -136,6 +136,11 @@ pub struct Editor {
     pub tabstops: Option<TabstopSession>,
     /// `PluginHost::generation` the projection was built with.
     plugin_gen: u64,
+    /// Plugin text decorations by (block text hash, decorator index, decorator revision):
+    /// ranges relative to the block.
+    deco_cache: HashMap<(u64, usize, u64), Rc<Vec<Range<usize>>>>,
+    /// A re-render is scheduled because a decorator was still loading.
+    deco_retry: bool,
     pub perf: Perf,
 }
 
@@ -182,6 +187,8 @@ impl Editor {
             mode: ViewMode::LivePreview,
             tabstops: None,
             plugin_gen: 0,
+            deco_cache: HashMap::new(),
+            deco_retry: false,
             perf: Perf::default(),
         };
         this.proj.version = u64::MAX;
@@ -628,6 +635,67 @@ impl api::Backend for Live<'_, '_> {
 }
 
 impl Editor {
+    /// Plugin decorations (e.g. misspellings) for the rendered blocks, as leaf ranges. Results
+    /// are cached per block text, so typing re-checks only the edited block. The word at the
+    /// caret is left alone while it is being typed.
+    fn decorations(&mut self, blocks: Range<usize>, cx: &mut Context<Self>) -> Vec<(u64, Range<usize>, Hsla)> {
+        use std::hash::{Hash, Hasher};
+        let decorators: Vec<Rc<dyn crate::plugins::TextDecorator>> = cx.try_global::<PluginHost>().map(|h| h.reg.decorators.iter().map(|(_, d)| d.clone()).collect()).unwrap_or_default();
+        if decorators.is_empty() || self.mode == ViewMode::Reading {
+            return Vec::new();
+        }
+        if self.deco_cache.len() > 4000 {
+            self.deco_cache.clear();
+        }
+        let head = self.doc.selection().head;
+        let mut out = Vec::new();
+        let mut pending = false;
+        for ix in blocks {
+            let b = &self.proj.blocks[ix];
+            if b.keys.is_empty() || matches!(b.node, projection::ProjNode::Block(gpui_kit::base::text::editor_host::BlockNode::CodeBlock(_))) {
+                continue;
+            }
+            let leaves: Vec<(u64, &projection::LeafMap)> = b.keys.iter().filter_map(|k| self.proj.leaf(*k).map(|m| (*k, m))).collect();
+            let Some(start) = leaves.iter().map(|(_, m)| m.src.start).min() else { continue };
+            let end = leaves.iter().map(|(_, m)| m.src.end).max().unwrap_or(start);
+            let text = self.doc.slice(start..end);
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            text.hash(&mut h);
+            let th = h.finish();
+            for (di, d) in decorators.iter().enumerate() {
+                if !d.ready() {
+                    pending = true;
+                    continue;
+                }
+                let ranges = self.deco_cache.entry((th, di, d.revision())).or_insert_with(|| Rc::new(d.decorate(&text))).clone();
+                let color = d.color();
+                for r in ranges.iter() {
+                    let abs = start + r.start..start + r.end;
+                    if abs.start <= head && head <= abs.end {
+                        continue;
+                    }
+                    for (k, m) in &leaves {
+                        if let Some(lr) = m.leaf_range(&abs) {
+                            out.push((*k, lr, color));
+                        }
+                    }
+                }
+            }
+        }
+        if pending && !self.deco_retry {
+            self.deco_retry = true;
+            cx.spawn(async move |e, cx| {
+                cx.background_executor().timer(Duration::from_millis(250)).await;
+                let _ = e.update(cx, |e, cx| {
+                    e.deco_retry = false;
+                    cx.notify();
+                });
+            })
+            .detach();
+        }
+        out
+    }
+
     fn hooks(cx: &App) -> Vec<Rc<dyn EditorHook>> {
         cx.try_global::<PluginHost>().map(|h| h.reg.editor_hooks.iter().map(|(_, h)| h.clone()).collect()).unwrap_or_default()
     }
@@ -716,6 +784,9 @@ impl Render for Editor {
             y += h(ix);
         }
         ys.push(y);
+        // the scroll offset may still be unclamped (a big wheel delta): clamp to the content,
+        // which ends half a screen after the last block (scroll past end)
+        let top = top.min((y + 24.0 + view_h * 0.5 - view_h).max(0.0));
         let (lo, hi) = if view_h <= 0.0 || (!all_known && !self.measured_once) {
             (0, n) // first frame: lay everything out once to learn the heights
         } else {
@@ -728,19 +799,28 @@ impl Render for Editor {
         };
         drop(heights);
         self.measured_once |= lo == 0 && hi == n;
+        let md = {
+            let vault = self.vault.clone();
+            let path = self.path.clone();
+            render::MarkdownRenderer::new(Rc::new(move |t: &str| vault.borrow().resolve(t, &path)))
+        };
+        let host = render::Host { editor: Some(cx.entity().downgrade()), folds: &self.folds, md: &md };
         let mut children: Vec<AnyElement> = Vec::with_capacity(hi - lo + 2);
         if lo > 0 {
             children.push(div().h(px(ys[lo] - 24.0)).into_any_element());
         }
         for ix in lo..hi {
             let b = &proj.blocks[ix];
-            let el = render::render_node(&b.node, ix, &self.folds, &rcx, window, cx);
+            let el = render::render_node(&b.node, ix, &host, &rcx, window, cx);
             let el = if b.indent > 0.0 { div().pl(px(b.indent)).child(el).into_any_element() } else { el };
             children.push(measured::Measured::new(b.hash, self.heights.clone(), el).into_any_element());
         }
         if hi < n {
             children.push(div().h(px(ys[n] - ys[hi])).into_any_element());
         }
+        // scroll past the end (like Obsidian): room below the last line to type and paste
+        children.push(div().h(px((view_h * 0.5).max(0.0))).into_any_element());
+        let squiggles = self.decorations(lo..hi, cx);
         let content = div().w_full().max_w(px(760.)).mx_auto().px_8().py_6().flex().flex_col().children(children);
         let editor = cx.entity();
         let menu_editor = editor.downgrade();
@@ -769,9 +849,42 @@ impl Render for Editor {
                     .flex_1()
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll)
-                    .child(EditorElement::new(editor, content.into_any_element(), decorations, self.scroll.clone())),
+                    .child(EditorElement::new(editor, content.into_any_element(), decorations, squiggles, self.scroll.clone())),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|e, ev: &MouseDownEvent, window, cx| {
+                    // right-click outside the selection moves the caret there (spelling menu)
+                    window.focus(&e.focus, cx);
+                    if let Some(off) = e.hit_test(ev.position, input::Bias::Nearest) {
+                        let r = e.doc.selection().range();
+                        if !(r.start <= off && off <= r.end && !r.is_empty()) {
+                            e.set_selection(Selection::caret(off), false, cx);
+                        }
+                    }
+                }),
             )
             .context_menu(move |menu, _, cx| {
+                let mut menu = menu;
+                let entries: Vec<crate::plugins::MenuEntry> = match (menu_editor.upgrade(), cx.try_global::<PluginHost>()) {
+                    (Some(ed), Some(h)) => {
+                        let providers: Vec<_> = h.reg.editor_menus.iter().map(|(_, p)| p.clone()).collect();
+                        let e = ed.read(cx);
+                        providers.iter().flat_map(|p| p(e, cx)).collect()
+                    }
+                    _ => Vec::new(),
+                };
+                for it in &entries {
+                    let weak = menu_editor.clone();
+                    let run = it.run.clone();
+                    menu = menu.item(gpui_kit::component::menu::PopupMenuItem::new(it.label.clone()).on_click(move |_, window, cx| {
+                        let mut ctx = crate::plugins::ActionCtx { window, cx, editor: weak.upgrade() };
+                        run(&mut ctx);
+                    }));
+                }
+                if !entries.is_empty() {
+                    menu = menu.separator();
+                }
                 let mut menu = menu.menu("Cut", Box::new(Cut)).menu("Copy", Box::new(Copy)).menu("Paste", Box::new(Paste));
                 let items: Vec<_> = cx
                     .try_global::<PluginHost>()

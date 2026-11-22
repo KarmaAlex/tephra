@@ -86,6 +86,15 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                         w.dispatch_event(PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position: p, click_count: count, modifiers, ..Default::default() }), cx);
                     });
                 }
+                "rclick" => {
+                    // rclick <x> <y>: right click (context menus)
+                    let p = point(px(num(0)), px(num(1)));
+                    let _ = handle.update(cx, |_, w, cx| {
+                        w.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position: p, ..Default::default() }), cx);
+                        w.dispatch_event(PlatformInput::MouseDown(MouseDownEvent { button: MouseButton::Right, position: p, click_count: 1, ..Default::default() }), cx);
+                        w.dispatch_event(PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Right, position: p, click_count: 1, ..Default::default() }), cx);
+                    });
+                }
                 "clickat" => {
                     // clickat <offset> [ctrl]: click just right of where a document offset is drawn
                     let off = num(0) as usize;
@@ -176,6 +185,13 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                         let from = ws.tabs.get(ws.active).map(|e| e.read(cx).path.clone()).unwrap_or_default();
                         let r = ws.vault.borrow().resolve(&target, &from).map(|p| p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default());
                         println!("RESOLVE {target} -> {r:?}");
+                    });
+                }
+                "ws-tree" => {
+                    let _ = ws.update(cx, |ws, _| {
+                        let mut f = ws.tree_files.clone();
+                        f.sort();
+                        println!("TREE {f:?}");
                     });
                 }
                 "ws-tabs" => {

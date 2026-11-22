@@ -10,7 +10,10 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use obsidilight_core::Selection;
 
-use super::projection::{capitalize, CalloutView, ProjNode};
+use std::path::PathBuf;
+use std::rc::Rc;
+
+use super::projection::{capitalize, project, CalloutView, CodeMode, Palette, ProjNode, ProjectionInput, ViewMode};
 use super::Editor;
 use crate::plugins::{CalloutLook, CalloutStyle, PluginHost};
 
@@ -51,11 +54,73 @@ pub fn callout_style(kind: &str, meta: &str, cx: &App) -> CalloutStyle {
     cx.try_global::<PluginHost>().and_then(|h| h.reg.callout_style(kind, meta, dark)).unwrap_or_else(|| obsidian_style(kind, dark))
 }
 
+/// Renders Markdown read-only (for plugins: e.g. the columns of a layout block), with links and
+/// embeds resolved from the note it appears in.
+#[derive(Clone)]
+pub struct MarkdownRenderer {
+    pub resolve: Rc<dyn Fn(&str) -> Option<PathBuf>>,
+    depth: usize,
+}
+
+impl MarkdownRenderer {
+    pub fn new(resolve: Rc<dyn Fn(&str) -> Option<PathBuf>>) -> Self {
+        Self { resolve, depth: 0 }
+    }
+
+    pub fn render(&self, md: &str, window: &mut Window, cx: &mut App) -> AnyElement {
+        if self.depth > 4 {
+            return div().child(md.to_string()).into_any_element(); // runaway nesting
+        }
+        let host = cx.try_global::<PluginHost>();
+        let code_mode = |lang: &str| host.map_or(CodeMode::Plain, |h| h.code_mode(lang));
+        let resolve = |t: &str| (self.resolve)(t);
+        let proj = project(&ProjectionInput {
+            text: md,
+            sel: Selection::caret(0),
+            mode: ViewMode::Reading,
+            version: 0,
+            palette: Palette { highlight: cx.theme().yellow.opacity(0.35) },
+            resolve: &resolve,
+            code_mode: &code_mode,
+        });
+        let muted = cx.theme().muted_foreground;
+        let mut rcx = RenderContext::from_app(cx).with_markdown_extensions(crate::atoms::extensions()).with_body_font_size(px(16.));
+        for (k, ranges) in &proj.muted {
+            rcx = rcx.with_foreground_ranges(*k, ranges.iter().map(|r| (r.clone(), muted)).collect());
+        }
+        let inner = MarkdownRenderer { resolve: self.resolve.clone(), depth: self.depth + 1 };
+        let folds = HashMap::new();
+        let h = Host { editor: None, folds: &folds, md: &inner };
+        let children: Vec<AnyElement> = proj
+            .blocks
+            .iter()
+            .enumerate()
+            .map(|(ix, b)| {
+                let el = render_node(&b.node, ix, &h, &rcx, window, cx);
+                if b.indent > 0.0 { div().pl(px(b.indent)).child(el).into_any_element() } else { el }
+            })
+            .collect();
+        div().flex().flex_col().min_w_0().children(children).into_any_element()
+    }
+}
+
+/// What node rendering needs from where it happens: the editor (folds, caret on click), or
+/// nothing (read-only Markdown inside a plugin block).
+pub struct Host<'a> {
+    pub editor: Option<WeakEntity<Editor>>,
+    pub folds: &'a HashMap<String, bool>,
+    pub md: &'a MarkdownRenderer,
+}
+
 /// Renders a projected node; gpui-kit renders plain blocks.
-pub fn render_node(node: &ProjNode, ix: usize, folds: &HashMap<String, bool>, rcx: &RenderContext, window: &mut Window, cx: &mut Context<Editor>) -> AnyElement {
+pub fn render_node(node: &ProjNode, ix: usize, host: &Host, rcx: &RenderContext, window: &mut Window, cx: &mut App) -> AnyElement {
     match node {
         ProjNode::Block(b) => b.render(ix, FlowPosition::at(&[b], 0, true).first(true).last(true), rcx, window, cx),
-        ProjNode::Callout(c) => render_callout(c, ix, folds, rcx, window, cx),
+        ProjNode::Callout(c) => render_callout(c, ix, host, rcx, window, cx),
+        ProjNode::Display(b) => {
+            let el = b.render(ix, FlowPosition::at(&[b], 0, true).first(true).last(true), rcx, window, cx);
+            if crate::app_settings::AppSettings::flag(cx, "centerDisplayMath") { div().w_full().flex().justify_center().child(el).into_any_element() } else { el }
+        }
         ProjNode::Noted { note, child } => {
             let muted = cx.theme().muted_foreground;
             let el = child.render(ix, FlowPosition::at(&[child], 0, true).first(true).last(true), rcx, window, cx);
@@ -64,35 +129,35 @@ pub fn render_node(node: &ProjNode, ix: usize, folds: &HashMap<String, bool>, rc
         ProjNode::Rendered { lang, code, at } => {
             let renderer = cx.try_global::<PluginHost>().and_then(|h| h.reg.code_block_renderer(lang));
             let inner = match renderer {
-                Some(r) => r.render(code, window, cx),
+                Some(r) => r.render(code, host.md, window, cx),
                 None => div().child(code.clone()).into_any_element(),
             };
             let at = *at;
+            let Some(editor) = host.editor.clone() else { return inner };
             // clicking a rendered block puts the caret in it, which reveals its source
             div()
                 .id(SharedString::from(format!("rendered-{ix}-{at}")))
-                .cursor_pointer()
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |e, _: &MouseDownEvent, window, cx| {
+                .on_mouse_down(MouseButton::Left, move |_: &MouseDownEvent, window, cx| {
+                    let _ = editor.update(cx, |e, cx| {
                         window.focus(&e.focus, cx);
                         e.set_selection(Selection::caret(at), false, cx);
-                        cx.stop_propagation();
-                    }),
-                )
+                    });
+                    cx.stop_propagation();
+                })
                 .child(inner)
                 .into_any_element()
         }
     }
 }
 
-fn render_callout(c: &CalloutView, ix: usize, folds: &HashMap<String, bool>, rcx: &RenderContext, window: &mut Window, cx: &mut Context<Editor>) -> AnyElement {
+fn render_callout(c: &CalloutView, ix: usize, host: &Host, rcx: &RenderContext, window: &mut Window, cx: &mut App) -> AnyElement {
+    let folds = host.folds;
     let style = callout_style(&c.kind, &c.meta, cx);
     let color = style.color;
     let collapsed = c.fold.is_some() && folds.get(&c.fold_key).copied().unwrap_or(c.fold == Some('-'));
     let title = BlockNode::Paragraph(c.title.clone());
     let title_el = title.render(ix, FlowPosition::at(&[&title], 0, true).first(true).last(true), rcx, window, cx);
-    let fold_btn = c.fold.map(|_| {
+    let fold_btn = c.fold.zip(host.editor.clone()).map(|(_, editor)| {
         let key = c.fold_key.clone();
         let default = c.fold == Some('-');
         div()
@@ -100,13 +165,15 @@ fn render_callout(c: &CalloutView, ix: usize, folds: &HashMap<String, bool>, rcx
             .cursor_pointer()
             .text_color(color)
             .child(if collapsed { "▸" } else { "▾" })
-            .on_click(cx.listener(move |e, _: &ClickEvent, _, cx| {
-                let cur = e.folds.get(&key).copied().unwrap_or(default);
-                e.folds.insert(key.clone(), !cur);
-                cx.notify();
-            }))
+            .on_click(move |_: &ClickEvent, _, cx| {
+                let _ = editor.update(cx, |e, cx| {
+                    let cur = e.folds.get(&key).copied().unwrap_or(default);
+                    e.folds.insert(key.clone(), !cur);
+                    cx.notify();
+                });
+            })
     });
-    let body: Vec<AnyElement> = if collapsed { Vec::new() } else { c.children.iter().map(|ch| render_node(ch, ix, folds, rcx, window, cx)).collect() };
+    let body: Vec<AnyElement> = if collapsed { Vec::new() } else { c.children.iter().map(|ch| render_node(ch, ix, host, rcx, window, cx)).collect() };
     let header = match style.look {
         CalloutLook::Obsidian => {
             // Obsidian: icon + title in the accent colour; no title -> the capitalised type

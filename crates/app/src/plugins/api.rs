@@ -5,6 +5,7 @@
 
 #![allow(dead_code)] // API surface for plugins; not every entry point has a user yet
 
+use std::ops::Range;
 use std::rc::Rc;
 
 use gpui_kit::assets::IconName;
@@ -12,6 +13,7 @@ use gpui_kit::*;
 use serde_json::Value;
 
 use crate::editor::{Editor, EditorApi};
+pub use crate::editor::render::MarkdownRenderer;
 
 pub type PluginId = &'static str;
 
@@ -97,7 +99,14 @@ pub trait CalloutRenderer {
 /// Renders fenced code blocks of one language (e.g. `chart`, `desmos-graph`) when the caret is
 /// outside them; the source shows when the caret enters.
 pub trait CodeBlockRenderer {
-    fn render(&self, code: &str, window: &mut Window, cx: &mut App) -> AnyElement;
+    /// `md` renders Markdown (read only) with links and embeds resolved from the note, for
+    /// blocks whose content is itself Markdown (layouts, columns).
+    fn render(&self, code: &str, md: &MarkdownRenderer, window: &mut Window, cx: &mut App) -> AnyElement;
+    /// The block in exported documents (PDF is typeset with Typst, M5): Typst markup, using
+    /// `md` to convert nested Markdown. None = exported as a plain code listing.
+    fn export_typst(&self, _code: &str, _md: &dyn Fn(&str) -> String) -> Option<String> {
+        None
+    }
 }
 
 /// Keys an editor hook may intercept (typed characters go through `on_char`).
@@ -120,6 +129,35 @@ pub trait EditorHook {
         false
     }
 }
+
+/// Marks ranges of the text (spell checking, linting). Called per block with the block's source
+/// text; results are cached by the editor until the block's text or `revision()` changes.
+pub trait TextDecorator {
+    /// Ranges within `block` (byte offsets into it) to underline.
+    fn decorate(&self, block: &str) -> Vec<Range<usize>>;
+    /// Bumped when results may change for unchanged text (e.g. a word was added).
+    fn revision(&self) -> u64 {
+        0
+    }
+    /// False while still loading (the editor checks again shortly).
+    fn ready(&self) -> bool {
+        true
+    }
+    fn color(&self) -> Hsla {
+        red()
+    }
+}
+
+/// An entry of the editor's right-click menu computed when it opens.
+#[derive(Clone)]
+pub struct MenuEntry {
+    pub label: String,
+    pub run: Action,
+}
+
+/// Builds editor right-click entries from the editor's state (e.g. spelling suggestions for the
+/// word under the caret).
+pub type EditorMenuProvider = Rc<dyn Fn(&Editor, &App) -> Vec<MenuEntry>>;
 
 /// What a command, ribbon or menu action can reach.
 pub struct ActionCtx<'a> {
@@ -203,6 +241,8 @@ pub struct Registry {
     pub sidebar_views: Vec<(PluginId, SidebarView)>,
     pub menu_items: Vec<(PluginId, MenuItem)>,
     pub settings_tabs: Vec<(PluginId, SettingsTab)>,
+    pub decorators: Vec<(PluginId, Rc<dyn TextDecorator>)>,
+    pub editor_menus: Vec<(PluginId, EditorMenuProvider)>,
 }
 
 impl Registry {
@@ -216,6 +256,8 @@ impl Registry {
         self.sidebar_views.retain(|(p, _)| *p != id);
         self.menu_items.retain(|(p, _)| *p != id);
         self.settings_tabs.retain(|(p, _)| *p != id);
+        self.decorators.retain(|(p, _)| *p != id);
+        self.editor_menus.retain(|(p, _)| *p != id);
     }
 
     /// How many registrations a plugin currently holds (tests: unload must leave zero).
@@ -229,6 +271,8 @@ impl Registry {
             + self.sidebar_views.iter().filter(|(p, _)| *p == id).count()
             + self.menu_items.iter().filter(|(p, _)| *p == id).count()
             + self.settings_tabs.iter().filter(|(p, _)| *p == id).count()
+            + self.decorators.iter().filter(|(p, _)| *p == id).count()
+            + self.editor_menus.iter().filter(|(p, _)| *p == id).count()
     }
 
     /// The first plugin style claiming a callout type (plugins in load order).
@@ -275,5 +319,11 @@ impl Registrar<'_> {
     }
     pub fn settings_tab(&mut self, t: SettingsTab) {
         self.reg.settings_tabs.push((self.plugin, t));
+    }
+    pub fn text_decorator(&mut self, d: Rc<dyn TextDecorator>) {
+        self.reg.decorators.push((self.plugin, d));
+    }
+    pub fn editor_menu(&mut self, m: EditorMenuProvider) {
+        self.reg.editor_menus.push((self.plugin, m));
     }
 }

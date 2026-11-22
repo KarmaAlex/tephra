@@ -27,7 +27,16 @@ fn pages(cx: &App) -> Vec<SettingPage> {
                 .keywords([m.id])
         })
         .collect();
-    let mut pages = vec![SettingPage::new("Plugins").description("Bundled plugins. Turning one off removes everything it added; no restart needed.").group(SettingGroup::new().items(toggles))];
+    let editor: Vec<SettingItem> = crate::app_settings::TOGGLES
+        .iter()
+        .map(|(key, label, desc, _)| {
+            let key: &'static str = key;
+            SettingItem::new(*label, SettingField::switch(move |cx: &App| crate::app_settings::AppSettings::flag(cx, key), move |v: bool, cx: &mut App| crate::app_settings::AppSettings::set(cx, key, Value::Bool(v))))
+                .description(*desc)
+                .keywords([key])
+        })
+        .collect();
+    let mut pages = vec![SettingPage::new("Editor").group(SettingGroup::new().items(editor)), SettingPage::new("Plugins").description("Bundled plugins. Turning one off removes everything it added; no restart needed.").group(SettingGroup::new().items(toggles))];
     for m in manifests.iter().filter(|m| host.is_enabled(m.id)) {
         let id = m.id;
         let mut items: Vec<SettingItem> = Vec::new();

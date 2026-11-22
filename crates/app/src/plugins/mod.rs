@@ -7,7 +7,9 @@
 pub mod academic_notes;
 pub mod api;
 pub mod desmos;
+pub mod horizontal_blocks;
 pub mod latex_suite;
+pub mod spellcheck;
 pub mod word_count;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -43,8 +45,10 @@ pub fn bundled(vault_root: &Path) -> Vec<Box<dyn Plugin>> {
     vec![
         Box::new(academic_notes::AcademicNotes::new()),
         Box::new(latex_suite::LatexSuite::new(vault_root)),
+        Box::new(spellcheck::SpellCheck::new(vault_root)),
         Box::new(word_count::WordCount::new()),
         Box::new(desmos::Desmos::new()),
+        Box::new(horizontal_blocks::HorizontalBlocks::new(vault_root)),
     ]
 }
 
@@ -217,11 +221,16 @@ mod tests {
         }
     }
     impl CodeBlockRenderer for Nop {
-        fn render(&self, _: &str, _: &mut Window, _: &mut App) -> AnyElement {
+        fn render(&self, _: &str, _: &MarkdownRenderer, _: &mut Window, _: &mut App) -> AnyElement {
             div().into_any_element()
         }
     }
     impl EditorHook for Nop {}
+    impl TextDecorator for Nop {
+        fn decorate(&self, _: &str) -> Vec<std::ops::Range<usize>> {
+            Vec::new()
+        }
+    }
     impl Plugin for KitchenSink {
         fn manifest(&self) -> &PluginManifest {
             &self.0
@@ -237,6 +246,8 @@ mod tests {
             r.sidebar_view(SidebarView { id: "v".into(), title: "V".into(), icon: gpui_kit::assets::IconName::Star, render: Rc::new(|_, _, _| div().into_any_element()) });
             r.menu_item(MenuItem { id: "m".into(), label: "M".into(), target: MenuTarget::File, run: Rc::new(|_, _| {}) });
             r.settings_tab(SettingsTab { id: "t".into(), title: "T".into(), render: Rc::new(|_, _| div().into_any_element()) });
+            r.text_decorator(Rc::new(Nop));
+            r.editor_menu(Rc::new(|_, _| Vec::new()));
         }
     }
 
@@ -249,18 +260,18 @@ mod tests {
         let mut h = PluginHost::new(None, vec![Box::new(KitchenSink(manifest("a", true))), Box::new(KitchenSink(manifest("b", false)))]);
         assert!(h.load_plugin("a"));
         assert!(!h.load_plugin("a"), "loading twice is a no-op");
-        assert_eq!(h.reg.count("a"), 9);
+        assert_eq!(h.reg.count("a"), 11);
         assert_eq!(h.reg.commands[0].1.id, "a:c");
         h.apply_enabled("b", true);
-        assert_eq!(h.reg.count("b"), 9);
+        assert_eq!(h.reg.count("b"), 11);
         let g = h.generation;
         h.apply_enabled("a", false);
         assert_eq!(h.reg.count("a"), 0, "unload must remove every registration");
-        assert_eq!(h.reg.count("b"), 9, "other plugins untouched");
+        assert_eq!(h.reg.count("b"), 11, "other plugins untouched");
         assert!(!h.is_loaded("a") && h.is_loaded("b") && !h.is_enabled("a"));
         assert!(h.generation > g);
         h.apply_setting("b", "k", Value::Bool(false)); // reloads b
-        assert_eq!((h.reg.count("b"), h.setting("b", "k")), (9, Value::Bool(false)));
+        assert_eq!((h.reg.count("b"), h.setting("b", "k")), (11, Value::Bool(false)));
     }
 
     #[test]

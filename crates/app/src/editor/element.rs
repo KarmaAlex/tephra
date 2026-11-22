@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::ops::Range;
 
-use gpui_kit::base::text::editor_host::collect_leaf_geometry;
+use gpui_kit::base::text::editor_host::{collect_leaf_geometry, Caret};
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::*;
 
@@ -14,12 +14,31 @@ pub struct EditorElement {
     editor: Entity<Editor>,
     child: Option<AnyElement>,
     decorations: HashMap<u64, Vec<(Range<usize>, Hsla)>>,
+    /// Wavy underlines: (leaf key, leaf range, colour).
+    squiggles: Vec<(u64, Range<usize>, Hsla)>,
     scroll: ScrollHandle,
 }
 
 impl EditorElement {
-    pub fn new(editor: Entity<Editor>, child: AnyElement, decorations: HashMap<u64, Vec<(Range<usize>, Hsla)>>, scroll: ScrollHandle) -> Self {
-        Self { editor, child: Some(child), decorations, scroll }
+    pub fn new(editor: Entity<Editor>, child: AnyElement, decorations: HashMap<u64, Vec<(Range<usize>, Hsla)>>, squiggles: Vec<(u64, Range<usize>, Hsla)>, scroll: ScrollHandle) -> Self {
+        Self { editor, child: Some(child), decorations, squiggles, scroll }
+    }
+}
+
+/// A wavy line from `x0` to `x1` with its top at `y`.
+fn paint_squiggle(window: &mut Window, x0: Pixels, x1: Pixels, y: Pixels, color: Hsla) {
+    let (step, amp) = (px(2.), px(1.5));
+    let mut b = PathBuilder::stroke(px(1.));
+    b.move_to(point(x0, y + amp));
+    let mut x = x0;
+    let mut up = true;
+    while x < x1 {
+        x = (x + step).min(x1);
+        b.line_to(point(x, if up { y } else { y + amp }));
+        up = !up;
+    }
+    if let Ok(p) = b.build() {
+        window.paint_path(p, color);
     }
 }
 
@@ -80,6 +99,23 @@ impl Element for EditorElement {
     fn paint(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, bounds: Bounds<Pixels>, child: &mut AnyElement, caret: &mut Option<Bounds<Pixels>>, window: &mut Window, cx: &mut App) {
         let paint_start = std::time::Instant::now();
         child.paint(window, cx);
+        {
+            let e = self.editor.read(cx);
+            let lines: Vec<(Pixels, Pixels, Pixels, Hsla)> = self
+                .squiggles
+                .iter()
+                .filter_map(|(k, r, c)| {
+                    let g = e.geometry.get(k)?;
+                    let a = g.position_for_caret(Caret::new(r.start));
+                    let b = g.position_for_caret(Caret::new(r.end));
+                    // a word does not wrap; skip anything split across lines
+                    ((a.y - b.y).abs() < px(1.) && b.x > a.x).then(|| (a.x, b.x, a.y + g.caret_height() - px(2.), *c))
+                })
+                .collect();
+            for (x0, x1, y, c) in lines {
+                paint_squiggle(window, x0, x1, y, c);
+            }
+        }
         let (focus, caret_color) = {
             let e = self.editor.read(cx);
             (e.focus.clone(), cx.theme().caret)

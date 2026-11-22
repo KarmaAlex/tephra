@@ -13,6 +13,7 @@ use gpui_kit::component::dialog::{DialogAction, DialogClose, DialogFooter};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::list::ListItem;
+use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::tree::{tree, TreeItem, TreeState};
 use gpui_kit::component::{h_flex, v_flex, ActiveTheme as _, Icon, IconName, Selectable as _, Sizable as _};
@@ -63,6 +64,8 @@ pub struct Workspace {
     /// Right sidebar (plugin views) shown, and which view.
     right_sidebar: bool,
     right_view: usize,
+    /// Files shown in the tree after the last rebuild (for UI tests).
+    pub tree_files: Vec<String>,
     _watcher: Option<notify::RecommendedWatcher>,
     _subs: Vec<Subscription>,
 }
@@ -97,6 +100,7 @@ impl Workspace {
             sidebar: true,
             right_sidebar: false,
             right_view: 0,
+            tree_files: Vec::new(),
             _watcher: None,
             _subs: subs,
         };
@@ -255,6 +259,7 @@ impl Workspace {
                 d = d.dirs.entry(p.to_string()).or_default();
             }
         }
+        self.tree_files = self.vault.borrow().index.files().cloned().collect();
         for f in self.vault.borrow().index.files() {
             let mut d = &mut root;
             let parts: Vec<&str> = f.split('/').collect();
@@ -371,7 +376,13 @@ impl Workspace {
                 let path = match resolved {
                     Some(p) => p,
                     None => match self.create_note_for_link(target) {
-                        Ok(p) => p,
+                        Ok(p) => {
+                            self.rebuild_tree(cx);
+                            for t in self.tabs.clone() {
+                                t.update(cx, |e, cx| e.invalidate(cx)); // the link is no longer unresolved
+                            }
+                            p
+                        }
                         Err(e) => {
                             editor.update(cx, |ed, cx| {
                                 ed.status = Some(format!("Could not create \"{target}\": {e}").into());
@@ -432,8 +443,19 @@ impl Workspace {
         println!("STATUS {msg}");
         if let Some(e) = self.tabs.get(self.active) {
             e.update(cx, |e, cx| {
-                e.status = Some(msg);
+                e.status = Some(msg.clone());
                 cx.notify();
+                // informational: hide after a moment unless something else replaced it
+                cx.spawn(async move |e, cx| {
+                    cx.background_executor().timer(Duration::from_millis(2500)).await;
+                    let _ = e.update(cx, |e, cx| {
+                        if e.status.as_ref() == Some(&msg) {
+                            e.status = None;
+                            cx.notify();
+                        }
+                    });
+                })
+                .detach();
             });
         }
     }
@@ -743,75 +765,90 @@ impl Workspace {
             .child(h_flex().px_3().py_2().justify_between().child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("Files")).child(
                 Button::new("new-note").ghost().xsmall().icon(IconName::Plus).tooltip("New note (Ctrl+N)").on_click(cx.listener(|ws, _, w, cx| ws.new_note_in("", w, cx))),
             ))
-            .child(
-                tree(&self.tree, move |ix, entry, _selected, _w, cx| {
-                    let item = entry.item();
-                    let id = item.id.to_string();
-                    let folder = entry.is_folder();
-                    let conflict = !folder && is_sync_conflict(&id);
-                    let icon = if folder {
-                        if entry.is_expanded() { IconName::FolderOpen } else { IconName::Folder }
-                    } else if conflict {
-                        IconName::TriangleAlert
-                    } else {
-                        IconName::File
-                    };
-                    let theme = cx.theme();
-                    let (fg, warn) = (theme.foreground, theme.warning);
-                    let weak = weak.clone();
-                    let path = root.join(&id);
-                    ListItem::new(ix)
-                        .w_full()
-                        .px_2()
-                        .pl(px(14.) * entry.depth() + px(8.))
-                        .child(
-                            h_flex()
-                                .gap_1p5()
-                                .text_sm()
-                                .text_color(if conflict { warn } else { fg })
-                                .child(Icon::new(icon).small())
-                                .child(item.label.clone())
-                                .when(conflict, |d| d.child(div().text_xs().child("sync conflict"))),
-                        )
-                        .when(!folder, |li| {
-                            li.on_click(move |ev, window, cx| {
-                                let new_tab = ev.modifiers().secondary(cx);
-                                let p = path.clone();
-                                let _ = weak.update(cx, |ws, cx| {
-                                    ws.open_path(p, new_tab, window, cx);
-                                });
+            .child({
+                let root_target = self.menu_target.clone();
+                // right-click on empty space (below the items, or the strip at the bottom):
+                // the vault root
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .child(
+                    tree(&self.tree, move |ix, entry, _selected, _w, cx| {
+                        let item = entry.item();
+                        let id = item.id.to_string();
+                        let folder = entry.is_folder();
+                        let conflict = !folder && is_sync_conflict(&id);
+                        let icon = if folder {
+                            if entry.is_expanded() { IconName::FolderOpen } else { IconName::Folder }
+                        } else if conflict {
+                            IconName::TriangleAlert
+                        } else {
+                            IconName::File
+                        };
+                        let theme = cx.theme();
+                        let (fg, warn) = (theme.foreground, theme.warning);
+                        let weak = weak.clone();
+                        let path = root.join(&id);
+                        ListItem::new(ix)
+                            .w_full()
+                            .px_2()
+                            .pl(px(14.) * entry.depth() + px(8.))
+                            .child(
+                                h_flex()
+                                    .gap_1p5()
+                                    .text_sm()
+                                    .text_color(if conflict { warn } else { fg })
+                                    .child(Icon::new(icon).small())
+                                    .child(item.label.clone())
+                                    .when(conflict, |d| d.child(div().text_xs().child("sync conflict"))),
+                            )
+                            .when(!folder, |li| {
+                                li.on_click(move |ev, window, cx| {
+                                    let new_tab = ev.modifiers().secondary(cx);
+                                    let p = path.clone();
+                                    let _ = weak.update(cx, |ws, cx| {
+                                        ws.open_path(p, new_tab, window, cx);
+                                    });
+                                })
                             })
-                        })
-                })
-                .context_menu(move |_ix, entry, menu, _w, cx| {
-                    let id = entry.item().id.to_string();
-                    let folder = entry.is_folder();
-                    let rel = id.strip_prefix("dir:").unwrap_or(&id).to_string();
-                    *target.borrow_mut() = Some((rel.clone(), folder));
-                    let mut menu = menu
-                        .when(!folder, |m| m.menu("Open in new tab", Box::new(OpenInNewTab)))
-                        .menu("New note here", Box::new(NewNote))
-                        .menu("New folder here", Box::new(NewFolder))
-                        .separator()
-                        .menu("Rename or move…", Box::new(RenameItem))
-                        .menu("Delete", Box::new(DeleteItem));
-                    let items: Vec<_> = cx.try_global::<PluginHost>().map(|h| h.reg.menu_items.iter().filter(|(_, m)| m.target == MenuTarget::File).map(|(_, m)| m.clone()).collect()).unwrap_or_default();
-                    if !items.is_empty() {
-                        menu = menu.separator();
-                    }
-                    for it in items {
-                        let rel = rel.clone();
-                        let weak = menu_ws.clone();
-                        menu = menu.item(gpui_kit::component::menu::PopupMenuItem::new(it.label.clone()).on_click(move |_, window, cx| {
-                            let editor = weak.upgrade().and_then(|ws| ws.read(cx).active_editor());
-                            let mut ctx = crate::plugins::ActionCtx { window, cx, editor };
-                            (it.run)(&mut ctx, Some(&rel));
-                        }));
-                    }
-                    menu
-                })
-                .flex_1(),
-            )
+                    })
+                    .context_menu(move |_ix, entry, menu, _w, cx| {
+                        let id = entry.item().id.to_string();
+                        let folder = entry.is_folder();
+                        let rel = id.strip_prefix("dir:").unwrap_or(&id).to_string();
+                        *target.borrow_mut() = Some((rel.clone(), folder));
+                        let mut menu = menu
+                            .when(!folder, |m| m.menu("Open in new tab", Box::new(OpenInNewTab)))
+                            .menu("New note here", Box::new(NewNote))
+                            .menu("New folder here", Box::new(NewFolder))
+                            .separator()
+                            .menu("Rename or move…", Box::new(RenameItem))
+                            .menu("Delete", Box::new(DeleteItem));
+                        let items: Vec<_> = cx.try_global::<PluginHost>().map(|h| h.reg.menu_items.iter().filter(|(_, m)| m.target == MenuTarget::File).map(|(_, m)| m.clone()).collect()).unwrap_or_default();
+                        if !items.is_empty() {
+                            menu = menu.separator();
+                        }
+                        for it in items {
+                            let rel = rel.clone();
+                            let weak = menu_ws.clone();
+                            menu = menu.item(gpui_kit::component::menu::PopupMenuItem::new(it.label.clone()).on_click(move |_, window, cx| {
+                                let editor = weak.upgrade().and_then(|ws| ws.read(cx).active_editor());
+                                let mut ctx = crate::plugins::ActionCtx { window, cx, editor };
+                                (it.run)(&mut ctx, Some(&rel));
+                            }));
+                        }
+                        menu
+                    })
+                    .flex_1(),
+                    )
+                    .child(div().h(px(48.)).flex_none())
+                    .context_menu(move |menu, _, _| {
+                        *root_target.borrow_mut() = None;
+                        menu.menu("New note", Box::new(NewNote)).menu("New folder", Box::new(NewFolder))
+                    })
+            })
     }
 }
 

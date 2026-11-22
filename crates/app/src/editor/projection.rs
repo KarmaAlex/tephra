@@ -124,6 +124,8 @@ pub enum ProjNode {
     Rendered { lang: String, code: String, at: usize },
     /// A block with a note above it (e.g. "Desmos plugin disabled").
     Noted { note: String, child: BlockNode },
+    /// A rendered display formula on its own (may be centred, per the editor setting).
+    Display(BlockNode),
 }
 
 /// How the host handles a fenced code block's language.
@@ -262,6 +264,9 @@ struct LeafBuilder<'a> {
     prefixes: Vec<(Range<usize>, bool)>,
     /// Inside a table cell: `\|` in math is a literal pipe (Obsidian's table escaping).
     table_cell: bool,
+    /// Revealed math source: empty lines get a zero-width pad in the source style, so an empty
+    /// line is as tall before typing as after (otherwise it takes the body font's height).
+    pad_empty_lines: bool,
     resolve: &'a dyn Fn(&str) -> Option<PathBuf>,
 }
 
@@ -278,6 +283,7 @@ impl<'a> LeafBuilder<'a> {
             muted: Vec::new(),
             prefixes: Vec::new(),
             table_cell: false,
+            pad_empty_lines: false,
             resolve,
         }
     }
@@ -333,6 +339,7 @@ impl<'a> LeafBuilder<'a> {
                 self.visible(c.clone(), mark, true);
             } else {
                 self.hidden(c.clone());
+                self.pad_if_empty_line(c.end, mark);
             }
             pos = c.end;
         }
@@ -342,6 +349,40 @@ impl<'a> LeafBuilder<'a> {
     }
 
     fn visible(&mut self, src: Range<usize>, mark: &TextMark, muted: bool) {
+        if self.pad_empty_lines {
+            if let Some(nl) = self.text[src.clone()].find('\n').filter(|nl| src.start + nl + 1 < src.end || src.end == src.start + nl + 1) {
+                let cut = src.start + nl + 1;
+                self.visible_run(src.start..cut, mark, muted);
+                self.pad_if_empty_line(cut, mark);
+                if cut < src.end {
+                    self.visible(cut..src.end, mark, muted);
+                }
+                return;
+            }
+        }
+        self.visible_run(src, mark, muted);
+    }
+
+    /// A pad when the line starting at `pos` has no visible text (see `pad_empty_lines`).
+    fn pad_if_empty_line(&mut self, pos: usize, mark: &TextMark) {
+        if !self.pad_empty_lines {
+            return;
+        }
+        let at_line_start = pos == 0 || self.text.as_bytes()[pos - 1] == b'\n' || self.prefixes.iter().any(|(p, r)| !r && p.end == pos);
+        let rest = &self.text.as_bytes()[pos.min(self.text.len())..];
+        let empty = pos >= self.map.src.end || matches!(rest.first(), Some(b'\n' | b'\r'));
+        let prefix_follows = self.prefixes.iter().any(|(p, _)| p.start == pos && p.end > pos);
+        if at_line_start && empty && !prefix_follows {
+            let start = self.run.len();
+            self.run.push_str(PAD);
+            self.run_marks.push((start..start + PAD.len(), mark.clone()));
+            let l = self.map.len;
+            self.map.segs.push(Seg { kind: SegKind::Pad, leaf: l..l + PAD.len(), src: pos..pos });
+            self.map.len += PAD.len();
+        }
+    }
+
+    fn visible_run(&mut self, src: Range<usize>, mark: &TextMark, muted: bool) {
         let s = &self.text[src.clone()];
         let start = self.run.len();
         self.run.push_str(s);
@@ -455,9 +496,11 @@ impl<'a> LeafBuilder<'a> {
             InlineKind::Math { display } => {
                 if reveal {
                     let m = styled(&|m| m.code());
+                    let was = std::mem::replace(&mut self.pad_empty_lines, *display);
                     self.text(open, &m, true);
                     self.text(n.inner.clone(), &m, false);
                     self.text(close, &m, true);
+                    self.pad_empty_lines = was;
                 } else {
                     let tex = self.text[n.inner.clone()].to_string();
                     self.math_atom(n.range.clone(), &tex, *display);
@@ -547,6 +590,37 @@ impl QuoteCtx<'_> {
         LeafBuilder::new(self.text, src, self.sel.clone(), self.palette, self.resolve)
     }
 
+    /// Callout body lines, with each unrevealed display formula that sits on its own lines
+    /// split out as a `Display` block (so it can be centred like top-level display math).
+    fn body_lines(&mut self, r: &Range<usize>, proj: &mut Projection) -> Vec<ProjNode> {
+        let text = self.text;
+        let mut out = Vec::new();
+        let mut cur = r.start;
+        for m in obsidilight_core::markdown::find_math(&text[r.clone()]).into_iter().filter(|m| m.display) {
+            let (ms, me) = (r.start + m.range.start, r.start + m.range.end);
+            let ls = text[..ms].rfind('\n').map_or(0, |i| i + 1).max(r.start);
+            let le = text[me..].find('\n').map_or(r.end, |i| me + i).min(r.end);
+            let only_prefix_before = text[ls..ms].chars().all(|c| c == '>' || c == ' ' || c == '\t');
+            let only_space_after = text[me..le].trim().is_empty();
+            let revealed = self.sel.start <= me && self.sel.end >= ms;
+            if ls < cur || !only_prefix_before || !only_space_after || revealed {
+                continue;
+            }
+            if ls > cur + 1 {
+                out.push(self.lines(&(cur..ls - 1), proj));
+            }
+            match self.lines(&(ls..le), proj) {
+                ProjNode::Block(b) => out.push(ProjNode::Display(b)),
+                other => out.push(other),
+            }
+            cur = (le + 1).min(r.end);
+        }
+        if cur < r.end || out.is_empty() {
+            out.push(self.lines(&(cur..r.end), proj));
+        }
+        out
+    }
+
     fn lines(&mut self, r: &Range<usize>, proj: &mut Projection) -> ProjNode {
         let k = self.next_key();
         let mut lb = self.leaf(r.clone());
@@ -567,7 +641,13 @@ impl QuoteCtx<'_> {
         let n = self.occurrences.entry(header.clone()).or_insert(0);
         *n += 1;
         let fold_key = format!("{header}\u{0}{n}");
-        let children = c.body.iter().map(|it| self.item(it, true, proj)).collect();
+        let mut children = Vec::new();
+        for it in &c.body {
+            match it {
+                QuoteItem::Lines(r) => children.extend(self.body_lines(r, proj)),
+                QuoteItem::Callout(_) => children.push(self.item(it, true, proj)),
+            }
+        }
         ProjNode::Callout(CalloutView {
             kind: c.kind.clone(),
             meta: c.meta.clone(),
@@ -793,15 +873,16 @@ pub fn project(inp: &ProjectionInput) -> Projection {
                 let k = key(bi, 0);
                 let mut lb = new_leaf(b.range.clone());
                 if rev {
+                    lb.pad_empty_lines = true;
                     lb.text(b.range.clone(), &TextMark::default().code(), false);
                     nodes.push((ProjNode::Block(BlockNode::Paragraph(lb.finish(k, &mut proj))), vec![k]));
                     // rendered preview under the source (not editable, no key)
                     let mut preview = Paragraph::default();
                     preview.push(InlineNode::custom(MarkdownNode::new(MATH_NODE, MathAtom { tex, display: true }).text(ATOM)));
-                    nodes.push((ProjNode::Block(BlockNode::Paragraph(preview)), vec![]));
+                    nodes.push((ProjNode::Display(BlockNode::Paragraph(preview)), vec![]));
                 } else {
                     lb.math_atom(b.range.clone(), &tex, true);
-                    nodes.push((ProjNode::Block(BlockNode::Paragraph(lb.finish(k, &mut proj))), vec![k]));
+                    nodes.push((ProjNode::Display(BlockNode::Paragraph(lb.finish(k, &mut proj))), vec![k]));
                 }
             }
             BlockKind::Rule => {
@@ -849,7 +930,7 @@ mod tests {
                     out.push_str(&t);
                     c.children.iter().for_each(|x| node_text(x, k, out));
                 }
-                ProjNode::Noted { child, .. } => para_text(child, out),
+                ProjNode::Noted { child, .. } | ProjNode::Display(child) => para_text(child, out),
                 ProjNode::Rendered { .. } => {}
             }
         }
@@ -935,6 +1016,34 @@ mod tests {
         assert!(matches!(p.blocks[0].node, ProjNode::Callout(ref c) if c.kind == "thm" && !c.title_empty));
         let p = proj(t, 3);
         assert!(leaf_text(&p, p.leaves[0].0).starts_with("> [!thm] T\n"));
+    }
+
+    #[test]
+    fn display_math_in_callouts_is_its_own_block() {
+        let t = "> [!note] t\n> line\n> $$a^2$$\n> after\n\nend";
+        let p = proj(t, t.len());
+        let ProjNode::Callout(c) = &p.blocks[0].node else { panic!() };
+        assert_eq!(c.children.len(), 3);
+        assert!(matches!(c.children[1], ProjNode::Display(_)));
+        let p = proj(t, t.find("a^2").unwrap()); // caret in the callout: source, no split
+        assert!(matches!(p.blocks[0].node, ProjNode::Block(_)) || matches!(&p.blocks[0].node, ProjNode::Callout(c) if c.children.iter().all(|n| !matches!(n, ProjNode::Display(_)))));
+    }
+
+    #[test]
+    fn empty_lines_in_revealed_math_are_padded() {
+        let t = "$$\n\n$$\n\nx";
+        let p = proj(t, 3); // caret on the empty line inside the block
+        let (k, m) = &p.leaves[0];
+        assert_eq!(leaf_text(&p, *k), format!("$$\n{PAD}\n$$"));
+        assert_eq!(m.to_src(3), 3);
+        assert_eq!(m.to_leaf(3), 3, "caret before the pad");
+        assert_eq!(m.to_src(3 + PAD.len()), 3);
+        assert_eq!(m.to_src(3 + PAD.len() + 1), 4);
+        // inside a callout: the quote prefix is hidden, the line after it is empty
+        let t = "> $$\n> \n> $$\n\nx";
+        let p = proj(t, 8);
+        let lt = leaf_text(&p, p.leaves[0].0);
+        assert!(lt.contains(&format!("\n{PAD}\n")), "{lt:?}");
     }
 
     #[test]

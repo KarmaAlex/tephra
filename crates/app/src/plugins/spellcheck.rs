@@ -1,0 +1,426 @@
+//! Spell check (Obsidian's core spell checker): Hunspell dictionaries for any number of
+//! languages (a word is right if any of them accepts it), misspellings underlined, suggestions
+//! and "Add to dictionary" in the editor's right-click menu.
+//!
+//! Dictionaries are the system's Hunspell ones (`hunspell-en_us`, `hunspell-it`, … packages:
+//! `/usr/share/hunspell`), `~/.local/share/hunspell`, `$DICPATH`, or `<vault>/.obsidilight/
+//! dictionaries`. Checking uses `spellbook` (pure-Rust Hunspell). Words you add are kept in
+//! `<vault>/.obsidilight/dictionary.txt`, one per line.
+
+use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
+use std::ops::Range;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::sync::{Arc, OnceLock};
+
+use gpui_kit::{div, App, Hsla, IntoElement as _, ParentElement as _, Styled as _};
+use obsidilight_core::markdown::{parse_blocks, parse_inline, BlockKind, Inline, InlineKind};
+use obsidilight_core::{EditKind, Selection};
+use serde_json::{Map, Value};
+use spellbook::Dictionary;
+
+use super::api::*;
+use crate::editor::Editor;
+
+/// Folders searched for `<lang>.aff` + `<lang>.dic`.
+pub fn search_dirs(vault: &Path, extra: &str) -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = extra.split([',', ':']).map(str::trim).filter(|s| !s.is_empty()).map(PathBuf::from).collect();
+    v.push(vault.join(".obsidilight/dictionaries"));
+    if let Some(p) = std::env::var_os("DICPATH") {
+        v.extend(std::env::split_paths(&p));
+    }
+    if let Some(h) = std::env::var_os("HOME") {
+        v.push(Path::new(&h).join(".local/share/hunspell"));
+    }
+    for d in ["/usr/share/hunspell", "/usr/share/myspell", "/usr/share/myspell/dicts", "/usr/local/share/hunspell"] {
+        v.push(PathBuf::from(d));
+    }
+    v
+}
+
+/// Languages with both files present, e.g. `en_US`, `it_IT`.
+pub fn available(dirs: &[PathBuf]) -> Vec<(String, PathBuf)> {
+    let mut out: Vec<(String, PathBuf)> = Vec::new();
+    for d in dirs {
+        let Ok(rd) = std::fs::read_dir(d) else { continue };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.extension().is_some_and(|x| x == "dic") && p.with_extension("aff").is_file() {
+                let lang = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+                if !out.iter().any(|(l, _)| *l == lang) && !lang.starts_with("hyph") {
+                    out.push((lang, p));
+                }
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+fn norm(l: &str) -> String {
+    l.trim().replace('-', "_").to_lowercase()
+}
+
+/// `en_US`, `en-us` and `en` all pick `en_US.dic`.
+fn find<'a>(avail: &'a [(String, PathBuf)], lang: &str) -> Option<&'a (String, PathBuf)> {
+    let want = norm(lang);
+    avail.iter().find(|(l, _)| norm(l) == want).or_else(|| avail.iter().find(|(l, _)| norm(l).starts_with(&format!("{want}_"))))
+}
+
+/// Hunspell files are UTF-8 or (older ones) ISO-8859-1/15.
+fn decode(bytes: Vec<u8>) -> String {
+    String::from_utf8(bytes).unwrap_or_else(|e| e.into_bytes().iter().map(|&b| b as char).collect())
+}
+
+pub fn load_dictionary(dic: &Path) -> Result<Dictionary, String> {
+    let aff = decode(std::fs::read(dic.with_extension("aff")).map_err(|e| e.to_string())?);
+    let words = decode(std::fs::read(dic).map_err(|e| e.to_string())?);
+    Dictionary::new(&aff, &words).map_err(|e| e.to_string())
+}
+
+/// Words of `text` worth checking: letters with inner apostrophes, outside code, math, links,
+/// tags, frontmatter, URLs and the like. Byte ranges.
+pub fn words(text: &str) -> Vec<Range<usize>> {
+    let mut skip: Vec<Range<usize>> = Vec::new();
+    for b in parse_blocks(text) {
+        match b.kind {
+            BlockKind::Code { .. } | BlockKind::MathBlock | BlockKind::Frontmatter => skip.push(b.range.clone()),
+            BlockKind::Blank | BlockKind::Rule => {}
+            _ => {
+                fn walk(n: &[Inline], skip: &mut Vec<Range<usize>>, text: &str) {
+                    for i in n {
+                        match i.kind {
+                            InlineKind::Code | InlineKind::Math { .. } | InlineKind::Tag | InlineKind::BlockId | InlineKind::Image | InlineKind::Comment => skip.push(i.range.clone()),
+                            InlineKind::WikiLink { embed } => {
+                                // only a shown alias is prose
+                                if embed || !text[i.range.clone()].contains('|') {
+                                    skip.push(i.range.clone());
+                                } else {
+                                    skip.push(i.range.start..i.inner.start);
+                                    skip.push(i.inner.end..i.range.end);
+                                }
+                            }
+                            InlineKind::Link => {
+                                skip.push(i.inner.end..i.range.end); // the URL
+                                walk(&i.children, skip, text);
+                            }
+                            _ => walk(&i.children, skip, text),
+                        }
+                    }
+                }
+                walk(&parse_inline(text, b.content.clone()), &mut skip, text);
+                // callout headers `[!type]`
+                let head = &text[b.content.clone()];
+                if let Some(s) = head.find("[!") {
+                    if let Some(e) = head[s..].find(']') {
+                        skip.push(b.content.start + s..b.content.start + s + e + 1);
+                    }
+                }
+            }
+        }
+    }
+    // URLs and HTML tags
+    let mut i = 0;
+    while let Some(p) = text[i..].find("://") {
+        let at = i + p;
+        let s = text[..at].rfind(|c: char| !c.is_ascii_alphanumeric()).map_or(0, |x| x + 1);
+        let e = text[at..].find(char::is_whitespace).map_or(text.len(), |x| at + x);
+        skip.push(s..e);
+        i = e.max(at + 3).min(text.len());
+    }
+    let mut out = Vec::new();
+    let mut it = text.char_indices().peekable();
+    while let Some((s, c)) = it.next() {
+        if !c.is_alphabetic() {
+            continue;
+        }
+        let mut e = s + c.len_utf8();
+        let mut has_digit = false;
+        while let Some(&(j, d)) = it.peek() {
+            let apostrophe = (d == '\'' || d == '’') && text[j + d.len_utf8()..].chars().next().is_some_and(char::is_alphabetic);
+            if d.is_alphanumeric() || apostrophe || d == '_' {
+                has_digit |= d.is_ascii_digit() || d == '_';
+                e = j + d.len_utf8();
+                it.next();
+            } else {
+                break;
+            }
+        }
+        let w = s..e;
+        if has_digit || skip.iter().any(|k| k.start < w.end && w.start < k.end) {
+            continue;
+        }
+        out.push(w);
+    }
+    out
+}
+
+pub struct Checker {
+    dicts: Arc<OnceLock<Vec<(String, Dictionary)>>>,
+    custom: RefCell<HashSet<String>>,
+    revision: Cell<u64>,
+    words_file: PathBuf,
+}
+
+impl Checker {
+    pub fn ready(&self) -> bool {
+        self.dicts.get().is_some()
+    }
+
+    pub fn is_correct(&self, word: &str) -> bool {
+        let Some(dicts) = self.dicts.get() else { return true };
+        if dicts.is_empty() || word.chars().count() < 2 {
+            return true;
+        }
+        let custom = self.custom.borrow();
+        let ok = |w: &str| !w.is_empty() && (custom.contains(w) || custom.contains(&w.to_lowercase()) || dicts.iter().any(|(_, d)| d.check(w)));
+        let w = word.replace('’', "'");
+        if ok(&w) {
+            return true;
+        }
+        // elisions (l'albero, dell'anno, it's): accept when every part is a word
+        if let Some((a, b)) = w.split_once('\'') {
+            return (ok(&format!("{a}'")) || ok(a)) && (b.is_empty() || ok(b) || ok(&format!("'{b}")));
+        }
+        false
+    }
+
+    pub fn suggest(&self, word: &str) -> Vec<String> {
+        let Some(dicts) = self.dicts.get() else { return Vec::new() };
+        let mut out: Vec<String> = Vec::new();
+        for (_, d) in dicts {
+            let mut s = Vec::new();
+            d.suggest(word, &mut s);
+            for x in s {
+                if !out.contains(&x) {
+                    out.push(x);
+                }
+            }
+        }
+        out.truncate(6);
+        out
+    }
+
+    /// Adds a word to the vault's dictionary (`.obsidilight/dictionary.txt`).
+    pub fn add_word(&self, word: &str) {
+        let w = word.trim().to_string();
+        if w.is_empty() || !self.custom.borrow_mut().insert(w.clone()) {
+            return;
+        }
+        self.revision.set(self.revision.get() + 1);
+        let mut all: Vec<String> = self.custom.borrow().iter().cloned().collect();
+        all.sort();
+        if let Some(d) = self.words_file.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        let tmp = self.words_file.with_extension("txt.obsidilight-tmp");
+        if std::fs::write(&tmp, all.join("\n") + "\n").is_ok() {
+            let _ = std::fs::rename(&tmp, &self.words_file);
+        }
+    }
+
+    pub fn misspelled(&self, text: &str) -> Vec<Range<usize>> {
+        words(text).into_iter().filter(|r| !self.is_correct(&text[r.clone()])).collect()
+    }
+}
+
+struct Decorator(Rc<Checker>);
+
+impl TextDecorator for Decorator {
+    fn decorate(&self, block: &str) -> Vec<Range<usize>> {
+        self.0.misspelled(block)
+    }
+    fn revision(&self) -> u64 {
+        self.0.revision.get()
+    }
+    fn ready(&self) -> bool {
+        self.0.ready()
+    }
+    fn color(&self) -> Hsla {
+        gpui_kit::rgb(0xe93147).into()
+    }
+}
+
+/// The word around `pos` in the editor (letters and inner apostrophes).
+fn word_at(text: &str, pos: usize) -> Option<Range<usize>> {
+    words(text).into_iter().find(|r| r.start <= pos && pos <= r.end)
+}
+
+pub struct SpellCheck {
+    manifest: PluginManifest,
+    vault: PathBuf,
+}
+
+impl SpellCheck {
+    pub fn new(vault: &Path) -> Self {
+        Self {
+            manifest: PluginManifest {
+                id: "spellcheck",
+                name: "Spell check",
+                version: "0.1.0",
+                description: "Underlines misspelled words using Hunspell dictionaries; right-click for suggestions or to add a word.",
+                enabled_by_default: true,
+                settings: vec![
+                    SettingSpec { key: "languages", label: "Languages", description: "Comma-separated, e.g. en_US, it_IT. A word is accepted if any language knows it.", kind: SettingKind::Text, default: Value::from("en_US, it_IT") },
+                    SettingSpec { key: "dictionaryFolders", label: "Extra dictionary folders", description: "Comma-separated folders with .aff/.dic files (system ones are found automatically).", kind: SettingKind::Text, default: Value::from("") },
+                ],
+                code_languages: &[],
+            },
+            vault: vault.to_path_buf(),
+        }
+    }
+}
+
+impl Plugin for SpellCheck {
+    fn manifest(&self) -> &PluginManifest {
+        &self.manifest
+    }
+
+    fn on_load(&mut self, settings: &Map<String, Value>, reg: &mut Registrar) {
+        let get = |k: &str| settings.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+        let dirs = search_dirs(&self.vault, &get("dictionaryFolders"));
+        let avail = available(&dirs);
+        let langs: Vec<String> = get("languages").split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect();
+        let chosen: Vec<(String, PathBuf)> = langs.iter().filter_map(|l| find(&avail, l).cloned()).collect();
+        let missing: Vec<String> = langs.iter().filter(|l| find(&avail, l).is_none()).cloned().collect();
+        let words_file = self.vault.join(".obsidilight/dictionary.txt");
+        let custom: HashSet<String> = std::fs::read_to_string(&words_file).map(|t| t.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect()).unwrap_or_default();
+        let dicts: Arc<OnceLock<Vec<(String, Dictionary)>>> = Arc::new(OnceLock::new());
+        let errors: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+        {
+            // load off the UI thread (a big dictionary takes a moment to parse)
+            let dicts = dicts.clone();
+            let errors = errors.clone();
+            std::thread::spawn(move || {
+                let mut v = Vec::new();
+                for (lang, path) in chosen {
+                    match load_dictionary(&path) {
+                        Ok(d) => v.push((lang, d)),
+                        Err(e) => errors.lock().map(|mut x| x.push(format!("{lang}: {e}"))).unwrap_or(()),
+                    }
+                }
+                let _ = dicts.set(v);
+            });
+        }
+        let checker = Rc::new(Checker { dicts: dicts.clone(), custom: RefCell::new(custom), revision: Cell::new(0), words_file });
+        reg.text_decorator(Rc::new(Decorator(checker.clone())));
+
+        let c = checker.clone();
+        reg.editor_menu(Rc::new(move |e: &Editor, _: &App| {
+            let sel = e.doc.selection();
+            // a selection: add it as is; otherwise the word at the caret
+            let (range, word) = if !sel.is_empty() {
+                let r = sel.range();
+                (r.clone(), e.doc.slice(r))
+            } else {
+                let line = e.doc.line_of(sel.head);
+                let ls = e.doc.line_start(line);
+                let text = e.doc.line_text(line);
+                let Some(r) = word_at(&text, sel.head - ls) else { return Vec::new() };
+                (ls + r.start..ls + r.end, text[r].to_string())
+            };
+            let word = word.trim().to_string();
+            if word.is_empty() || word.contains('\n') || word.chars().count() > 60 {
+                return Vec::new();
+            }
+            let mut out = Vec::new();
+            if sel.is_empty() && !c.is_correct(&word) {
+                for s in c.suggest(&word) {
+                    let range = range.clone();
+                    let label = s.clone();
+                    out.push(MenuEntry {
+                        label,
+                        run: Rc::new(move |a: &mut ActionCtx| {
+                            if let Some(ed) = a.editor.clone() {
+                                let s = s.clone();
+                                let range = range.clone();
+                                ed.update(a.cx, |e, cx| {
+                                    e.edit(range.clone(), &s, EditKind::Other, cx);
+                                    e.set_selection(Selection::caret(range.start + s.len()), false, cx);
+                                });
+                            }
+                        }),
+                    });
+                }
+            }
+            if !sel.is_empty() || !c.is_correct(&word) {
+                let c = c.clone();
+                let w = word.clone();
+                out.push(MenuEntry {
+                    label: format!("Add \u{201c}{word}\u{201d} to dictionary"),
+                    run: Rc::new(move |a: &mut ActionCtx| {
+                        c.add_word(&w);
+                        a.cx.refresh_windows();
+                    }),
+                });
+            }
+            out
+        }));
+
+        let names: Vec<String> = avail.iter().map(|(l, _)| l.clone()).collect();
+        reg.settings_tab(SettingsTab {
+            id: "status".into(),
+            title: "Dictionaries".into(),
+            render: Rc::new(move |_, _| {
+                let loaded: Vec<String> = dicts.get().map(|v| v.iter().map(|(l, _)| l.clone()).collect()).unwrap_or_default();
+                let mut lines = vec![if dicts.get().is_none() { "Loading dictionaries…".to_string() } else if loaded.is_empty() { "No dictionary loaded: spell check is off.".into() } else { format!("Checking with: {}", loaded.join(", ")) }];
+                lines.push(if names.is_empty() { "No Hunspell dictionaries found on this system.".into() } else { format!("Available: {}", names.join(", ")) });
+                if !missing.is_empty() {
+                    lines.push(format!("Not found: {}. Install them with your package manager (e.g. hunspell-en_us, hunspell-it) or put <lang>.aff/.dic in .obsidilight/dictionaries.", missing.join(", ")));
+                }
+                lines.extend(errors.lock().map(|e| e.clone()).unwrap_or_default());
+                div().flex().flex_col().gap_1().text_sm().children(lines).into_any_element()
+            }),
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A tiny Hunspell dictionary (synthetic): "cat" with plural, "gatto" with plural.
+    fn checker() -> Checker {
+        let aff = "SET UTF-8\nTRY esianrtolcdugmphbyfvkwz\nSFX S Y 1\nSFX S 0 s .\nSFX I Y 1\nSFX I o i o\n";
+        let en = Dictionary::new(aff, "2\ncat/S\nthe\n").unwrap();
+        let it = Dictionary::new(aff, "3\ngatto/I\nl'\nalbero\n").unwrap();
+        let dicts = Arc::new(OnceLock::new());
+        let _ = dicts.set(vec![("en".to_string(), en), ("it".to_string(), it)]);
+        let dir = std::env::temp_dir().join(format!("ol-spell-{}", std::process::id()));
+        Checker { dicts, custom: RefCell::new(HashSet::new()), revision: Cell::new(0), words_file: dir.join("dictionary.txt") }
+    }
+
+    #[test]
+    fn words_skip_code_math_links_and_urls() {
+        let t = "Teh `codez` $x+yy$ [[Linkk]] [[a|Aliass]] #tagg https://exampl.com word2 l'albero";
+        let w: Vec<&str> = words(t).into_iter().map(|r| &t[r]).collect();
+        assert_eq!(w, vec!["Teh", "Aliass", "l'albero"]);
+        let t = "---\ntitel: x\n---\n```\nnott\n```\n$$\nfrakk\n$$\n> [!note] Titel";
+        let w: Vec<&str> = words(t).into_iter().map(|r| &t[r]).collect();
+        assert_eq!(w, vec!["Titel"]);
+    }
+
+    #[test]
+    fn any_language_accepts_and_custom_words_stick() {
+        let c = checker();
+        assert!(c.is_correct("cats") && c.is_correct("gatti") && c.is_correct("the"));
+        assert!(c.is_correct("l'albero"), "elision: l' + albero");
+        assert!(!c.is_correct("catz"));
+        assert_eq!(c.misspelled("the catz and gatti"), vec![4..8, 9..12]);
+        assert!(c.suggest("catz").contains(&"cat".to_string()) || c.suggest("catz").contains(&"cats".to_string()));
+        c.add_word("catz");
+        assert!(c.is_correct("catz"));
+        assert_eq!(c.revision.get(), 1);
+        assert!(std::fs::read_to_string(&c.words_file).unwrap().contains("catz"));
+        let _ = std::fs::remove_dir_all(c.words_file.parent().unwrap());
+    }
+
+    #[test]
+    fn language_names_match_loosely() {
+        let avail = vec![("en_US".to_string(), PathBuf::from("/x/en_US.dic")), ("it_IT".to_string(), PathBuf::from("/x/it_IT.dic"))];
+        assert_eq!(find(&avail, "en-us").map(|x| x.0.as_str()), Some("en_US"));
+        assert_eq!(find(&avail, "it").map(|x| x.0.as_str()), Some("it_IT"));
+        assert!(find(&avail, "de_DE").is_none());
+    }
+}

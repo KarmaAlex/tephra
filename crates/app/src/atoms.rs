@@ -34,8 +34,10 @@ impl MarkdownPlugin for MathPlugin {
             Some(img_) => {
                 let el = img(img_.image).w(px(img_.width)).h(px(img_.height));
                 if m.display {
-                    // display math: its own line, a little air above and below
-                    Some(InlineElement::new(div().py_1().pl_4().child(el)).with_baseline(px(img_.baseline + 4.0)))
+                    // display math: its own line, a little air above and below; optionally centred
+                    let centred = crate::app_settings::AppSettings::flag(cx, "centerDisplayMath");
+                    let d = if centred { div() } else { div().pl_4() };
+                    Some(InlineElement::new(d.py_1().child(el)).with_baseline(px(img_.baseline + 4.0)))
                 } else {
                     Some(InlineElement::new(el).with_baseline(px(img_.baseline)))
                 }
