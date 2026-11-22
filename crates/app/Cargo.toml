@@ -1,5 +1,6 @@
 [package]
 name = "obsidilight"
+description = "Lightweight Obsidian-compatible notes app (GPUI)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,3 +8,12 @@ publish.workspace = true
 
 [dependencies]
 obsidilight-core = { path = "../core" }
+gpui-kit = "0.10"
+ratex-parser = "0.1.16"
+ratex-layout = "0.1.16"
+ratex-types = "0.1.16"
+ratex-render = { version = "0.1.16", features = ["embed-fonts"] }
+rquickjs = "0.14"
+notify = "8"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }

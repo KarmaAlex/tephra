@@ -20,3 +20,4 @@ spikes/pdf/node_modules
 spikes/gpui/js/node_modules
 spikes/gpui/assets/cm6-headless.js
 spikes/*/target/
+crates/app/assets/mathjax-svg.js

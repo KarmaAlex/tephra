@@ -93,3 +93,62 @@ fn roundtrip_blocks_and_math_over_fixture() {
     eprintln!("{} notes, {} formulas", ns.len(), total_math);
     assert!(mismatches.is_empty(), "math count mismatches:\n{}", mismatches.join("\n"));
 }
+
+fn all_files(root: &Path) -> Vec<String> {
+    fn rec(root: &Path, d: &Path, out: &mut Vec<String>) {
+        for e in std::fs::read_dir(d).unwrap().flatten() {
+            if e.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
+            let p = e.path();
+            if p.is_dir() {
+                rec(root, &p, out);
+            } else {
+                out.push(p.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/"));
+            }
+        }
+    }
+    let mut v = Vec::new();
+    rec(root, root, &mut v);
+    v
+}
+
+fn embeds<'a>(v: &'a [Inline], out: &mut Vec<&'a Inline>) {
+    for n in v {
+        if n.kind == (InlineKind::WikiLink { embed: true }) {
+            out.push(n);
+        }
+        embeds(&n.children, out);
+    }
+}
+
+/// HANDOFF §7: every `![[…]]` in the fixture resolves.
+#[test]
+fn every_embed_resolves() {
+    let Some(root) = fixture() else { return };
+    let files = all_files(&root);
+    let refs: Vec<&str> = files.iter().map(String::as_str).collect();
+    let (mut total, mut missing) = (0, Vec::new());
+    for path in notes(&root) {
+        let rel = path.strip_prefix(&root).unwrap().to_string_lossy().replace('\\', "/");
+        let text = std::fs::read_to_string(&path).unwrap();
+        for b in parse_blocks(&text) {
+            if matches!(b.kind, BlockKind::Code { .. } | BlockKind::MathBlock | BlockKind::Frontmatter) {
+                continue;
+            }
+            let inl = parse_inline(&text, b.content.clone());
+            let mut found = Vec::new();
+            embeds(&inl, &mut found);
+            for e in found {
+                total += 1;
+                let target = e.link_target(&text);
+                if obsidilight_core::links::resolve_link(target, &refs, &rel).is_none() {
+                    missing.push(format!("{rel}: line {}", text[..e.range.start].matches('\n').count() + 1));
+                }
+            }
+        }
+    }
+    eprintln!("{total} embeds, {} unresolved", missing.len());
+    assert!(total >= 1000, "expected the fixture's ~1,283 embeds, found {total}");
+    assert!(missing.is_empty(), "unresolved embeds:\n{}", missing.join("\n"));
+}

@@ -23,7 +23,7 @@ spikes:
 	cd spikes/gpui && cargo build --release
 
 mathjax-bundle:  ## MathJax SVG bundle for the GPUI spike's embedded QuickJS
-	cd tools/corpus && ../../spikes/tauri/node_modules/.bin/esbuild mathjax-entry.js --bundle --minify --format=iife --platform=neutral --main-fields=module,main --target=es2020 '--define:PACKAGE_VERSION="3.2.1"' '--banner:js=var require=function(m){throw new Error("require("+m+") unavailable")};var __dirname="/";' --outfile=../../spikes/gpui/assets/mathjax-svg.js
+	cd tools/corpus && ../../spikes/tauri/node_modules/.bin/esbuild mathjax-entry.js --bundle --minify --format=iife --platform=neutral --main-fields=module,main --target=es2020 '--define:PACKAGE_VERSION="3.2.1"' '--banner:js=var require=function(m){throw new Error("require("+m+") unavailable")};var __dirname="/";' --outfile=../../crates/app/assets/mathjax-svg.js && cp ../../crates/app/assets/mathjax-svg.js ../../spikes/gpui/assets/
 
 cm6-bundle:      ## headless CM6 + Lezer Markdown bundle for QuickJS (snippet function bridge)
 	cd spikes/gpui/js && ../../tauri/node_modules/.bin/esbuild cm6-entry.js --bundle --minify --format=iife --platform=neutral --main-fields=module,main --target=es2020 --outfile=../assets/cm6-headless.js
