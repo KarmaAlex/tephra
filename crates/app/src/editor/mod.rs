@@ -1,16 +1,18 @@
 //! The live-preview Markdown editor view.
 
+pub mod api;
 pub mod element;
 pub mod input;
 pub mod measured;
 pub mod projection;
+pub mod render;
 
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use gpui_kit::base::text::editor_host::{FlowPosition, LeafGeometry, RenderContext};
+use gpui_kit::base::text::editor_host::{LeafGeometry, RenderContext};
 use gpui_kit::base::text::MarkdownExtensions;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::prelude::FluentBuilder as _;
@@ -19,10 +21,12 @@ use obsidilight_core::file::{self, DiskState, SaveOutcome};
 use obsidilight_core::{Document, EditKind, Selection};
 
 use crate::embeds::SharedVault;
+use crate::plugins::{EditorHook, EditorKey, PluginHost};
+pub use api::{EditorApi, TabstopSession};
 use element::EditorElement;
-use gpui_kit::component::h_flex;
+use projection::{CodeMode, Palette, Projection, ProjectionInput};
 pub use projection::ViewMode;
-use projection::{Palette, ProjNode, Projection, ProjectionInput};
+use std::rc::Rc;
 
 actions!(
     editor,
@@ -30,7 +34,7 @@ actions!(
         MoveLeft, MoveRight, MoveUp, MoveDown, MoveWordLeft, MoveWordRight, MoveLineStart, MoveLineEnd, MoveDocStart, MoveDocEnd,
         SelectLeft, SelectRight, SelectUp, SelectDown, SelectWordLeft, SelectWordRight, SelectLineStart, SelectLineEnd,
         SelectDocStart, SelectDocEnd, SelectAll, PageUp, PageDown, Backspace, Delete, DeleteWordLeft, DeleteWordRight,
-        Newline, Tab, Undo, Redo, Copy, Cut, Paste, Save, ToggleReading, ToggleSource
+        Newline, ShiftNewline, Tab, ShiftTab, Undo, Redo, Copy, Cut, Paste, Save, ToggleReading, ToggleSource
     ]
 );
 
@@ -68,8 +72,9 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-backspace", DeleteWordLeft, c),
         KeyBinding::new("ctrl-delete", DeleteWordRight, c),
         KeyBinding::new("enter", Newline, c),
-        KeyBinding::new("shift-enter", Newline, c),
+        KeyBinding::new("shift-enter", ShiftNewline, c),
         KeyBinding::new("tab", Tab, c),
+        KeyBinding::new("shift-tab", ShiftTab, c),
         KeyBinding::new("ctrl-z", Undo, c),
         KeyBinding::new("ctrl-shift-z", Redo, c),
         KeyBinding::new("ctrl-y", Redo, c),
@@ -126,6 +131,12 @@ pub struct Editor {
     pub mode: ViewMode,
     /// Callout fold state by callout identity (true = collapsed); absent = the file's default.
     folds: HashMap<String, bool>,
+    /// Snippet tabstops (plugins create them through [`EditorApi::insert_snippet`]).
+    pub tabstops: Option<TabstopSession>,
+    /// Set while a tabstop move changes the selection (it must not end the session).
+    selecting_tabstop: bool,
+    /// `PluginHost::generation` the projection was built with.
+    plugin_gen: u64,
     pub perf: Perf,
 }
 
@@ -170,6 +181,9 @@ impl Editor {
             measured_once: false,
             folds: HashMap::new(),
             mode: ViewMode::LivePreview,
+            tabstops: None,
+            selecting_tabstop: false,
+            plugin_gen: 0,
             perf: Perf::default(),
         };
         this.proj.version = u64::MAX;
@@ -275,7 +289,7 @@ impl Editor {
         if self.perf.pending_edit.is_none() {
             self.perf.pending_edit = Some(Instant::now());
         }
-        self.doc.replace(range, text, kind);
+        api::apply_edit(&mut self.doc, &mut self.tabstops, range, text, kind);
         self.goal_x = None;
         self.autoscroll = true;
         self.schedule_save(cx);
@@ -284,6 +298,9 @@ impl Editor {
 
     pub fn set_selection(&mut self, sel: Selection, keep_goal: bool, cx: &mut Context<Self>) {
         self.doc.set_selection(sel);
+        if !self.selecting_tabstop && self.tabstops.as_ref().is_some_and(|s| !s.contains(&self.doc.selection().range())) {
+            self.tabstops = None;
+        }
         if !keep_goal {
             self.goal_x = None;
         }
@@ -306,12 +323,16 @@ impl Editor {
     // ---- projection --------------------------------------------------------
 
     pub(crate) fn projection(&mut self, cx: &App) -> &Projection {
-        if self.proj.version != self.doc.version() || self.proj.sel != self.doc.selection() || self.proj.mode != self.mode {
+        let plugin_gen = cx.try_global::<PluginHost>().map_or(0, |h| h.generation);
+        if self.proj.version != self.doc.version() || self.proj.sel != self.doc.selection() || self.proj.mode != self.mode || self.plugin_gen != plugin_gen {
+            self.plugin_gen = plugin_gen;
             let t = Instant::now();
             let text = self.doc.text();
             let vault = self.vault.borrow();
             let path = &self.path;
             let resolve = |target: &str| vault.resolve(target, path);
+            let host = cx.try_global::<PluginHost>();
+            let code_mode = |lang: &str| host.map_or(CodeMode::Plain, |h| h.code_mode(lang));
             let theme = cx.theme();
             self.proj = projection::project(&ProjectionInput {
                 text: &text,
@@ -320,6 +341,7 @@ impl Editor {
                 version: self.doc.version(),
                 palette: Palette { highlight: theme.yellow.opacity(0.35) },
                 resolve: &resolve,
+                code_mode: &code_mode,
             });
             self.perf.projection_ms.push(t.elapsed().as_secs_f64() * 1000.0);
         }
@@ -511,17 +533,36 @@ impl Editor {
             .on_action(cx.listener(|e, _: &SelectDocStart, _, cx| e.move_to(0, true, cx)))
             .on_action(cx.listener(|e, _: &SelectDocEnd, _, cx| e.move_to(e.doc.len(), true, cx)))
             .on_action(cx.listener(|e, _: &SelectAll, _, cx| e.set_selection(Selection::new(0, e.doc.len()), false, cx)))
-            .on_action(cx.listener(|e, _: &Backspace, _, cx| e.delete(-1, false, cx)))
+            .on_action(cx.listener(|e, _: &Backspace, _, cx| {
+                if !e.run_key_hooks(EditorKey::Backspace, cx) {
+                    e.delete(-1, false, cx)
+                }
+            }))
             .on_action(cx.listener(|e, _: &Delete, _, cx| e.delete(1, false, cx)))
             .on_action(cx.listener(|e, _: &DeleteWordLeft, _, cx| e.delete(-1, true, cx)))
             .on_action(cx.listener(|e, _: &DeleteWordRight, _, cx| e.delete(1, true, cx)))
-            .on_action(cx.listener(|e, _: &Newline, _, cx| e.newline(cx)))
+            .on_action(cx.listener(|e, _: &Newline, _, cx| {
+                if !e.run_key_hooks(EditorKey::Enter, cx) {
+                    e.newline(cx)
+                }
+            }))
+            .on_action(cx.listener(|e, _: &ShiftNewline, _, cx| {
+                if !e.run_key_hooks(EditorKey::ShiftEnter, cx) {
+                    e.newline(cx)
+                }
+            }))
             .on_action(cx.listener(|e, _: &Tab, _, cx| {
-                let r = e.doc.selection().range();
-                e.edit(r, "\t", EditKind::Insert, cx)
+                if !e.run_key_hooks(EditorKey::Tab, cx) {
+                    let r = e.doc.selection().range();
+                    e.edit(r, "\t", EditKind::Insert, cx)
+                }
+            }))
+            .on_action(cx.listener(|e, _: &ShiftTab, _, cx| {
+                e.run_key_hooks(EditorKey::ShiftTab, cx);
             }))
             .on_action(cx.listener(|e, _: &Undo, _, cx| {
                 if e.mode != ViewMode::Reading && e.doc.undo() {
+                    e.tabstops = None;
                     e.autoscroll = true;
                     e.schedule_save(cx);
                     cx.notify();
@@ -529,6 +570,7 @@ impl Editor {
             }))
             .on_action(cx.listener(|e, _: &Redo, _, cx| {
                 if e.mode != ViewMode::Reading && e.doc.redo() {
+                    e.tabstops = None;
                     e.autoscroll = true;
                     e.schedule_save(cx);
                     cx.notify();
@@ -565,69 +607,67 @@ impl Editor {
     }
 }
 
-/// Accent colours: the vault's Academic Notes "forest" palette for its theorem-like types,
-/// Obsidian's defaults for the built-in callouts.
-fn callout_color(kind: &str) -> Hsla {
-    let hex = match kind {
-        "def" | "definition" | "asm" | "assumption" => 0x2e7055,
-        "thm" | "theorem" | "axiom" | "axm" | "hyp" | "hypothesis" => 0x296a70,
-        "lem" | "lemma" => 0x537354,
-        "prop" | "prp" | "proposition" => 0x73723d,
-        "cor" | "corollary" => 0x367d69,
-        "clm" | "claim" | "conjecture" | "cnj" => 0x477486,
-        "ex" | "exa" | "exm" | "example" | "exercise" | "exr" | "solution" | "sol" => 0x87653e,
-        "pf" | "proof" | "rem" | "remark" | "rmk" => 0x5c6d61,
-        "algorithm" | "alg" => 0x6c5b7b,
-        "tip" | "hint" | "important" => 0x00bfa5,
-        "success" | "check" | "done" => 0x08b94e,
-        "question" | "help" | "faq" | "warning" | "caution" | "attention" => 0xec7500,
-        "failure" | "fail" | "missing" | "danger" | "error" | "bug" => 0xe93147,
-        "quote" | "cite" => 0x9e9e9e,
-        "abstract" | "summary" | "tldr" => 0x00b0ff,
-        _ => 0x448aff, // note, info, todo, observation, unknown types
-    };
-    rgb(hex).into()
+/// The live editor as an [`api::Backend`] for plugin hooks.
+struct Live<'a, 'b> {
+    e: &'a mut Editor,
+    cx: &'a mut Context<'b, Editor>,
 }
 
-/// Renders a projected node; callouts become containers drawn here (gpui-kit renders the rest).
-fn render_node(node: &ProjNode, ix: usize, folds: &HashMap<String, bool>, rcx: &RenderContext, window: &mut Window, cx: &mut Context<Editor>) -> AnyElement {
-    match node {
-        ProjNode::Block(b) => b.render(ix, FlowPosition::at(&[b], 0, true).first(true).last(true), rcx, window, cx),
-        ProjNode::Callout(c) => {
-            let color = callout_color(&c.kind);
-            let soft = matches!(c.kind.as_str(), "pf" | "proof" | "rem" | "remark" | "rmk");
-            let collapsed = c.fold.is_some() && folds.get(&c.fold_key).copied().unwrap_or(c.fold == Some('-'));
-            let title = gpui_kit::base::text::editor_host::BlockNode::Paragraph(c.title.clone());
-            let title_el = title.render(ix, FlowPosition::at(&[&title], 0, true).first(true).last(true), rcx, window, cx);
-            let badge = if soft {
-                div().italic().font_weight(FontWeight::SEMIBOLD).text_color(color).child(format!("{}.", c.label))
-            } else {
-                div().px_2().py_0p5().rounded(px(4.)).bg(color).text_color(gpui_kit::white()).text_sm().font_weight(FontWeight::SEMIBOLD).child(c.label.clone())
-            };
-            let fold_btn = c.fold.map(|_| {
-                let key = c.fold_key.clone();
-                let default = c.fold == Some('-');
-                div()
-                    .id(SharedString::from(format!("fold-{}", c.fold_key)))
-                    .cursor_pointer()
-                    .text_color(color)
-                    .child(if collapsed { "▸" } else { "▾" })
-                    .on_click(cx.listener(move |e, _: &ClickEvent, _, cx| {
-                        let cur = e.folds.get(&key).copied().unwrap_or(default);
-                        e.folds.insert(key.clone(), !cur);
-                        cx.notify();
-                    }))
-            });
-            let header = h_flex().gap_2().items_center().children(fold_btn).child(badge).child(div().flex_1().min_w_0().when(soft, |d| d.italic()).child(title_el));
-            let body: Vec<AnyElement> = if collapsed { Vec::new() } else { c.children.iter().map(|ch| render_node(ch, ix, folds, rcx, window, cx)).collect() };
-            let mut el = div().my_1().flex().flex_col().gap_1().child(header).children(body);
-            el = if soft {
-                el.pl_3().border_l_2().border_color(color.opacity(0.6))
-            } else {
-                el.px_3().pt_2().pb_2().border(px(1.4)).border_color(color).rounded(px(6.)).bg(color.opacity(0.06))
-            };
-            el.into_any_element()
+impl api::Backend for Live<'_, '_> {
+    fn doc(&self) -> &Document {
+        &self.e.doc
+    }
+    fn tabstops(&mut self) -> &mut Option<TabstopSession> {
+        &mut self.e.tabstops
+    }
+    fn edit(&mut self, r: Range<usize>, text: &str, kind: EditKind) {
+        self.e.edit(r, text, kind, self.cx);
+    }
+    fn select(&mut self, sel: Selection, nav: bool) {
+        self.e.selecting_tabstop = nav;
+        self.e.set_selection(sel, false, self.cx);
+        self.e.selecting_tabstop = false;
+    }
+    fn path(&self) -> &std::path::Path {
+        &self.e.path
+    }
+}
+
+impl Editor {
+    fn hooks(cx: &App) -> Vec<Rc<dyn EditorHook>> {
+        cx.try_global::<PluginHost>().map(|h| h.reg.editor_hooks.iter().map(|(_, h)| h.clone()).collect()).unwrap_or_default()
+    }
+
+    fn editable(&self) -> bool {
+        self.mode != ViewMode::Reading && !self.status.as_ref().is_some_and(|s| s.starts_with("Cannot open"))
+    }
+
+    /// Lets plugin hooks handle a key first; true when one consumed it.
+    pub(crate) fn run_key_hooks(&mut self, key: EditorKey, cx: &mut Context<Self>) -> bool {
+        if !self.editable() {
+            return false;
         }
+        for h in Self::hooks(cx) {
+            let mut live = Live { e: self, cx };
+            if h.on_key(&mut EditorApi::new(&mut live), key) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Lets plugin hooks handle a typed character before it is inserted.
+    pub(crate) fn run_char_hooks(&mut self, ch: &str, cx: &mut Context<Self>) -> bool {
+        if !self.editable() {
+            return false;
+        }
+        for h in Self::hooks(cx) {
+            let mut live = Live { e: self, cx };
+            if h.on_char(&mut EditorApi::new(&mut live), ch) {
+                return true;
+            }
+        }
+        false
     }
 }
 
@@ -700,7 +740,7 @@ impl Render for Editor {
         }
         for ix in lo..hi {
             let b = &proj.blocks[ix];
-            let el = render_node(&b.node, ix, &self.folds, &rcx, window, cx);
+            let el = render::render_node(&b.node, ix, &self.folds, &rcx, window, cx);
             let el = if b.indent > 0.0 { div().pl(px(b.indent)).child(el).into_any_element() } else { el };
             children.push(measured::Measured::new(b.hash, self.heights.clone(), el).into_any_element());
         }

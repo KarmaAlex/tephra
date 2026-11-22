@@ -9,7 +9,9 @@ mod atoms;
 mod bench;
 mod editor;
 mod embeds;
+mod icons;
 mod math;
+mod plugins;
 mod script;
 mod workspace;
 
@@ -28,10 +30,11 @@ fn main() {
     let root = embeds::Vault::root_for(&arg);
     let note = arg.is_file().then(|| arg.clone());
     let title: SharedString = root.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default().into();
-    gpui_kit::application().with_assets(gpui_kit::assets::Assets).run(move |cx| {
+    gpui_kit::application().with_assets(icons::AppAssets).run(move |cx| {
         gpui_kit::init(cx);
         editor::bind_keys(cx);
         workspace::bind_keys(cx);
+        plugins::PluginHost::init(cx, &root);
         let opts = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size(px(1280.), px(860.)), cx))),
             titlebar: Some(TitlebarOptions { title: Some(title), ..Default::default() }),

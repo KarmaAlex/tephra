@@ -120,19 +120,32 @@ pub struct Palette {
 pub enum ProjNode {
     Block(BlockNode),
     Callout(CalloutView),
+    /// A fenced code block drawn by a plugin's code-block renderer (caret outside it).
+    Rendered { lang: String, code: String, at: usize },
+    /// A block with a note above it (e.g. "Desmos plugin disabled").
+    Noted { note: String, child: BlockNode },
+}
+
+/// How the host handles a fenced code block's language.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CodeMode {
+    Plain,
+    /// A loaded plugin renders it.
+    Rendered,
+    /// Shown as code with this note (its plugin is off or not built yet).
+    Note(String),
 }
 
 pub struct CalloutView {
     /// Lowercased type (`thm`, `pf`…).
     pub kind: String,
-    /// Display name of the type (`Theorem`), shown as the badge.
-    pub label: String,
+    /// Text after `|` in the brackets.
+    pub meta: String,
     pub fold: Option<char>,
     /// Identity for the fold state (header line text + occurrence).
     pub fold_key: String,
     /// The header line as a keyed leaf: marker hidden, title text editable in place.
     pub title: Paragraph,
-    #[allow(dead_code)] // M3: "Theorem 1.2" vs "Theorem 1.2 (Title)"
     pub title_empty: bool,
     pub children: Vec<ProjNode>,
 }
@@ -205,24 +218,8 @@ fn key(block: usize, sub: usize) -> u64 {
 }
 
 /// Display name for a callout type (Obsidian built-ins and the vault's Academic Notes types).
-pub fn callout_label(kind: &str) -> String {
-    let named = match kind {
-        "def" | "definition" => "Definition",
-        "thm" | "theorem" => "Theorem",
-        "lem" | "lemma" => "Lemma",
-        "cor" | "corollary" => "Corollary",
-        "prop" | "prp" | "proposition" => "Proposition",
-        "rem" | "remark" | "rmk" => "Remark",
-        "pf" | "proof" => "Proof",
-        "clm" | "claim" => "Claim",
-        "obs" | "observation" => "Observation",
-        "ex" | "exa" | "exm" | "example" => "Example",
-        "algorithm" | "alg" => "Algorithm",
-        _ => "",
-    };
-    if !named.is_empty() {
-        return named.to_string();
-    }
+/// `thm` -> `Thm` (Obsidian's title for a callout without one).
+pub fn capitalize(kind: &str) -> String {
     let mut c = kind.chars();
     c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
 }
@@ -573,7 +570,7 @@ impl QuoteCtx<'_> {
         let children = c.body.iter().map(|it| self.item(it, true, proj)).collect();
         ProjNode::Callout(CalloutView {
             kind: c.kind.clone(),
-            label: callout_label(&c.kind),
+            meta: c.meta.clone(),
             fold: c.fold,
             fold_key,
             title,
@@ -623,6 +620,7 @@ pub struct ProjectionInput<'a> {
     pub version: u64,
     pub palette: Palette,
     pub resolve: &'a dyn Fn(&str) -> Option<PathBuf>,
+    pub code_mode: &'a dyn Fn(&str) -> CodeMode,
 }
 
 pub fn project(inp: &ProjectionInput) -> Projection {
@@ -748,6 +746,10 @@ pub fn project(inp: &ProjectionInput) -> Projection {
                 ));
                 }
             }
+            BlockKind::Code { lang, closed } if !rev && (inp.code_mode)(lang) == CodeMode::Rendered => {
+                let _ = closed;
+                nodes.push((ProjNode::Rendered { lang: lang.clone(), code: text[b.content.clone()].to_string(), at: b.content.start }, vec![]));
+            }
             BlockKind::Code { lang, closed } => {
                 let open_line = b.range.start..text[b.range.start..].find('\n').map(|i| b.range.start + i).unwrap_or(b.range.end);
                 let open_line = open_line.start..open_line.end - usize::from(text[open_line.clone()].ends_with('\r'));
@@ -774,7 +776,11 @@ pub fn project(inp: &ProjectionInput) -> Projection {
                 proj.leaves.push((k, code_map));
                 keys.push(k);
                 let code = CodeBlock::new(text[b.content.clone()].to_string().into(), code_lang(lang).map(Into::into), None::<Span>).with_leaf_key(k);
-                nodes.push((ProjNode::Block(BlockNode::CodeBlock(code)), keys));
+                let node = match (inp.code_mode)(lang) {
+                    CodeMode::Note(note) => ProjNode::Noted { note, child: BlockNode::CodeBlock(code) },
+                    _ => ProjNode::Block(BlockNode::CodeBlock(code)),
+                };
+                nodes.push((node, keys));
                 if rev && *closed {
                     let k = key(bi, 2);
                     let mut lb = new_leaf(close_line.clone());
@@ -826,7 +832,7 @@ mod tests {
 
     fn proj(text: &str, caret: usize) -> Projection {
         let none = |_: &str| None;
-        project(&ProjectionInput { text, sel: Selection::caret(caret), mode: ViewMode::LivePreview, version: 0, palette: Palette { highlight: hsla(0.15, 1., 0.5, 0.4) }, resolve: &none })
+        project(&ProjectionInput { text, sel: Selection::caret(caret), mode: ViewMode::LivePreview, version: 0, palette: Palette { highlight: hsla(0.15, 1., 0.5, 0.4) }, resolve: &none, code_mode: &|_| CodeMode::Plain })
     }
 
     /// The leaf text the renderer sees (atoms as U+FFFC).
@@ -843,6 +849,8 @@ mod tests {
                     out.push_str(&t);
                     c.children.iter().for_each(|x| node_text(x, k, out));
                 }
+                ProjNode::Noted { child, .. } => para_text(child, out),
+                ProjNode::Rendered { .. } => {}
             }
         }
         fn para_text(n: &BlockNode, out: &mut String) {
@@ -924,7 +932,7 @@ mod tests {
         let s = leaf_text(&p, p.leaves[0].0);
         // rendered callout: title leaf "T" (marker hidden), body leaf = the display formula
         assert_eq!(s, "T\u{FFFC}");
-        assert!(matches!(p.blocks[0].node, ProjNode::Callout(ref c) if c.kind == "thm" && c.label == "Theorem"));
+        assert!(matches!(p.blocks[0].node, ProjNode::Callout(ref c) if c.kind == "thm" && !c.title_empty));
         let p = proj(t, 3);
         assert!(leaf_text(&p, p.leaves[0].0).starts_with("> [!thm] T\n"));
     }
@@ -948,7 +956,7 @@ mod tests {
     fn unresolved_wikilinks_are_dimmed() {
         let t = "[[Esiste]] e [[Manca]]\n\nx";
         let resolve = |target: &str| (target == "Esiste").then(|| PathBuf::from("/v/Esiste.md"));
-        let p = project(&ProjectionInput { text: t, sel: Selection::caret(t.len()), mode: ViewMode::LivePreview, version: 0, palette: Palette { highlight: gpui_kit::hsla(0., 0., 0., 1.) }, resolve: &resolve });
+        let p = project(&ProjectionInput { text: t, sel: Selection::caret(t.len()), mode: ViewMode::LivePreview, version: 0, palette: Palette { highlight: gpui_kit::hsla(0., 0., 0., 1.) }, resolve: &resolve, code_mode: &|_| CodeMode::Plain });
         assert_eq!(p.muted[&p.leaves[0].0], vec![9..14]); // "Esiste e Manca": only "Manca"
     }
 
@@ -975,14 +983,15 @@ mod tests {
         assert_eq!((c.kind.as_str(), c.fold, c.title_empty), ("thm", Some('-'), false));
         assert_eq!(c.children.len(), 2);
         let ProjNode::Callout(pf) = &c.children[1] else { panic!() };
-        assert_eq!((pf.label.as_str(), pf.title_empty), ("Proof", true));
+        assert_eq!((pf.kind.as_str(), pf.title_empty), ("pf", true));
+        assert_eq!(capitalize(&pf.kind), "Pf");
     }
 
     #[test]
     fn source_and_reading_modes() {
         let none = |_: &str| None;
         let t = "# H\n- **b** $x$\n> [!thm] T\n> c";
-        let mk = |mode| project(&ProjectionInput { text: t, sel: Selection::caret(0), mode, version: 0, palette: Palette { highlight: hsla(0., 0., 0., 1.) }, resolve: &none });
+        let mk = |mode| project(&ProjectionInput { text: t, sel: Selection::caret(0), mode, version: 0, palette: Palette { highlight: hsla(0., 0., 0., 1.) }, resolve: &none, code_mode: &|_| CodeMode::Plain });
         let src = mk(ViewMode::Source);
         assert_eq!(leaf_text(&src, src.leaves[0].0), "# H");
         assert_eq!(leaf_text(&src, src.leaves[1].0), "- **b** $x$");

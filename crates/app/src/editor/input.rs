@@ -156,7 +156,12 @@ impl EntityInputHandler for Editor {
 
     fn replace_text_in_range(&mut self, range: Option<Range<usize>>, text: &str, _: &mut Window, cx: &mut Context<Self>) {
         let r = range.map(|r| self.byte_range(r)).or_else(|| self.marked.clone()).unwrap_or_else(|| self.doc.selection().range());
+        let typed = self.marked.is_none() && r == self.doc.selection().range();
         self.marked = None;
+        // plain typing (not IME commits or replacements elsewhere) goes through plugin hooks first
+        if typed && text.chars().count() == 1 && self.run_char_hooks(text, cx) {
+            return;
+        }
         self.edit(r, text, EditKind::Insert, cx);
     }
 

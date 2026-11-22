@@ -1,0 +1,275 @@
+//! The plugin API (HANDOFF §5.2, decisions D5/D7). Every bundled feature — core plugins and
+//! replacements for Obsidian community plugins — is built on exactly this API; nothing gets
+//! private hooks. Plugins are first-party and in-process; the shape is meant to allow
+//! third-party plugins later (sandboxing is out of scope).
+
+use std::rc::Rc;
+
+use gpui_kit::component::IconName;
+use gpui_kit::*;
+use serde_json::Value;
+
+use crate::editor::{Editor, EditorApi};
+
+pub type PluginId = &'static str;
+
+// ---- manifest & settings schema -------------------------------------------------------
+
+#[derive(Clone, Debug)]
+pub enum SettingKind {
+    Toggle,
+    Text,
+    Number,
+    /// (value, label) pairs.
+    Choice(Vec<(&'static str, &'static str)>),
+}
+
+#[derive(Clone, Debug)]
+pub struct SettingSpec {
+    pub key: &'static str,
+    pub label: &'static str,
+    pub description: &'static str,
+    pub kind: SettingKind,
+    pub default: Value,
+}
+
+#[derive(Clone, Debug)]
+pub struct PluginManifest {
+    pub id: PluginId,
+    pub name: &'static str,
+    pub version: &'static str,
+    pub description: &'static str,
+    pub enabled_by_default: bool,
+    /// Drives the generated settings tab; values live in `.obsidilight/plugins/<id>.json`.
+    pub settings: Vec<SettingSpec>,
+    /// Code-block languages this plugin renders; while it is off, the core shows those blocks
+    /// as code with a "<name> plugin disabled" note.
+    pub code_languages: &'static [&'static str],
+}
+
+/// A plugin. `on_load` registers everything through the [`Registrar`]; whatever it registered
+/// is removed automatically on unload (toggling applies without a restart). Loading has no
+/// access to the app: anything that needs it runs from a registered callback.
+pub trait Plugin: 'static {
+    fn manifest(&self) -> &PluginManifest;
+    /// `settings` holds this plugin's current values (defaults filled in).
+    fn on_load(&mut self, settings: &serde_json::Map<String, Value>, reg: &mut Registrar);
+    /// Extra cleanup beyond registrations (which the host removes itself).
+    fn on_unload(&mut self) {}
+}
+
+// ---- registration points ----------------------------------------------------------------
+
+/// The overall look of a callout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CalloutLook {
+    /// Obsidian's default: tinted box, icon + coloured title.
+    Obsidian,
+    /// Bordered box with the label as a filled badge (Academic Notes theorem-likes).
+    Badge,
+    /// No box: accent bar and an italic run-in label (proofs, remarks).
+    Soft,
+    /// Rules above and below (algorithms).
+    Rules,
+}
+
+/// How a callout type looks (D7). The core supplies Obsidian's defaults; a plugin may claim types.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CalloutStyle {
+    pub color: Hsla,
+    pub look: CalloutLook,
+    /// Header icon (Obsidian look).
+    pub icon: Option<gpui_kit::assets::IconName>,
+    /// Text shown for the type (e.g. "Theorem") next to the title. None = Obsidian's rule:
+    /// the title alone, or the capitalised type when there is no title.
+    pub label: Option<String>,
+}
+
+pub trait CalloutRenderer {
+    /// Style for `kind` (lowercased) with `|meta`, or None to leave it to others / the core.
+    fn style(&self, kind: &str, meta: &str, dark: bool) -> Option<CalloutStyle>;
+}
+
+/// Renders fenced code blocks of one language (e.g. `chart`, `desmos-graph`) when the caret is
+/// outside them; the source shows when the caret enters.
+pub trait CodeBlockRenderer {
+    fn render(&self, code: &str, window: &mut Window, cx: &mut App) -> AnyElement;
+}
+
+/// Keys an editor hook may intercept (typed characters go through `on_char`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditorKey {
+    Tab,
+    ShiftTab,
+    Enter,
+    ShiftEnter,
+    Backspace,
+}
+
+/// Editor behaviour (the CM6-extension equivalent): runs before the editor's default handling.
+/// Return true when the input was consumed.
+pub trait EditorHook {
+    fn on_char(&self, _e: &mut EditorApi, _ch: &str) -> bool {
+        false
+    }
+    fn on_key(&self, _e: &mut EditorApi, _key: EditorKey) -> bool {
+        false
+    }
+}
+
+/// What a command, ribbon or menu action can reach.
+pub struct ActionCtx<'a> {
+    pub window: &'a mut Window,
+    pub cx: &'a mut App,
+    /// The active editor, if any.
+    pub editor: Option<Entity<Editor>>,
+}
+
+pub type Action = Rc<dyn Fn(&mut ActionCtx)>;
+
+#[derive(Clone)]
+pub struct Command {
+    /// Namespaced automatically as `<plugin id>:<id>`.
+    pub id: String,
+    pub name: String,
+    /// Default hotkey, e.g. `ctrl-shift-l` (user overrides arrive with the command palette, M4).
+    pub hotkey: Option<String>,
+    pub run: Action,
+}
+
+#[derive(Clone)]
+pub struct RibbonItem {
+    pub id: String,
+    pub icon: IconName,
+    pub tooltip: String,
+    pub run: Action,
+}
+
+/// A status bar entry; `text` is recomputed on every render from the active editor.
+#[derive(Clone)]
+pub struct StatusItem {
+    pub id: String,
+    pub text: Rc<dyn Fn(Option<&Editor>) -> Option<SharedString>>,
+}
+
+#[derive(Clone)]
+pub struct SidebarView {
+    pub id: String,
+    pub title: String,
+    pub icon: IconName,
+    pub render: Rc<dyn Fn(Option<&Entity<Editor>>, &mut Window, &mut App) -> AnyElement>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuTarget {
+    /// File tree entries (the vault path is passed to the action via `MenuCtx`).
+    File,
+    /// The editor's right-click menu.
+    Editor,
+}
+
+#[derive(Clone)]
+pub struct MenuItem {
+    pub id: String,
+    pub label: String,
+    pub target: MenuTarget,
+    pub run: Rc<dyn Fn(&mut ActionCtx, Option<&str>)>,
+}
+
+/// A custom settings section, shown under the plugin's generated settings.
+#[derive(Clone)]
+pub struct SettingsTab {
+    pub id: String,
+    pub title: String,
+    pub render: Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>,
+}
+
+// ---- registrar --------------------------------------------------------------------------
+
+/// Everything plugins registered, each entry tagged with its plugin. Unloading a plugin drops
+/// all of its entries (see [`Registry::remove_plugin`]).
+#[derive(Default, Clone)]
+pub struct Registry {
+    pub callout_renderers: Vec<(PluginId, Rc<dyn CalloutRenderer>)>,
+    pub code_block_renderers: Vec<(PluginId, String, Rc<dyn CodeBlockRenderer>)>,
+    pub editor_hooks: Vec<(PluginId, Rc<dyn EditorHook>)>,
+    pub commands: Vec<(PluginId, Command)>,
+    pub ribbon: Vec<(PluginId, RibbonItem)>,
+    pub status: Vec<(PluginId, StatusItem)>,
+    pub sidebar_views: Vec<(PluginId, SidebarView)>,
+    pub menu_items: Vec<(PluginId, MenuItem)>,
+    pub settings_tabs: Vec<(PluginId, SettingsTab)>,
+}
+
+impl Registry {
+    pub fn remove_plugin(&mut self, id: &str) {
+        self.callout_renderers.retain(|(p, _)| *p != id);
+        self.code_block_renderers.retain(|(p, _, _)| *p != id);
+        self.editor_hooks.retain(|(p, _)| *p != id);
+        self.commands.retain(|(p, _)| *p != id);
+        self.ribbon.retain(|(p, _)| *p != id);
+        self.status.retain(|(p, _)| *p != id);
+        self.sidebar_views.retain(|(p, _)| *p != id);
+        self.menu_items.retain(|(p, _)| *p != id);
+        self.settings_tabs.retain(|(p, _)| *p != id);
+    }
+
+    /// How many registrations a plugin currently holds (tests: unload must leave zero).
+    pub fn count(&self, id: &str) -> usize {
+        self.callout_renderers.iter().filter(|(p, _)| *p == id).count()
+            + self.code_block_renderers.iter().filter(|(p, _, _)| *p == id).count()
+            + self.editor_hooks.iter().filter(|(p, _)| *p == id).count()
+            + self.commands.iter().filter(|(p, _)| *p == id).count()
+            + self.ribbon.iter().filter(|(p, _)| *p == id).count()
+            + self.status.iter().filter(|(p, _)| *p == id).count()
+            + self.sidebar_views.iter().filter(|(p, _)| *p == id).count()
+            + self.menu_items.iter().filter(|(p, _)| *p == id).count()
+            + self.settings_tabs.iter().filter(|(p, _)| *p == id).count()
+    }
+
+    /// The first plugin style claiming a callout type (plugins in load order).
+    pub fn callout_style(&self, kind: &str, meta: &str, dark: bool) -> Option<CalloutStyle> {
+        self.callout_renderers.iter().find_map(|(_, r)| r.style(kind, meta, dark))
+    }
+
+    pub fn code_block_renderer(&self, lang: &str) -> Option<Rc<dyn CodeBlockRenderer>> {
+        self.code_block_renderers.iter().find(|(_, l, _)| l.eq_ignore_ascii_case(lang)).map(|(_, _, r)| r.clone())
+    }
+}
+
+/// Handed to `Plugin::on_load`; tags everything with the plugin's id.
+pub struct Registrar<'a> {
+    pub(crate) plugin: PluginId,
+    pub(crate) reg: &'a mut Registry,
+}
+
+impl Registrar<'_> {
+    pub fn callout_renderer(&mut self, r: impl CalloutRenderer + 'static) {
+        self.reg.callout_renderers.push((self.plugin, Rc::new(r)));
+    }
+    pub fn code_block_renderer(&mut self, lang: &str, r: impl CodeBlockRenderer + 'static) {
+        self.reg.code_block_renderers.push((self.plugin, lang.to_string(), Rc::new(r)));
+    }
+    pub fn editor_hook(&mut self, h: Rc<dyn EditorHook>) {
+        self.reg.editor_hooks.push((self.plugin, h));
+    }
+    pub fn command(&mut self, mut c: Command) {
+        c.id = format!("{}:{}", self.plugin, c.id);
+        self.reg.commands.push((self.plugin, c));
+    }
+    pub fn ribbon(&mut self, r: RibbonItem) {
+        self.reg.ribbon.push((self.plugin, r));
+    }
+    pub fn status_item(&mut self, s: StatusItem) {
+        self.reg.status.push((self.plugin, s));
+    }
+    pub fn sidebar_view(&mut self, v: SidebarView) {
+        self.reg.sidebar_views.push((self.plugin, v));
+    }
+    pub fn menu_item(&mut self, m: MenuItem) {
+        self.reg.menu_items.push((self.plugin, m));
+    }
+    pub fn settings_tab(&mut self, t: SettingsTab) {
+        self.reg.settings_tabs.push((self.plugin, t));
+    }
+}

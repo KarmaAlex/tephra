@@ -183,6 +183,39 @@ impl Document {
         self.break_group = kind == EditKind::Other;
     }
 
+    /// Applies a change as part of the previous undo step (mirrored tabstop typing). The
+    /// selection is shifted by the change rather than moved to it.
+    pub fn replace_joined(&mut self, range: Range<usize>, text: &str) {
+        let range = self.clamp_range(range);
+        if range.is_empty() && text.is_empty() {
+            return;
+        }
+        let removed = self.slice(range.clone());
+        self.apply(range.start, &removed, text);
+        let shift = |p: usize| {
+            if p >= range.end {
+                p + text.len() - removed.len()
+            } else if p > range.start {
+                range.start + text.len()
+            } else {
+                p
+            }
+        };
+        self.sel = Selection::new(shift(self.sel.anchor), shift(self.sel.head));
+        let change = Change { at: range.start, removed, inserted: text.to_string() };
+        self.redo.clear();
+        match self.undo.last_mut() {
+            Some(last) => {
+                last.changes.push(change);
+                last.sel_after = self.sel;
+            }
+            None => {
+                let now = Instant::now();
+                self.undo.push(Transaction { changes: vec![change], sel_before: self.sel, sel_after: self.sel, kind: EditKind::Other, last_time: now });
+            }
+        }
+    }
+
     /// Replaces the current selection.
     pub fn replace_selection(&mut self, text: &str, kind: EditKind) {
         let r = self.sel.range();
@@ -428,6 +461,20 @@ mod tests {
         d.replace_at(2..2, "d", EditKind::Insert, t);
         d.undo();
         assert_eq!(d.text(), "ac");
+    }
+
+    #[test]
+    fn joined_change_undoes_with_the_previous_step() {
+        let mut d = Document::new("(a) (a)");
+        d.set_selection(Selection::caret(2));
+        d.replace(2..2, "b", EditKind::Insert);
+        d.replace_joined(7..7, "b");
+        assert_eq!(d.text(), "(ab) (ab)");
+        assert_eq!(d.selection(), Selection::caret(3));
+        d.replace_joined(0..0, "x"); // before the caret: caret shifts
+        assert_eq!(d.selection(), Selection::caret(4));
+        assert!(d.undo());
+        assert_eq!(d.text(), "(a) (a)");
     }
 
     #[test]
