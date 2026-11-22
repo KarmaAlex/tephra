@@ -39,7 +39,7 @@ fn state(e: &Editor) -> String {
     )
 }
 
-pub fn start(editor: Entity<Editor>, window: &mut Window, cx: &mut App) {
+pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>, window: &mut Window, cx: &mut App) {
     let Ok(script) = std::env::var("OBSIDILIGHT_SCRIPT").map(std::fs::read_to_string) else { return };
     let Ok(script) = script else { return };
     let handle = window.window_handle();
@@ -118,8 +118,40 @@ pub fn start(editor: Entity<Editor>, window: &mut Window, cx: &mut App) {
                         }
                     });
                 }
+                "ws-open" => {
+                    // ws-open <vault path> [new]
+                    let new_tab = rest.ends_with(" new");
+                    let rel = rest.trim_end_matches(" new").to_string();
+                    let _ = handle.update(cx, |_, w, cx| {
+                        let _ = ws.update(cx, |ws, cx| {
+                            let p = ws.vault.borrow().root.join(&rel);
+                            ws.open_path(p, new_tab, w, cx);
+                        });
+                    });
+                }
+                "ws-rename" => {
+                    // ws-rename <old>|<new>
+                    let (old, new) = rest.split_once('|').unwrap_or((rest, rest));
+                    let r = ws.update(cx, |ws, cx| ws.rename_path(old.trim(), new.trim(), cx));
+                    println!("RENAME {old} -> {new}: {:?}", r.ok());
+                }
+                "ws-tabs" => {
+                    let _ = ws.update(cx, |ws, cx| {
+                        let root = ws.vault.borrow().root.clone();
+                        let tabs: Vec<String> = ws.tabs.iter().map(|e| e.read(cx).path.strip_prefix(&root).map(|p| p.display().to_string()).unwrap_or_default()).collect();
+                        println!("TABS active={} {:?}", ws.active, tabs);
+                    });
+                }
                 "state" => {
-                    let _ = weak.update(cx, |e, _| println!("{}", state(e)));
+                    let active = ws.update(cx, |ws, _| ws.tabs.get(ws.active).cloned()).ok().flatten();
+                    match active {
+                        Some(e) => {
+                            let _ = e.update(cx, |e, _| println!("{}", state(e)));
+                        }
+                        None => {
+                            let _ = weak.update(cx, |e, _| println!("{}", state(e)));
+                        }
+                    }
                 }
                 "shot" => {
                     let _ = std::process::Command::new("spectacle").args(["-a", "-b", "-n", "-o", rest.trim()]).status();

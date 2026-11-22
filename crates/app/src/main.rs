@@ -43,7 +43,7 @@ fn main() {
             window.on_next_frame(move |_, _| println!("READY {:.1}", t0.elapsed().as_secs_f64() * 1000.0));
             if let Some(note) = note {
                 let editor = ws.update(cx, |ws, cx| ws.open_path(note, false, window, cx));
-                script::start(editor.clone(), window, cx);
+                script::start(editor.clone(), ws.downgrade(), window, cx);
                 if std::env::var_os("OBSIDILIGHT_BENCH").is_some() {
                     bench::start(editor, window, cx);
                 }

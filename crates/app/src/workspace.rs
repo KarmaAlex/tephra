@@ -9,6 +9,9 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::dialog::{DialogAction, DialogClose, DialogFooter};
+use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::list::ListItem;
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::tree::{tree, TreeItem, TreeState};
@@ -21,7 +24,7 @@ use obsidilight_core::links::link_path;
 use crate::editor::{Editor, EditorEvent};
 use crate::embeds::{SharedVault, Vault};
 
-actions!(workspace, [CloseTab, NextTab, PrevTab, NewNote, OpenInNewTab, ToggleSidebar]);
+actions!(workspace, [CloseTab, NextTab, PrevTab, NewNote, NewFolder, OpenInNewTab, RenameItem, DeleteItem, ToggleSidebar]);
 
 pub const CONTEXT: &str = "Workspace";
 
@@ -105,6 +108,28 @@ impl Workspace {
             files: Vec<String>,
         }
         let mut root = Dir::default();
+        // folders from disk (so empty ones show), files from the index
+        fn dirs(base: &Path, d: &Path, out: &mut Vec<String>) {
+            let Ok(rd) = std::fs::read_dir(d) else { return };
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_dir() && !e.file_name().to_string_lossy().starts_with('.') {
+                    if let Ok(r) = p.strip_prefix(base) {
+                        out.push(r.to_string_lossy().replace('\\', "/"));
+                    }
+                    dirs(base, &p, out);
+                }
+            }
+        }
+        let vroot = self.vault.borrow().root.clone();
+        let mut all_dirs = Vec::new();
+        dirs(&vroot, &vroot, &mut all_dirs);
+        for dpath in all_dirs {
+            let mut d = &mut root;
+            for p in dpath.split('/') {
+                d = d.dirs.entry(p.to_string()).or_default();
+            }
+        }
         for f in self.vault.borrow().index.files() {
             let mut d = &mut root;
             let parts: Vec<&str> = f.split('/').collect();
@@ -275,6 +300,224 @@ impl Workspace {
         }
     }
 
+    // ---- file operations --------------------------------------------------------------
+
+    fn notify_status(&self, msg: impl Into<SharedString>, cx: &mut Context<Self>) {
+        let msg = msg.into();
+        println!("STATUS {msg}");
+        if let Some(e) = self.tabs.get(self.active) {
+            e.update(cx, |e, cx| {
+                e.status = Some(msg);
+                cx.notify();
+            });
+        }
+    }
+
+    /// Renames or moves a file or folder (vault paths) and rewrites every link that pointed at
+    /// what moved, so links keep working (HANDOFF §5.1).
+    pub fn rename_path(&mut self, old: &str, new: &str, cx: &mut Context<Self>) -> Result<(usize, usize), String> {
+        let new = new.trim().trim_matches('/').to_string();
+        if new.is_empty() || new.split('/').any(|c| c.is_empty() || c == "." || c == ".." || c.starts_with('.')) {
+            return Err("invalid name".into());
+        }
+        if new == old {
+            return Ok((0, 0));
+        }
+        let root = self.vault.borrow().root.clone();
+        let (old_abs, new_abs) = (root.join(old), root.join(&new));
+        if new_abs.exists() && !old.eq_ignore_ascii_case(&new) {
+            return Err(format!("\"{new}\" already exists"));
+        }
+        // 1. unsaved edits first, so the index (and the plan's byte ranges) match the disk
+        for e in &self.tabs {
+            e.update(cx, |e, cx| e.save(cx));
+        }
+        if self.tabs.iter().any(|e| e.read(cx).doc.is_dirty()) {
+            return Err("a note has unsaved changes that could not be saved".into());
+        }
+        // 2. which files move, and the link edits that keeps links intact
+        let moves: Vec<(String, String)> = if old_abs.is_dir() {
+            let prefix = format!("{old}/");
+            self.vault.borrow().index.files().filter(|f| f.starts_with(&prefix)).map(|f| (f.clone(), format!("{new}/{}", &f[prefix.len()..]))).collect()
+        } else {
+            vec![(old.to_string(), new.clone())]
+        };
+        let plan = self.vault.borrow().index.rename_plan(&moves);
+        // 3. move on disk
+        if let Some(parent) = new_abs.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        std::fs::rename(&old_abs, &new_abs).map_err(|e| e.to_string())?;
+        for e in &self.tabs {
+            let p = e.read(cx).path.clone();
+            let rel = self.rel(&p);
+            if let Some((_, n)) = moves.iter().find(|(o, _)| *o == rel) {
+                let np = root.join(n);
+                e.update(cx, |e, cx| e.set_path(np, cx));
+            }
+        }
+        // 4. rewrite links: through the editor if the note is open, else straight to disk
+        let mut links = 0;
+        let mut failures = Vec::new();
+        for edit in &plan {
+            links += edit.edits.len();
+            let path = root.join(&edit.note);
+            if let Some(e) = self.tabs.iter().find(|e| e.read(cx).path == path) {
+                e.update(cx, |e, cx| e.apply_edits(&edit.edits, cx));
+                continue;
+            }
+            let res = obsidilight_core::file::load(&path).and_then(|l| {
+                let text = obsidilight_core::index::apply_edits(&l.text, &edit.edits);
+                obsidilight_core::file::save(&path, &text, Some(l.disk))
+            });
+            if !matches!(res, Ok(obsidilight_core::file::SaveOutcome::Saved(_) | obsidilight_core::file::SaveOutcome::Unchanged(_))) {
+                failures.push(edit.note.clone());
+            }
+        }
+        // 5. re-index
+        let fresh = obsidilight_core::index::VaultIndex::build(&root);
+        self.vault.borrow_mut().index = fresh;
+        if old_abs.is_dir() || new_abs.is_dir() {
+            self.expanded.insert(format!("dir:{new}"));
+        }
+        self.rebuild_tree(cx);
+        for e in &self.tabs {
+            e.update(cx, |e, cx| e.invalidate(cx));
+        }
+        cx.notify();
+        if failures.is_empty() {
+            Ok((links, plan.len()))
+        } else {
+            Err(format!("moved, but links in {} note(s) could not be updated: {}", failures.len(), failures.join(", ")))
+        }
+    }
+
+    /// Moves a file or folder to the system trash (Obsidian's default), closing its tabs.
+    pub fn delete_path(&mut self, rel: &str, window: &mut Window, cx: &mut Context<Self>) -> Result<(), String> {
+        let root = self.vault.borrow().root.clone();
+        let abs = root.join(rel);
+        let doomed: Vec<usize> = self.tabs.iter().enumerate().filter(|(_, e)| e.read(cx).path.starts_with(&abs)).map(|(i, _)| i).collect();
+        for &i in doomed.iter().rev() {
+            self.tabs[i].update(cx, |e, _| e.disable_saving());
+            self.close_tab(i, window, cx);
+        }
+        trash::delete(&abs).map_err(|e| e.to_string())?;
+        let fresh = obsidilight_core::index::VaultIndex::build(&root);
+        self.vault.borrow_mut().index = fresh;
+        self.rebuild_tree(cx);
+        for e in &self.tabs {
+            e.update(cx, |e, cx| e.invalidate(cx));
+        }
+        cx.notify();
+        Ok(())
+    }
+
+    fn create_folder(&mut self, rel: &str, cx: &mut Context<Self>) -> Result<(), String> {
+        let rel = rel.trim().trim_matches('/');
+        if rel.is_empty() || rel.split('/').any(|c| c.is_empty() || c == ".." || c.starts_with('.')) {
+            return Err("invalid name".into());
+        }
+        let abs = self.vault.borrow().root.join(rel);
+        std::fs::create_dir_all(&abs).map_err(|e| e.to_string())?;
+        // empty folders have no files in the index; keep it visible via a placeholder-free rebuild
+        self.expanded.insert(format!("dir:{rel}"));
+        self.rebuild_tree(cx);
+        Ok(())
+    }
+
+    fn rename_dialog(&mut self, rel: String, folder: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let shown = if !folder && is_note(&rel) { rel[..rel.len() - 3].to_string() } else { rel.clone() };
+        let input = cx.new(|cx| InputState::new(window, cx).default_value(shown));
+        let weak = cx.entity().downgrade();
+        let focus = input.read(cx).focus_handle(cx);
+        window.open_dialog(cx, move |dialog, _, _| {
+            let input = input.clone();
+            let weak = weak.clone();
+            let rel = rel.clone();
+            dialog
+                .title(if folder { "Rename or move folder" } else { "Rename or move note" })
+                .child(v_flex().gap_2().child(Input::new(&input)).child(div().text_xs().child("Edit the path to move it to another folder. Links to it are updated.")))
+                .footer(
+                    DialogFooter::new()
+                        .child(DialogClose::new().child(Button::new("cancel").label("Cancel").outline()))
+                        .child(DialogAction::new().child(Button::new("ok").label("Rename").primary())),
+                )
+                .on_ok(move |_, window, cx| {
+                    let mut new = input.read(cx).value().to_string();
+                    if !folder && is_note(&rel) && !new.to_lowercase().ends_with(".md") {
+                        new.push_str(".md");
+                    }
+                    let res = weak.update(cx, |ws, cx| ws.rename_path(&rel, &new, cx));
+                    match res {
+                        Ok(Ok((links, notes))) => {
+                            let _ = weak.update(cx, |ws, cx| ws.notify_status(format!("Renamed. Updated {links} link(s) in {notes} note(s)."), cx));
+                            true
+                        }
+                        Ok(Err(e)) => {
+                            window.push_notification(format!("Rename failed: {e}"), cx);
+                            false
+                        }
+                        Err(_) => true,
+                    }
+                })
+        });
+        window.focus(&focus, cx);
+    }
+
+    fn new_folder_dialog(&mut self, parent: String, window: &mut Window, cx: &mut Context<Self>) {
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Folder name"));
+        let weak = cx.entity().downgrade();
+        let focus = input.read(cx).focus_handle(cx);
+        window.open_dialog(cx, move |dialog, _, _| {
+            let input = input.clone();
+            let weak = weak.clone();
+            let parent = parent.clone();
+            dialog
+                .title("New folder")
+                .child(Input::new(&input))
+                .footer(
+                    DialogFooter::new()
+                        .child(DialogClose::new().child(Button::new("cancel").label("Cancel").outline()))
+                        .child(DialogAction::new().child(Button::new("ok").label("Create").primary())),
+                )
+                .on_ok(move |_, window, cx| {
+                    let name = input.read(cx).value().to_string();
+                    let rel = if parent.is_empty() { name } else { format!("{parent}/{name}") };
+                    match weak.update(cx, |ws, cx| ws.create_folder(&rel, cx)) {
+                        Ok(Err(e)) => {
+                            window.push_notification(format!("Could not create folder: {e}"), cx);
+                            false
+                        }
+                        _ => true,
+                    }
+                })
+        });
+        window.focus(&focus, cx);
+    }
+
+    fn delete_dialog(&mut self, rel: String, folder: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let weak = cx.entity().downgrade();
+        let what = if folder { format!("the folder \"{rel}\" and everything in it") } else { format!("\"{rel}\"") };
+        window.open_dialog(cx, move |dialog, _, _| {
+            let weak = weak.clone();
+            let rel = rel.clone();
+            dialog
+                .title("Delete")
+                .child(format!("Move {what} to the system trash? You can restore it from the trash."))
+                .footer(
+                    DialogFooter::new()
+                        .child(DialogClose::new().child(Button::new("cancel").label("Cancel").outline()))
+                        .child(DialogAction::new().child(Button::new("ok").label("Move to trash").danger())),
+                )
+                .on_ok(move |_, window, cx| {
+                    if let Ok(Err(e)) = weak.update(cx, |ws, cx| ws.delete_path(&rel, window, cx)) {
+                        window.push_notification(format!("Delete failed: {e}"), cx);
+                    }
+                    true
+                })
+        });
+    }
+
     // ---- watcher --------------------------------------------------------------------
 
     fn watch(&self, root: &Path, cx: &mut Context<Self>) -> Option<notify::RecommendedWatcher> {
@@ -399,7 +642,12 @@ impl Workspace {
                     let id = entry.item().id.to_string();
                     let folder = entry.is_folder();
                     *target.borrow_mut() = Some((id.strip_prefix("dir:").unwrap_or(&id).to_string(), folder));
-                    menu.when(!folder, |m| m.menu("Open in new tab", Box::new(OpenInNewTab))).menu("New note here", Box::new(NewNote))
+                    menu.when(!folder, |m| m.menu("Open in new tab", Box::new(OpenInNewTab)))
+                        .menu("New note here", Box::new(NewNote))
+                        .menu("New folder here", Box::new(NewFolder))
+                        .separator()
+                        .menu("Rename or move…", Box::new(RenameItem))
+                        .menu("Delete", Box::new(DeleteItem))
                 })
                 .flex_1(),
             )
@@ -467,6 +715,27 @@ impl Render for Workspace {
                 if let Some((p, false)) = target {
                     let path = ws.vault.borrow().root.join(p);
                     ws.open_path(path, true, w, cx);
+                }
+            }))
+            .on_action(cx.listener(|ws, _: &NewFolder, w, cx| {
+                let target = ws.menu_target.borrow_mut().take();
+                let parent = match target {
+                    Some((p, true)) => p,
+                    Some((p, false)) => p.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default(),
+                    None => String::new(),
+                };
+                ws.new_folder_dialog(parent, w, cx)
+            }))
+            .on_action(cx.listener(|ws, _: &RenameItem, w, cx| {
+                let target = ws.menu_target.borrow_mut().take();
+                if let Some((p, folder)) = target {
+                    ws.rename_dialog(p, folder, w, cx)
+                }
+            }))
+            .on_action(cx.listener(|ws, _: &DeleteItem, w, cx| {
+                let target = ws.menu_target.borrow_mut().take();
+                if let Some((p, folder)) = target {
+                    ws.delete_dialog(p, folder, w, cx)
                 }
             }))
             .children(sidebar)

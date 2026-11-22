@@ -16,4 +16,5 @@ ratex-render = { version = "0.1.16", features = ["embed-fonts"] }
 rquickjs = "0.14"
 notify = "8"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+trash = "5"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }

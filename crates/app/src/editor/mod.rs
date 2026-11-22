@@ -169,6 +169,29 @@ impl Editor {
 
     // ---- external changes -------------------------------------------------
 
+    /// The file was moved/renamed on disk (by the workspace).
+    pub fn set_path(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.path = path;
+        cx.notify();
+    }
+
+    /// Applies link-update edits computed by the workspace (byte ranges in the current text,
+    /// ascending, non-overlapping) as one undoable step, then saves.
+    pub fn apply_edits(&mut self, edits: &[(Range<usize>, String)], cx: &mut Context<Self>) {
+        let sel = self.doc.selection();
+        let mut delta: isize = 0;
+        for (r, t) in edits {
+            // ranges refer to the text before any of these edits; shift by what came earlier
+            let start = (r.start as isize + delta) as usize;
+            let end = (r.end as isize + delta) as usize;
+            self.doc.replace(start..end, t, EditKind::Other);
+            delta += t.len() as isize - (r.end - r.start) as isize;
+        }
+        self.doc.set_selection(Selection::caret(self.doc.clamp(sel.head)));
+        self.save(cx);
+        cx.notify();
+    }
+
     /// Something outside this note changed (e.g. a linked file appeared): rebuild the projection.
     pub fn invalidate(&mut self, cx: &mut Context<Self>) {
         self.proj.version = u64::MAX;
