@@ -1,0 +1,14 @@
+{
+  "productName": "spike-tauri",
+  "version": "0.0.0",
+  "identifier": "dev.obsidilight.spike",
+  "build": { "frontendDist": "../dist" },
+  "app": {
+    "windows": [{ "label": "main", "title": "spike-tauri", "width": 1200, "height": 900 }],
+    "security": {
+      "csp": null,
+      "assetProtocol": { "enable": true, "scope": ["$HOME/dev/vault-fixture/**"] }
+    }
+  },
+  "bundle": { "active": false }
+}

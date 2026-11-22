@@ -1,0 +1,34 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { JSDOM } from "jsdom";
+const dom = new JSDOM("<!doctype html><html><body></body></html>", { pretendToBeVisual: true });
+const g = globalThis as any;
+for (const k of ["window","document","navigator","Node","HTMLElement","MutationObserver","getComputedStyle","requestAnimationFrame","cancelAnimationFrame","DOMRect","Range","Text"]) { if (!(k in g) || k === "navigator") { try { g[k] = (dom.window as any)[k]; } catch {} } }
+g.document.getSelection = () => null;
+(g.Range.prototype as any).getClientRects = () => [];
+(g.Range.prototype as any).getBoundingClientRect = () => ({left:0,right:0,top:0,bottom:0,width:0,height:0});
+const { findHighlights, highlightPlugin } = await import("./src/highlight.ts");
+const { EditorView } = await import("@codemirror/view");
+const { EditorState } = await import("@codemirror/state");
+const r = (from: number, to: number) => ({ from, to });
+test("basic", () => assert.deepEqual(findHighlights("a ==b== c"), [r(2, 7)]));
+test("two", () => assert.deepEqual(findHighlights("==a== and ==bb=="), [r(0, 5), r(10, 16)]));
+test("unclosed", () => assert.deepEqual(findHighlights("==a\nb=="), []));
+test("empty inner", () => assert.deepEqual(findHighlights("====x"), []));
+test("unclosed then valid", () => assert.deepEqual(findHighlights("== x ==y== z"), [r(0, 7)]));
+test("inline code", () => assert.deepEqual(findHighlights("`==no==` ==yes=="), [r(9, 16)]));
+test("double backtick code", () => assert.deepEqual(findHighlights("``a ` ==no== ``==y=="), [r(15, 20)]));
+test("fence", () => assert.deepEqual(findHighlights("```\n==no==\n```\n==yes=="), [r(15, 22)]));
+test("unicode", () => assert.deepEqual(findHighlights("è ==calcolabilità=="), [r(2, 19)]));
+test("plugin decorations", () => {
+  const view = new EditorView({ state: EditorState.create({ doc: "x ==hi== y", extensions: [highlightPlugin] }), parent: document.body });
+  const p = view.plugin(highlightPlugin)!;
+  const got: [number, number, string][] = [];
+  p.decorations.between(0, view.state.doc.length, (f, t, d) => { got.push([f, t, (d.spec as any).class]); });
+  assert.deepEqual(got, [[2, 4, "cm-highlight-marker"], [4, 6, "cm-highlight"], [6, 8, "cm-highlight-marker"]]);
+  view.dispatch({ changes: { from: 0, insert: "==a== " } });
+  const got2: number[] = [];
+  view.plugin(highlightPlugin)!.decorations.between(0, view.state.doc.length, (f) => { got2.push(f); });
+  assert.equal(got2.length, 6);
+  view.destroy();
+});

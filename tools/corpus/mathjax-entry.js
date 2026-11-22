@@ -1,0 +1,45 @@
+import "mathjax-full/js/input/tex/action/ActionConfiguration.js";
+import "mathjax-full/js/input/tex/ams/AmsConfiguration.js";
+import "mathjax-full/js/input/tex/amscd/AmsCdConfiguration.js";
+import "mathjax-full/js/input/tex/base/BaseConfiguration.js";
+import "mathjax-full/js/input/tex/bbox/BboxConfiguration.js";
+import "mathjax-full/js/input/tex/boldsymbol/BoldsymbolConfiguration.js";
+import "mathjax-full/js/input/tex/braket/BraketConfiguration.js";
+import "mathjax-full/js/input/tex/cancel/CancelConfiguration.js";
+import "mathjax-full/js/input/tex/cases/CasesConfiguration.js";
+import "mathjax-full/js/input/tex/centernot/CenternotConfiguration.js";
+import "mathjax-full/js/input/tex/color/ColorConfiguration.js";
+import "mathjax-full/js/input/tex/colortbl/ColortblConfiguration.js";
+import "mathjax-full/js/input/tex/configmacros/ConfigMacrosConfiguration.js";
+import "mathjax-full/js/input/tex/empheq/EmpheqConfiguration.js";
+import "mathjax-full/js/input/tex/enclose/EncloseConfiguration.js";
+import "mathjax-full/js/input/tex/extpfeil/ExtpfeilConfiguration.js";
+import "mathjax-full/js/input/tex/gensymb/GensymbConfiguration.js";
+import "mathjax-full/js/input/tex/html/HtmlConfiguration.js";
+import "mathjax-full/js/input/tex/mathtools/MathtoolsConfiguration.js";
+import "mathjax-full/js/input/tex/mhchem/MhchemConfiguration.js";
+import "mathjax-full/js/input/tex/newcommand/NewcommandConfiguration.js";
+import "mathjax-full/js/input/tex/physics/PhysicsConfiguration.js";
+import "mathjax-full/js/input/tex/setoptions/SetOptionsConfiguration.js";
+import "mathjax-full/js/input/tex/tagformat/TagFormatConfiguration.js";
+import "mathjax-full/js/input/tex/textcomp/TextcompConfiguration.js";
+import "mathjax-full/js/input/tex/textmacros/TextMacrosConfiguration.js";
+import "mathjax-full/js/input/tex/unicode/UnicodeConfiguration.js";
+import "mathjax-full/js/input/tex/upgreek/UpgreekConfiguration.js";
+import "mathjax-full/js/input/tex/verb/VerbConfiguration.js";
+import { mathjax } from "mathjax-full/js/mathjax.js";
+import { TeX } from "mathjax-full/js/input/tex.js";
+import { SVG } from "mathjax-full/js/output/svg.js";
+import { liteAdaptor } from "mathjax-full/js/adaptors/liteAdaptor.js";
+import { RegisterHTMLHandler } from "mathjax-full/js/handlers/html.js";
+const adaptor = liteAdaptor();
+RegisterHTMLHandler(adaptor);
+const tex = new TeX({ packages: ["action", "ams", "amscd", "base", "bbox", "boldsymbol", "braket", "cancel", "cases", "centernot", "color", "colortbl", "configmacros", "empheq", "enclose", "extpfeil", "gensymb", "html", "mathtools", "mhchem", "newcommand", "physics", "setoptions", "tagformat", "textcomp", "textmacros", "unicode", "upgreek", "verb"], formatError: (_j, e) => { throw e; } });
+const doc = mathjax.document("", { InputJax: tex, OutputJax: new SVG({ fontCache: "none" }) });
+globalThis.tex2svg = (src, display) => {
+  try {
+    const html = adaptor.outerHTML(doc.convert(src, { display }));
+    const m = html.match(/<svg[\s\S]*<\/svg>/);
+    return m && !html.includes("merror") ? m[0] : "";
+  } catch (e) { return ""; }
+};

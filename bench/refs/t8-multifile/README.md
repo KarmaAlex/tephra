@@ -1,0 +1,4 @@
+# text-utils
+
+- `slugify`
+- `wordCount`

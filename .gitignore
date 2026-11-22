@@ -1,0 +1,18 @@
+# Private vault data — never commit (HANDOFF §2.2)
+vault-fixture/
+/home/user/dev/vault-fixture/
+*.md.fixture
+fixture/
+# Orchestrator scratch
+.orchestrator/staging/
+# Build outputs
+target/
+node_modules/
+dist/
+spikes/*/target/
+spikes/*/node_modules/
+__pycache__/
+reports/
+bench/work/
+spikes/gpui/assets/mathjax-svg.js
+spikes/tauri/dist/

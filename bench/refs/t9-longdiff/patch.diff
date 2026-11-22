@@ -1,0 +1,14 @@
+--- a/src/vaultUtils.ts	2026-11-22 12:43:20.924601271 +0100
++++ b/src/vaultUtils.ts	2026-11-22 12:43:20.924696988 +0100
+@@ -409,9 +409,9 @@
+  * Returns null for any other path.
+  */
+ export function parseSyncConflict(path: string): SyncConflict | null {
+-  const m = /^(.*)\.sync-conflict-(\d{8})-(\d{6})-([A-Z0-9]{6})(\..*)?$/.exec(path);
++  const m = /^(.*)\.sync-conflict-(\d{8})-(\d{6})-([A-Z0-9]{7})(\..*)?$/.exec(path);
+   if (!m) return null;
+-  return { original: m[1] + m[5], stamp: m[2] + m[3], device: m[4] };
++  return { original: m[1] + (m[5] ?? ""), stamp: m[2] + "-" + m[3], device: m[4] };
+ }
+ 
+ const KIND_BY_EXT: Record<string, FileKind> = {
