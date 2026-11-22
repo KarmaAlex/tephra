@@ -23,26 +23,35 @@ fn main() {
         eprintln!("usage: obsidilight <note.md>");
         std::process::exit(2);
     };
-    let path = std::fs::canonicalize(&path).unwrap_or(path);
-    let title: SharedString = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default().into();
     gpui_kit::application().with_assets(gpui_kit::assets::Assets).run(move |cx| {
         gpui_kit::init(cx);
         editor::bind_keys(cx);
-        let opts = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size(px(1000.), px(860.)), cx))),
-            titlebar: Some(TitlebarOptions { title: Some(title), ..Default::default() }),
-            app_id: Some("obsidilight".into()),
-            ..Default::default()
-        };
-        gpui_kit::open_window(opts, cx, move |window, cx| {
-            let editor = cx.new(|cx| editor::Editor::open(path, window, cx));
+        open_note(path, cx, move |editor, window, cx| {
             window.on_next_frame(move |_, _| println!("READY {:.1}", t0.elapsed().as_secs_f64() * 1000.0));
             script::start(editor.clone(), window, cx);
             if std::env::var_os("OBSIDILIGHT_BENCH").is_some() {
-                bench::start(editor.clone(), window, cx);
+                bench::start(editor, window, cx);
             }
-            editor
-        })
-        .expect("open window");
+        });
     });
+}
+
+/// Opens a note in a new window (one note per window until tabs arrive in M1b).
+pub fn open_note(path: PathBuf, cx: &mut App, setup: impl FnOnce(Entity<editor::Editor>, &mut Window, &mut App) + 'static) {
+    let path = std::fs::canonicalize(&path).unwrap_or(path);
+    let title: SharedString = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default().into();
+    let opts = WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size(px(1000.), px(860.)), cx))),
+        titlebar: Some(TitlebarOptions { title: Some(title), ..Default::default() }),
+        app_id: Some("obsidilight".into()),
+        ..Default::default()
+    };
+    let result = gpui_kit::open_window(opts, cx, move |window, cx| {
+        let editor = cx.new(|cx| editor::Editor::open(path, window, cx));
+        setup(editor.clone(), window, cx);
+        editor
+    });
+    if let Err(e) = result {
+        eprintln!("could not open window: {e}");
+    }
 }

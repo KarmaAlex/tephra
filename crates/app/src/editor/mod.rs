@@ -397,6 +397,30 @@ impl Editor {
         }
     }
 
+    /// Ctrl+click on a link: external URLs open in the browser, wikilinks open the note.
+    pub fn open_link(&mut self, target: &str, cx: &mut Context<Self>) {
+        if target.starts_with("tag:") || target.is_empty() {
+            return;
+        }
+        let script = std::env::var_os("OBSIDILIGHT_SCRIPT").is_some();
+        if target.contains("://") || target.starts_with("mailto:") {
+            println!("OPEN_URL {target}");
+            if !script {
+                cx.open_url(target);
+            }
+            return;
+        }
+        let note = target.split('#').next().unwrap_or(target);
+        match self.vault.resolve(note, &self.path) {
+            Some(p) => {
+                println!("OPEN_NOTE {}", p.display());
+                crate::open_note(p, cx, |_, _, _| {});
+            }
+            None => self.status = Some(format!("No note named \"{note}\" (creating notes from links arrives in M1b)").into()),
+        }
+        cx.notify();
+    }
+
     /// Drag-and-drop: images are copied into the attachment folder and embedded at the drop point.
     fn drop_files(&mut self, paths: &ExternalPaths, window: &mut Window, cx: &mut Context<Self>) {
         let at = window.mouse_position();
@@ -502,7 +526,18 @@ impl Render for Editor {
         let extensions = self.extensions.clone();
         self.projection(cx);
         let proj = &self.proj;
-        let mut rcx = RenderContext::from_app(cx).with_markdown_extensions(extensions).with_body_font_size(px(16.));
+        // Links open on Ctrl+click only; a plain click places the caret (handled by on_mouse_down).
+        // Without a handler gpui-kit would open every link on a plain click.
+        let weak = cx.entity().downgrade();
+        let mut rcx = RenderContext::from_app(cx)
+            .with_markdown_extensions(extensions)
+            .with_body_font_size(px(16.))
+            .on_link_click(move |url, ev, _, cx| {
+                if ev.modifiers().secondary(cx) {
+                    let url = url.to_string();
+                    let _ = weak.update(cx, |e, cx| e.open_link(&url, cx));
+                }
+            });
         for (k, ranges) in &proj.muted {
             rcx = rcx.with_foreground_ranges(*k, ranges.iter().map(|r| (r.clone(), muted)).collect());
         }

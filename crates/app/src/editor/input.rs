@@ -84,6 +84,9 @@ impl Editor {
 
 pub fn on_mouse_down(e: &mut Editor, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Editor>) {
     window.focus(&e.focus, cx);
+    if ev.modifiers.secondary(cx) {
+        return; // Ctrl+click is for opening links; leave the caret where it is
+    }
     let Some(off) = e.hit_test(ev.position, Bias::Nearest) else { return };
     let s = e.doc.selection();
     let sel = match ev.click_count {

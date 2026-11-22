@@ -76,11 +76,14 @@ pub fn start(editor: Entity<Editor>, window: &mut Window, cx: &mut App) {
                     }
                 }
                 "click" => {
+                    // click <x> <y> [count] [ctrl]
                     let p = point(px(num(0)), px(num(1)));
                     let count = (num(2) as usize).max(1);
+                    let modifiers = Modifiers { control: rest.split_whitespace().any(|w| w == "ctrl"), ..Default::default() };
                     let _ = handle.update(cx, |_, w, cx| {
-                        w.dispatch_event(PlatformInput::MouseDown(MouseDownEvent { button: MouseButton::Left, position: p, click_count: count, ..Default::default() }), cx);
-                        w.dispatch_event(PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position: p, click_count: count, ..Default::default() }), cx);
+                        w.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position: p, modifiers, ..Default::default() }), cx);
+                        w.dispatch_event(PlatformInput::MouseDown(MouseDownEvent { button: MouseButton::Left, position: p, click_count: count, modifiers, ..Default::default() }), cx);
+                        w.dispatch_event(PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position: p, click_count: count, modifiers, ..Default::default() }), cx);
                     });
                 }
                 "drag" => {
@@ -104,6 +107,15 @@ pub fn start(editor: Entity<Editor>, window: &mut Window, cx: &mut App) {
                     let _ = handle.update(cx, |_, w, cx| {
                         let center = point(w.viewport_size().width / 2., w.viewport_size().height / 2.);
                         w.dispatch_event(PlatformInput::Scroll(ScrollEvent { position: center, delta: ScrollDelta::Pixels(point(px(0.), px(-num(0)))), ..Default::default() }), cx);
+                    });
+                }
+                "pos" => {
+                    // pos <offset>: screen position of a document offset, without moving the caret
+                    let off = num(0) as usize;
+                    let _ = weak.update(cx, |e, _| {
+                        if let Some(b) = e.caret_bounds(off) {
+                            println!("POS {off} {:.0} {:.0}", f32::from(b.origin.x), f32::from(b.center().y));
+                        }
                     });
                 }
                 "state" => {

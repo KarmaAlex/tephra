@@ -1,0 +1,17 @@
+# Links: a plain click places the caret, Ctrl+click opens (URLs are only printed in script mode).
+# Expects tests/ui/links.sh's note: "vedi [[empty]] e [sito](https://example.com) fine"
+key ctrl-end
+wait 200
+click 194 34
+wait 300
+state
+key ctrl-end
+wait 300
+click 194 34 1 ctrl
+wait 800
+key ctrl-end
+wait 300
+click 255 34 1 ctrl
+wait 300
+state
+quit

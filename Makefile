@@ -39,3 +39,4 @@ cm6-bundle:      ## headless CM6 + Lezer Markdown bundle for QuickJS (snippet fu
 
 ui-smoke: build    ## scripted UI test on a temp copy of the perf note (needs a display)
 	tests/ui/smoke.sh
+	tests/ui/links.sh
