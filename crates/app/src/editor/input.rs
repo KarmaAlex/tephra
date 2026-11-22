@@ -107,6 +107,7 @@ pub fn on_mouse_down(e: &mut Editor, ev: &MouseDownEvent, window: &mut Window, c
 
 pub fn on_mouse_move(e: &mut Editor, ev: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Editor>) {
     if !e.dragging || ev.pressed_button != Some(MouseButton::Left) {
+        e.on_hover(ev.position, ev.modifiers.secondary(cx), cx);
         return;
     }
     if let Some(off) = e.hit_test(ev.position, Bias::Nearest) {

@@ -41,6 +41,8 @@ pub struct CalloutRef {
     pub meta: String,
     pub title: String,
     pub line: usize,
+    /// Last line of the callout (its body included).
+    pub end_line: usize,
     pub depth: usize,
 }
 
@@ -80,7 +82,7 @@ pub fn parse_note(path: &str, text: &str) -> NoteMeta {
                 }
                 if *kind == BlockKind::Quote {
                     for c in flatten(&parse_quote(text, b.range.clone())) {
-                        m.callouts.push(CalloutRef { kind: c.kind.clone(), meta: c.meta.clone(), title: text[c.title.clone()].to_string(), line: line_of(text, c.header.start), depth: c.depth });
+                        m.callouts.push(CalloutRef { kind: c.kind.clone(), meta: c.meta.clone(), title: text[c.title.clone()].to_string(), line: line_of(text, c.header.start), end_line: line_of(text, c.range.end.saturating_sub(1).max(c.header.start)), depth: c.depth });
                     }
                 }
                 let inl = parse_inline(text, b.content.clone());
@@ -447,7 +449,7 @@ mod tests {
     #[test]
     fn rename_keeps_subpath_alias_and_uses_shortest_path() {
         let (root, idx) = vault(&[
-            ("A.md", "[[B#Sez|qui]] ![[img.png]] [[B]]"),
+            ("A.md", "[[B#Sez|qui]] ![[img.png]] [[B]] [[B#^lem1]]"),
             ("sub/B.md", "x"),
             ("other/B2.md", ""),
             ("Images/img.png", ""),
@@ -455,7 +457,7 @@ mod tests {
         let plan = idx.rename_plan(&[("sub/B.md".into(), "sub/Nuovo nome.md".into())]);
         assert_eq!(plan.len(), 1);
         let a = std::fs::read_to_string(root.join("A.md")).unwrap();
-        assert_eq!(apply_edits(&a, &plan[0].edits), "[[Nuovo nome#Sez|qui]] ![[img.png]] [[Nuovo nome]]");
+        assert_eq!(apply_edits(&a, &plan[0].edits), "[[Nuovo nome#Sez|qui]] ![[img.png]] [[Nuovo nome]] [[Nuovo nome#^lem1]]", "references keep their block id");
         // a move that creates a name clash needs a longer path
         let (root2, idx2) = vault(&[("A.md", "[[B]]"), ("x/B.md", ""), ("y/C.md", "")]);
         let plan = idx2.rename_plan(&[("y/C.md".into(), "B.md".into()), ("x/B.md".into(), "x/B.md".into())]);

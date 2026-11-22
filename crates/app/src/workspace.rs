@@ -115,6 +115,11 @@ impl Workspace {
         this
     }
 
+    pub fn show_right_sidebar(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.right_sidebar = on;
+        cx.notify();
+    }
+
     pub fn active_editor(&self) -> Option<Entity<Editor>> {
         self.tabs.get(self.active).cloned()
     }

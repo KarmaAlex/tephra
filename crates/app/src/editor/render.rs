@@ -60,14 +60,32 @@ pub fn callout_style(kind: &str, meta: &str, cx: &App) -> CalloutStyle {
 pub struct MarkdownRenderer {
     pub resolve: Rc<dyn Fn(&str) -> Option<PathBuf>>,
     depth: usize,
+    /// Each render gets its own element-id scope (renders happen in the same order every
+    /// frame, so the ids are stable); otherwise identical inline objects would collide.
+    next: Rc<std::cell::Cell<usize>>,
+    /// Plugin callout numbers for the rendered text, by line (previews of numbered callouts).
+    numbers: Option<Rc<HashMap<usize, String>>>,
 }
 
 impl MarkdownRenderer {
     pub fn new(resolve: Rc<dyn Fn(&str) -> Option<PathBuf>>) -> Self {
-        Self { resolve, depth: 0 }
+        Self { resolve, depth: 0, next: Rc::default(), numbers: None }
+    }
+
+    /// Callout numbers for the text about to be rendered (by its line numbers).
+    pub fn with_numbers(mut self, numbers: HashMap<usize, String>) -> Self {
+        self.numbers = Some(Rc::new(numbers));
+        self
     }
 
     pub fn render(&self, md: &str, window: &mut Window, cx: &mut App) -> AnyElement {
+        let n = self.next.get();
+        self.next.set(n + 1);
+        let el = self.render_inner(md, window, cx);
+        div().id(SharedString::from(format!("md-{}-{n}", self.depth))).child(el).into_any_element()
+    }
+
+    fn render_inner(&self, md: &str, window: &mut Window, cx: &mut App) -> AnyElement {
         if self.depth > 4 {
             return div().child(md.to_string()).into_any_element(); // runaway nesting
         }
@@ -81,6 +99,7 @@ impl MarkdownRenderer {
             version: 0,
             palette: Palette { highlight: cx.theme().yellow.opacity(0.35) },
             resolve: &resolve,
+            link_label: &|_| None,
             code_mode: &code_mode,
         });
         let muted = cx.theme().muted_foreground;
@@ -88,9 +107,9 @@ impl MarkdownRenderer {
         for (k, ranges) in &proj.muted {
             rcx = rcx.with_foreground_ranges(*k, ranges.iter().map(|r| (r.clone(), muted)).collect());
         }
-        let inner = MarkdownRenderer { resolve: self.resolve.clone(), depth: self.depth + 1 };
+        let inner = MarkdownRenderer { resolve: self.resolve.clone(), depth: self.depth + 1, next: Rc::default(), numbers: None };
         let folds = HashMap::new();
-        let h = Host { editor: None, folds: &folds, md: &inner };
+        let h = Host { editor: None, folds: &folds, md: &inner, numbers: self.numbers.as_deref() };
         let children: Vec<AnyElement> = proj
             .blocks
             .iter()
@@ -110,6 +129,8 @@ pub struct Host<'a> {
     pub editor: Option<WeakEntity<Editor>>,
     pub folds: &'a HashMap<String, bool>,
     pub md: &'a MarkdownRenderer,
+    /// Plugin callout numbers for this note, by header line.
+    pub numbers: Option<&'a HashMap<usize, String>>,
 }
 
 /// Renders a projected node; gpui-kit renders plain blocks.
@@ -154,6 +175,12 @@ fn render_callout(c: &CalloutView, ix: usize, host: &Host, rcx: &RenderContext, 
     let folds = host.folds;
     let style = callout_style(&c.kind, &c.meta, cx);
     let color = style.color;
+    let plugin = cx.try_global::<PluginHost>().and_then(|h| h.reg.callout_renderer(&c.kind, &c.meta));
+    // a number from the plugin ("Theorem 1.2") replaces the plain type label
+    let mut style = style;
+    if let Some(n) = host.numbers.and_then(|m| m.get(&c.line)) {
+        style.label = Some(n.clone());
+    }
     let collapsed = c.fold.is_some() && folds.get(&c.fold_key).copied().unwrap_or(c.fold == Some('-'));
     let title = BlockNode::Paragraph(c.title.clone());
     let title_el = title.render(ix, FlowPosition::at(&[&title], 0, true).first(true).last(true), rcx, window, cx);
@@ -173,7 +200,32 @@ fn render_callout(c: &CalloutView, ix: usize, host: &Host, rcx: &RenderContext, 
                 });
             })
     });
-    let body: Vec<AnyElement> = if collapsed { Vec::new() } else { c.children.iter().map(|ch| render_node(ch, ix, host, rcx, window, cx)).collect() };
+    let custom = if collapsed { None } else { plugin.as_ref().and_then(|p| p.render_body(&c.kind, &c.meta, &c.body, host.md, window, cx)) };
+    let mut body: Vec<AnyElement> = match custom {
+        // a plugin-drawn body: clicking it puts the caret in the callout (its source shows)
+        Some(el) => match host.editor.clone() {
+            Some(editor) => {
+                let at = c.body_start;
+                vec![div()
+                    .id(SharedString::from(format!("callout-body-{}", c.fold_key)))
+                    .on_mouse_down(MouseButton::Left, move |_: &MouseDownEvent, window, cx| {
+                        let _ = editor.update(cx, |e, cx| {
+                            window.focus(&e.focus, cx);
+                            e.set_selection(Selection::caret(at), false, cx);
+                        });
+                        cx.stop_propagation();
+                    })
+                    .child(el)
+                    .into_any_element()]
+            }
+            None => vec![el],
+        },
+        None if collapsed => Vec::new(),
+        None => c.children.iter().map(|ch| render_node(ch, ix, host, rcx, window, cx)).collect(),
+    };
+    if let Some(end) = (!collapsed).then(|| plugin.as_ref().and_then(|p| p.body_end(&c.kind))).flatten() {
+        body.push(div().flex().justify_end().text_color(color).child(end).into_any_element());
+    }
     let header = match style.look {
         CalloutLook::Obsidian => {
             // Obsidian: icon + title in the accent colour; no title -> the capitalised type
@@ -193,7 +245,7 @@ fn render_callout(c: &CalloutView, ix: usize, host: &Host, rcx: &RenderContext, 
                 .gap_2()
                 .items_center()
                 .children(fold_btn)
-                .child(div().italic().font_weight(FontWeight::SEMIBOLD).text_color(color).child(format!("{label}.")))
+                .child(div().italic().font_weight(FontWeight::SEMIBOLD).text_color(color).child(label))
                 .child(div().flex_1().min_w_0().italic().child(title_el))
         }
         CalloutLook::Badge | CalloutLook::Rules => {

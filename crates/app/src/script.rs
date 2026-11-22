@@ -86,6 +86,13 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                         w.dispatch_event(PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position: p, click_count: count, modifiers, ..Default::default() }), cx);
                     });
                 }
+                "move" => {
+                    // move <x> <y>: mouse moves there (hover)
+                    let p = point(px(num(0)), px(num(1)));
+                    let _ = handle.update(cx, |_, w, cx| {
+                        w.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position: p, ..Default::default() }), cx);
+                    });
+                }
                 "rclick" => {
                     // rclick <x> <y>: right click (context menus)
                     let p = point(px(num(0)), px(num(1)));
@@ -193,6 +200,19 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                         Some(s) => println!("SUGGEST sel={} {:?}", s.selected, s.items.iter().map(|i| i.label.clone()).collect::<Vec<_>>()),
                         None => println!("SUGGEST none"),
                     });
+                }
+                "numbers" => {
+                    // numbers: plugin callout labels of the active note, and the hover preview
+                    let active = ws.update(cx, |ws, _| ws.tabs.get(ws.active).cloned()).ok().flatten().unwrap_or_else(|| editor.clone());
+                    let _ = active.update(cx, |e, cx| {
+                        let mut n: Vec<(usize, String)> = e.debug_numbers(cx).into_iter().collect();
+                        n.sort();
+                        println!("NUMBERS {:?}", n.into_iter().map(|(_, l)| l).collect::<Vec<_>>());
+                        println!("HOVER {:?}", e.debug_hover());
+                    });
+                }
+                "ws-right" => {
+                    let _ = ws.update(cx, |ws, cx| ws.show_right_sidebar(true, cx));
                 }
                 "ws-tree" => {
                     let _ = ws.update(cx, |ws, _| {

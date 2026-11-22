@@ -43,7 +43,7 @@ pub fn run_action(run: &api::Action, editor: Option<Entity<crate::editor::Editor
 /// Every plugin shipped with the app, in load order (earlier plugins win style conflicts).
 pub fn bundled(vault_root: &Path) -> Vec<Box<dyn Plugin>> {
     vec![
-        Box::new(academic_notes::AcademicNotes::new()),
+        Box::new(academic_notes::AcademicNotes::new(vault_root)),
         Box::new(latex_suite::LatexSuite::new(vault_root)),
         Box::new(spellcheck::SpellCheck::new(vault_root)),
         Box::new(word_count::WordCount::new()),
@@ -226,6 +226,11 @@ mod tests {
         }
     }
     impl EditorHook for Nop {}
+    impl LinkLabeler for Nop {
+        fn label(&self, _: &LinkTarget, _: &str) -> Option<String> {
+            None
+        }
+    }
     impl TextDecorator for Nop {
         fn decorate(&self, _: &str) -> Vec<std::ops::Range<usize>> {
             Vec::new()
@@ -247,6 +252,7 @@ mod tests {
             r.menu_item(MenuItem { id: "m".into(), label: "M".into(), target: MenuTarget::File, run: Rc::new(|_, _| {}) });
             r.settings_tab(SettingsTab { id: "t".into(), title: "T".into(), render: Rc::new(|_, _| div().into_any_element()) });
             r.text_decorator(Rc::new(Nop));
+            r.link_labeler(Rc::new(Nop));
             r.editor_menu(Rc::new(|_, _| Vec::new()));
         }
     }
@@ -260,18 +266,18 @@ mod tests {
         let mut h = PluginHost::new(None, vec![Box::new(KitchenSink(manifest("a", true))), Box::new(KitchenSink(manifest("b", false)))]);
         assert!(h.load_plugin("a"));
         assert!(!h.load_plugin("a"), "loading twice is a no-op");
-        assert_eq!(h.reg.count("a"), 11);
+        assert_eq!(h.reg.count("a"), 12);
         assert_eq!(h.reg.commands[0].1.id, "a:c");
         h.apply_enabled("b", true);
-        assert_eq!(h.reg.count("b"), 11);
+        assert_eq!(h.reg.count("b"), 12);
         let g = h.generation;
         h.apply_enabled("a", false);
         assert_eq!(h.reg.count("a"), 0, "unload must remove every registration");
-        assert_eq!(h.reg.count("b"), 11, "other plugins untouched");
+        assert_eq!(h.reg.count("b"), 12, "other plugins untouched");
         assert!(!h.is_loaded("a") && h.is_loaded("b") && !h.is_enabled("a"));
         assert!(h.generation > g);
         h.apply_setting("b", "k", Value::Bool(false)); // reloads b
-        assert_eq!((h.reg.count("b"), h.setting("b", "k")), (11, Value::Bool(false)));
+        assert_eq!((h.reg.count("b"), h.setting("b", "k")), (12, Value::Bool(false)));
     }
 
     #[test]

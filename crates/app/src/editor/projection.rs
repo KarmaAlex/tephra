@@ -150,6 +150,12 @@ pub struct CalloutView {
     pub title: Paragraph,
     pub title_empty: bool,
     pub children: Vec<ProjNode>,
+    /// Line of the header (plugins number callouts by line).
+    pub line: usize,
+    /// Body lines without their quote markers (plugins may render the body themselves).
+    pub body: Vec<String>,
+    /// Where the body starts (a click on a plugin-drawn body puts the caret there).
+    pub body_start: usize,
 }
 
 pub struct ProjBlock {
@@ -268,10 +274,12 @@ struct LeafBuilder<'a> {
     /// line is as tall before typing as after (otherwise it takes the body font's height).
     pad_empty_lines: bool,
     resolve: &'a dyn Fn(&str) -> Option<PathBuf>,
+    /// Display text for an unaliased internal link (plugins: "lem 1.1" for a block reference).
+    link_label: &'a dyn Fn(&str) -> Option<String>,
 }
 
 impl<'a> LeafBuilder<'a> {
-    fn new(text: &'a str, src: Range<usize>, sel: Range<usize>, pal: Palette, resolve: &'a dyn Fn(&str) -> Option<PathBuf>) -> Self {
+    fn new(text: &'a str, src: Range<usize>, sel: Range<usize>, pal: Palette, resolve: &'a dyn Fn(&str) -> Option<PathBuf>, link_label: &'a dyn Fn(&str) -> Option<String>) -> Self {
         Self {
             text,
             sel,
@@ -285,6 +293,7 @@ impl<'a> LeafBuilder<'a> {
             table_cell: false,
             pad_empty_lines: false,
             resolve,
+            link_label,
         }
     }
 
@@ -298,6 +307,16 @@ impl<'a> LeafBuilder<'a> {
             let marks = std::mem::take(&mut self.run_marks);
             self.para.push(InlineNode::new(run).marks(marks));
         }
+    }
+
+    /// Shows `shown` in place of the source `src`, as one unit (the caret steps over it).
+    fn replaced(&mut self, src: Range<usize>, shown: &str, mark: &TextMark) {
+        let start = self.run.len();
+        self.run.push_str(shown);
+        self.run_marks.push((start..start + shown.len(), mark.clone()));
+        let l = self.map.len;
+        self.map.segs.push(Seg { kind: SegKind::Atom, leaf: l..l + shown.len(), src });
+        self.map.len += shown.len();
     }
 
     fn push_seg(&mut self, kind: SegKind, leaf: Range<usize>, src: Range<usize>) {
@@ -486,8 +505,11 @@ impl<'a> LeafBuilder<'a> {
                 // wikilinks to notes that don't exist yet are dimmed (Obsidian); Ctrl+click creates them
                 let unresolved = n.kind != InlineKind::Link && (self.resolve)(&target).is_none();
                 self.marker(open, &m, reveal);
+                let label = (n.kind != InlineKind::Link && !reveal && !self.text[n.range.clone()].contains('|')).then(|| (self.link_label)(&target)).flatten();
                 if n.kind == InlineKind::Link {
                     self.inlines(&n.children, n.inner.clone(), &m);
+                } else if let Some(label) = label {
+                    self.replaced(n.inner.clone(), &label, &m);
                 } else {
                     self.text(n.inner.clone(), &m, unresolved);
                 }
@@ -572,6 +594,7 @@ struct QuoteCtx<'a> {
     sel: Range<usize>,
     palette: Palette,
     resolve: &'a dyn Fn(&str) -> Option<PathBuf>,
+    link_label: &'a dyn Fn(&str) -> Option<String>,
     bi: usize,
     sub: usize,
     keys: Vec<u64>,
@@ -587,7 +610,7 @@ impl QuoteCtx<'_> {
     }
 
     fn leaf(&self, src: Range<usize>) -> LeafBuilder<'_> {
-        LeafBuilder::new(self.text, src, self.sel.clone(), self.palette, self.resolve)
+        LeafBuilder::new(self.text, src, self.sel.clone(), self.palette, self.resolve, self.link_label)
     }
 
     /// Callout body lines, with each unrevealed display formula that sits on its own lines
@@ -648,6 +671,18 @@ impl QuoteCtx<'_> {
                 QuoteItem::Callout(_) => children.push(self.item(it, true, proj)),
             }
         }
+        let body_start = (c.header.end + 1).min(c.range.end);
+        let body: Vec<String> = self.text[body_start..c.range.end]
+            .lines()
+            .map(|l| {
+                let mut l = l;
+                for _ in 0..=c.depth {
+                    l = l.trim_start_matches([' ', '\t']);
+                    l = l.strip_prefix('>').map(|r| r.strip_prefix(' ').unwrap_or(r)).unwrap_or(l);
+                }
+                l.to_string()
+            })
+            .collect();
         ProjNode::Callout(CalloutView {
             kind: c.kind.clone(),
             meta: c.meta.clone(),
@@ -656,6 +691,9 @@ impl QuoteCtx<'_> {
             title,
             title_empty: self.text[c.title.clone()].trim().is_empty(),
             children,
+            line: self.text[..c.header.start].matches('\n').count(),
+            body,
+            body_start,
         })
     }
 
@@ -700,6 +738,7 @@ pub struct ProjectionInput<'a> {
     pub version: u64,
     pub palette: Palette,
     pub resolve: &'a dyn Fn(&str) -> Option<PathBuf>,
+    pub link_label: &'a dyn Fn(&str) -> Option<String>,
     pub code_mode: &'a dyn Fn(&str) -> CodeMode,
 }
 
@@ -715,7 +754,7 @@ pub fn project(inp: &ProjectionInput) -> Projection {
     let blocks = parse_blocks(text);
     for (bi, b) in blocks.iter().enumerate() {
         let rev = sel.start <= b.range.end && sel.end >= b.range.start;
-        let new_leaf = |src: Range<usize>| LeafBuilder::new(text, src, sel.clone(), inp.palette, inp.resolve);
+        let new_leaf = |src: Range<usize>| LeafBuilder::new(text, src, sel.clone(), inp.palette, inp.resolve, inp.link_label);
         let mut nodes: Vec<(ProjNode, Vec<u64>)> = Vec::new();
         let mut indent = 0.0;
         match &b.kind {
@@ -772,7 +811,7 @@ pub fn project(inp: &ProjectionInput) -> Projection {
                     let para = lb.finish(k, &mut proj);
                     nodes.push((ProjNode::Block(BlockNode::Blockquote { children: vec![BlockNode::Paragraph(para)], span: None }), vec![k]));
                 } else {
-                    let mut ctx = QuoteCtx { text, sel: sel.clone(), palette: inp.palette, resolve: inp.resolve, bi, sub: 0, keys: Vec::new(), occurrences: HashMap::new() };
+                    let mut ctx = QuoteCtx { text, sel: sel.clone(), palette: inp.palette, resolve: inp.resolve, link_label: inp.link_label, bi, sub: 0, keys: Vec::new(), occurrences: HashMap::new() };
                     for item in &items {
                         let node = ctx.item(item, false, &mut proj);
                         nodes.push((node, std::mem::take(&mut ctx.keys)));
@@ -913,7 +952,7 @@ mod tests {
 
     fn proj(text: &str, caret: usize) -> Projection {
         let none = |_: &str| None;
-        project(&ProjectionInput { text, sel: Selection::caret(caret), mode: ViewMode::LivePreview, version: 0, palette: Palette { highlight: hsla(0.15, 1., 0.5, 0.4) }, resolve: &none, code_mode: &|_| CodeMode::Plain })
+        project(&ProjectionInput { text, sel: Selection::caret(caret), mode: ViewMode::LivePreview, version: 0, palette: Palette { highlight: hsla(0.15, 1., 0.5, 0.4) }, resolve: &none, code_mode: &|_| CodeMode::Plain, link_label: &|_| None })
     }
 
     /// The leaf text the renderer sees (atoms as U+FFFC).
@@ -1065,7 +1104,7 @@ mod tests {
     fn unresolved_wikilinks_are_dimmed() {
         let t = "[[Esiste]] e [[Manca]]\n\nx";
         let resolve = |target: &str| (target == "Esiste").then(|| PathBuf::from("/v/Esiste.md"));
-        let p = project(&ProjectionInput { text: t, sel: Selection::caret(t.len()), mode: ViewMode::LivePreview, version: 0, palette: Palette { highlight: gpui_kit::hsla(0., 0., 0., 1.) }, resolve: &resolve, code_mode: &|_| CodeMode::Plain });
+        let p = project(&ProjectionInput { text: t, sel: Selection::caret(t.len()), mode: ViewMode::LivePreview, version: 0, palette: Palette { highlight: gpui_kit::hsla(0., 0., 0., 1.) }, resolve: &resolve, code_mode: &|_| CodeMode::Plain, link_label: &|_| None });
         assert_eq!(p.muted[&p.leaves[0].0], vec![9..14]); // "Esiste e Manca": only "Manca"
     }
 
@@ -1100,7 +1139,7 @@ mod tests {
     fn source_and_reading_modes() {
         let none = |_: &str| None;
         let t = "# H\n- **b** $x$\n> [!thm] T\n> c";
-        let mk = |mode| project(&ProjectionInput { text: t, sel: Selection::caret(0), mode, version: 0, palette: Palette { highlight: hsla(0., 0., 0., 1.) }, resolve: &none, code_mode: &|_| CodeMode::Plain });
+        let mk = |mode| project(&ProjectionInput { text: t, sel: Selection::caret(0), mode, version: 0, palette: Palette { highlight: hsla(0., 0., 0., 1.) }, resolve: &none, code_mode: &|_| CodeMode::Plain, link_label: &|_| None });
         let src = mk(ViewMode::Source);
         assert_eq!(leaf_text(&src, src.leaves[0].0), "# H");
         assert_eq!(leaf_text(&src, src.leaves[1].0), "- **b** $x$");

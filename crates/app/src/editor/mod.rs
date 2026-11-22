@@ -5,6 +5,7 @@ pub mod assist;
 pub mod element;
 pub mod input;
 pub mod measured;
+pub mod preview;
 pub mod projection;
 pub mod render;
 
@@ -143,6 +144,11 @@ pub struct Editor {
     deco_cache: HashMap<(u64, usize, u64), Rc<Vec<Range<usize>>>>,
     /// A re-render is scheduled because a decorator was still loading.
     deco_retry: bool,
+    /// Plugin callout numbers for (doc version, plugin generation).
+    numbers_cache: ((u64, u64), Rc<HashMap<usize, String>>),
+    /// Hover preview of a link (target, mouse position, rendered snippet source + numbers).
+    hover: Option<HoverPreview>,
+    hover_pending: Option<String>,
     /// Link suggestions after `[[` (see `assist`).
     pub(crate) suggest: Option<SuggestState>,
     /// `[[` position whose suggestions were dismissed with Escape.
@@ -196,6 +202,9 @@ impl Editor {
             plugin_gen: 0,
             deco_cache: HashMap::new(),
             deco_retry: false,
+            numbers_cache: ((u64::MAX, 0), Rc::default()),
+            hover: None,
+            hover_pending: None,
             suggest: None,
             suggest_dismissed: None,
             suggest_key: (u64::MAX, 0),
@@ -346,6 +355,18 @@ impl Editor {
             let resolve = |target: &str| vault.resolve(target, path);
             let host = cx.try_global::<PluginHost>();
             let code_mode = |lang: &str| host.map_or(CodeMode::Plain, |h| h.code_mode(lang));
+            let labelers: Vec<Rc<dyn crate::plugins::LinkLabeler>> = host.map(|h| h.reg.link_labelers.iter().map(|(_, l)| l.clone()).collect()).unwrap_or_default();
+            let this_rel = vault.relative(path);
+            let link_label = |target: &str| -> Option<String> {
+                if labelers.is_empty() {
+                    return None;
+                }
+                let (note, sub) = target.split_once('#')?;
+                let rel = if note.is_empty() { Some(this_rel.clone()) } else { vault.index.resolve(note, &this_rel) };
+                let rel = rel?;
+                let t = if rel == this_rel { crate::plugins::LinkTarget::Text(&text) } else { crate::plugins::LinkTarget::Meta(vault.index.note(&rel)?) };
+                labelers.iter().find_map(|l| l.label(&t, sub))
+            };
             let theme = cx.theme();
             self.proj = projection::project(&ProjectionInput {
                 text: &text,
@@ -354,6 +375,7 @@ impl Editor {
                 version: self.doc.version(),
                 palette: Palette { highlight: theme.yellow.opacity(0.35) },
                 resolve: &resolve,
+                link_label: &link_label,
                 code_mode: &code_mode,
             });
             self.perf.projection_ms.push(t.elapsed().as_secs_f64() * 1000.0);
@@ -673,6 +695,13 @@ impl api::Backend for Live<'_, '_> {
     }
 }
 
+pub(crate) struct HoverPreview {
+    link: String,
+    at: Point<Pixels>,
+    snippet: String,
+    numbers: HashMap<usize, String>,
+}
+
 /// The open link-suggestion popup.
 pub(crate) struct SuggestState {
     /// Document offset just after `[[`.
@@ -684,6 +713,130 @@ pub(crate) struct SuggestState {
 }
 
 impl Editor {
+    /// The internal link under the mouse: its target (`note#sub`), if previewable now. Block
+    /// references preview on plain hover (Academic Notes); other links with Ctrl (Obsidian).
+    fn link_under(&self, p: Point<Pixels>, ctrl: bool) -> Option<String> {
+        let off = self.hit_test(p, input::Bias::Nearest)?;
+        let c = self.caret_bounds(off)?;
+        let (key, _) = self.proj.locate(off)?;
+        if (c.center().y - p.y).abs() > c.size.height || !self.geometry.get(&key)?.bounds().contains(&p) {
+            return None; // nearest text is not under the mouse
+        }
+        let line = self.doc.line_of(off);
+        let ls = self.doc.line_start(line);
+        let text = self.doc.line_text(line);
+        let col = off - ls;
+        let n = obsidilight_core::markdown::parse_inline(&text, 0..text.len())
+            .into_iter()
+            .find(|n| matches!(n.kind, obsidilight_core::markdown::InlineKind::WikiLink { embed: false }) && n.range.start < col && col < n.range.end)?;
+        let target = n.link_target(&text).to_string();
+        (target.contains("#^") || ctrl).then_some(target)
+    }
+
+    pub(crate) fn on_hover(&mut self, p: Point<Pixels>, ctrl: bool, cx: &mut Context<Self>) {
+        let target = if self.dragging { None } else { self.link_under(p, ctrl) };
+        if target.is_some() && self.hover.as_ref().map(|h| &h.link) == target.as_ref() {
+            return;
+        }
+        if target.is_none() {
+            self.hover_pending = None;
+            if self.hover.take().is_some() {
+                cx.notify();
+            }
+            return;
+        }
+        if self.hover_pending == target {
+            return;
+        }
+        self.hover = None;
+        self.hover_pending = target.clone();
+        cx.spawn(async move |e, cx| {
+            cx.background_executor().timer(Duration::from_millis(350)).await;
+            let _ = e.update(cx, |e, cx| {
+                if e.hover_pending == target {
+                    e.hover_pending = None;
+                    if let Some(t) = target {
+                        e.hover = e.build_preview(&t, p, cx);
+                        cx.notify();
+                    }
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// For UI tests.
+    pub(crate) fn debug_numbers(&mut self, cx: &App) -> HashMap<usize, String> {
+        (*self.callout_numbers(cx)).clone()
+    }
+    pub(crate) fn debug_hover(&self) -> Option<String> {
+        self.hover.as_ref().map(|h| h.snippet.lines().next().unwrap_or("").to_string())
+    }
+
+    fn build_preview(&self, target: &str, at: Point<Pixels>, cx: &App) -> Option<HoverPreview> {
+        let (note, sub) = target.split_once('#').unwrap_or((target, ""));
+        let text = if note.is_empty() {
+            self.doc.text()
+        } else {
+            let p = self.vault.borrow().resolve(note, &self.path)?;
+            if p == self.path { self.doc.text() } else { std::fs::read_to_string(p).ok()? }
+        };
+        let (snippet, first) = preview::snippet(&text, sub)?;
+        let mut numbers = HashMap::new();
+        if let Some(h) = cx.try_global::<PluginHost>() {
+            for (_, r) in &h.reg.callout_renderers {
+                for (line, label) in r.numbers(&text) {
+                    if line >= first {
+                        numbers.entry(line - first).or_insert(label);
+                    }
+                }
+            }
+        }
+        Some(HoverPreview { link: target.to_string(), at, snippet, numbers })
+    }
+
+    fn render_hover(&self, md: &render::MarkdownRenderer, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let h = self.hover.as_ref()?;
+        let theme = cx.theme().clone();
+        let md = md.clone().with_numbers(h.numbers.clone());
+        let body = md.render(&h.snippet, window, cx);
+        let card = div()
+            .id("link-preview")
+            .w(px(520.))
+            .max_h(px(380.))
+            .overflow_y_scroll()
+            .px_4()
+            .py_3()
+            .bg(theme.popover)
+            .text_color(theme.popover_foreground)
+            .border_1()
+            .border_color(theme.border)
+            .rounded(px(8.))
+            .shadow_lg()
+            .child(body);
+        Some(deferred(anchored().position(point(h.at.x, h.at.y + px(14.))).snap_to_window_with_margin(px(8.)).child(card)).with_priority(2).into_any_element())
+    }
+
+    /// Callout labels from plugins (numbering), recomputed when the text or plugins change.
+    fn callout_numbers(&mut self, cx: &App) -> Rc<HashMap<usize, String>> {
+        let host = cx.try_global::<PluginHost>();
+        let key = (self.doc.version(), host.map_or(0, |h| h.generation));
+        if self.numbers_cache.0 != key {
+            let renderers: Vec<_> = host.map(|h| h.reg.callout_renderers.iter().map(|(_, r)| r.clone()).collect()).unwrap_or_default();
+            let mut map = HashMap::new();
+            if !renderers.is_empty() {
+                let text = self.doc.text();
+                for r in renderers {
+                    for (k, v) in r.numbers(&text) {
+                        map.entry(k).or_insert(v);
+                    }
+                }
+            }
+            self.numbers_cache = (key, Rc::new(map));
+        }
+        self.numbers_cache.1.clone()
+    }
+
     pub(crate) fn char_before(&self, at: usize) -> Option<char> {
         (at > 0).then(|| self.doc.slice(at.saturating_sub(4)..at).chars().next_back()).flatten()
     }
@@ -908,6 +1061,7 @@ impl Render for Editor {
         let sel_range = self.doc.selection().range();
         let extensions = self.extensions.clone();
         self.projection(cx);
+        let numbers = self.callout_numbers(cx);
         let proj = &self.proj;
         // Links open on Ctrl+click only; a plain click places the caret (handled by on_mouse_down).
         // Without a handler gpui-kit would open every link on a plain click.
@@ -964,7 +1118,7 @@ impl Render for Editor {
             let path = self.path.clone();
             render::MarkdownRenderer::new(Rc::new(move |t: &str| vault.borrow().resolve(t, &path)))
         };
-        let host = render::Host { editor: Some(cx.entity().downgrade()), folds: &self.folds, md: &md };
+        let host = render::Host { editor: Some(cx.entity().downgrade()), folds: &self.folds, md: &md, numbers: Some(&numbers) };
         let mut children: Vec<AnyElement> = Vec::with_capacity(hi - lo + 2);
         if lo > 0 {
             children.push(div().h(px(ys[lo] - 24.0)).into_any_element());
@@ -983,6 +1137,7 @@ impl Render for Editor {
         let squiggles = self.decorations(lo..hi, cx);
         let content = div().w_full().max_w(px(760.)).mx_auto().px_8().py_6().flex().flex_col().children(children);
         let suggest_popup = self.render_suggest(cx);
+        let hover_popup = self.render_hover(&md, window, cx);
         let editor = cx.entity();
         let menu_editor = editor.downgrade();
         let status = self.status.clone();
@@ -1013,6 +1168,7 @@ impl Render for Editor {
                     .child(EditorElement::new(editor, content.into_any_element(), decorations, squiggles, self.scroll.clone())),
             )
             .children(suggest_popup)
+            .children(hover_popup)
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(|e, ev: &MouseDownEvent, window, cx| {

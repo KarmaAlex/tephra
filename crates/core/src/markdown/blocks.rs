@@ -174,6 +174,13 @@ fn starts_math_block(s: &str) -> bool {
 }
 
 /// Does this line start a block that interrupts a paragraph or list item?
+/// CommonMark's lazy continuation: a plain text line right after a quote line that holds
+/// paragraph text continues that paragraph, so it stays in the quote (`^block-id` lines too).
+fn lazy_quote_line(prev: &str, next: &str) -> bool {
+    let inner = prev.trim_start().trim_start_matches(|c: char| c == '>' || c == ' ' || c == '\t');
+    !next.trim().is_empty() && !interrupts(next) && !is_table_row(next) && !inner.is_empty() && fence_open(inner).is_none() && !inner.starts_with("$$")
+}
+
 fn interrupts(s: &str) -> bool {
     heading(s).is_some() || fence_open(s).is_some() || is_quote(s) || starts_math_block(s) || is_rule(s) || list_item(s).is_some()
 }
@@ -267,7 +274,7 @@ pub fn parse_blocks(text: &str) -> Vec<Block> {
         }
         if is_quote(s) {
             let mut j = i;
-            while j + 1 < ls.len() && (is_quote(line(j + 1)) || ends_in_open_display(&text[st..ls[j].end])) {
+            while j + 1 < ls.len() && (is_quote(line(j + 1)) || ends_in_open_display(&text[st..ls[j].end]) || lazy_quote_line(line(j), line(j + 1))) {
                 j += 1;
             }
             push(&mut out, BlockKind::Quote, i, j, st..ls[j].end, 0..0, 0);
@@ -385,6 +392,16 @@ mod tests {
         let s = "> testo $$\\begin{aligned}\na\\\\b\n$$\n\n$$a$$ e $$b$$\n";
         let k: Vec<_> = kinds(s).into_iter().map(|(k, _)| k).collect();
         assert_eq!(k, vec![BlockKind::Quote, BlockKind::Blank, BlockKind::Paragraph, BlockKind::Blank]);
+    }
+
+    #[test]
+    fn lazy_lines_continue_a_quote() {
+        let k: Vec<_> = kinds("> [!lemma]\n> text\n^lemma1\n\nafter\n").into_iter().map(|(k, s)| (k, s.to_string())).collect();
+        assert_eq!(k[0], (BlockKind::Quote, "> [!lemma]\n> text\n^lemma1".to_string()));
+        let k: Vec<_> = kinds("> a\n>\nb\n").into_iter().map(|(k, _)| k).collect();
+        assert_eq!(k, vec![BlockKind::Quote, BlockKind::Paragraph, BlockKind::Blank], "no lazy line after an empty quote line");
+        let k: Vec<_> = kinds("> a\n# H\n").into_iter().map(|(k, _)| k).collect();
+        assert_eq!(k, vec![BlockKind::Quote, BlockKind::Heading { level: 1 }, BlockKind::Blank]);
     }
 
     #[test]

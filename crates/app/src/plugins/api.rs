@@ -94,6 +94,32 @@ pub struct CalloutStyle {
 pub trait CalloutRenderer {
     /// Style for `kind` (lowercased) with `|meta`, or None to leave it to others / the core.
     fn style(&self, kind: &str, meta: &str, dark: bool) -> Option<CalloutStyle>;
+    /// Labels for a note's callouts by header line (numbering: "Theorem 1.2").
+    fn numbers(&self, _text: &str) -> std::collections::HashMap<usize, String> {
+        Default::default()
+    }
+    /// Draws a callout's body itself (e.g. pseudocode); `body` = its lines without quote markers.
+    fn render_body(&self, _kind: &str, _meta: &str, _body: &[String], _md: &MarkdownRenderer, _window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+        None
+    }
+    /// Something to show after the body (e.g. the end-of-proof mark).
+    fn body_end(&self, _kind: &str) -> Option<String> {
+        None
+    }
+}
+
+/// The note an internal link points into.
+pub enum LinkTarget<'a> {
+    /// The note being edited (its current, possibly unsaved text).
+    Text(&'a str),
+    /// Another note, from the vault index.
+    Meta(&'a obsidilight_core::index::NoteMeta),
+}
+
+/// Display text for internal links without an alias (references: `[[#^lemma1]]` → "lem 1.1").
+pub trait LinkLabeler {
+    /// `sub` is the part after `#` (e.g. `^lemma1`).
+    fn label(&self, target: &LinkTarget, sub: &str) -> Option<String>;
 }
 
 /// Renders fenced code blocks of one language (e.g. `chart`, `desmos-graph`) when the caret is
@@ -242,6 +268,7 @@ pub struct Registry {
     pub menu_items: Vec<(PluginId, MenuItem)>,
     pub settings_tabs: Vec<(PluginId, SettingsTab)>,
     pub decorators: Vec<(PluginId, Rc<dyn TextDecorator>)>,
+    pub link_labelers: Vec<(PluginId, Rc<dyn LinkLabeler>)>,
     pub editor_menus: Vec<(PluginId, EditorMenuProvider)>,
 }
 
@@ -257,6 +284,7 @@ impl Registry {
         self.menu_items.retain(|(p, _)| *p != id);
         self.settings_tabs.retain(|(p, _)| *p != id);
         self.decorators.retain(|(p, _)| *p != id);
+        self.link_labelers.retain(|(p, _)| *p != id);
         self.editor_menus.retain(|(p, _)| *p != id);
     }
 
@@ -272,12 +300,18 @@ impl Registry {
             + self.menu_items.iter().filter(|(p, _)| *p == id).count()
             + self.settings_tabs.iter().filter(|(p, _)| *p == id).count()
             + self.decorators.iter().filter(|(p, _)| *p == id).count()
+            + self.link_labelers.iter().filter(|(p, _)| *p == id).count()
             + self.editor_menus.iter().filter(|(p, _)| *p == id).count()
     }
 
     /// The first plugin style claiming a callout type (plugins in load order).
     pub fn callout_style(&self, kind: &str, meta: &str, dark: bool) -> Option<CalloutStyle> {
         self.callout_renderers.iter().find_map(|(_, r)| r.style(kind, meta, dark))
+    }
+
+    /// The first plugin claiming a callout type (for its numbers and body).
+    pub fn callout_renderer(&self, kind: &str, meta: &str) -> Option<Rc<dyn CalloutRenderer>> {
+        self.callout_renderers.iter().find(|(_, r)| r.style(kind, meta, false).is_some()).map(|(_, r)| r.clone())
     }
 
     pub fn code_block_renderer(&self, lang: &str) -> Option<Rc<dyn CodeBlockRenderer>> {
@@ -319,6 +353,9 @@ impl Registrar<'_> {
     }
     pub fn settings_tab(&mut self, t: SettingsTab) {
         self.reg.settings_tabs.push((self.plugin, t));
+    }
+    pub fn link_labeler(&mut self, l: Rc<dyn LinkLabeler>) {
+        self.reg.link_labelers.push((self.plugin, l));
     }
     pub fn text_decorator(&mut self, d: Rc<dyn TextDecorator>) {
         self.reg.decorators.push((self.plugin, d));

@@ -67,6 +67,10 @@ fn lines(text: &str, r: &Range<usize>) -> Vec<Line> {
         }
         if depth == 0 {
             content = 0;
+            // a lazy continuation line (no `>`) stays in the callout the previous line was in
+            if !line.trim().is_empty() {
+                depth = out.last().map_or(0, |p: &Line| p.depth);
+            }
         }
         out.push(Line { start: ls, end: ls + line.len(), depth, content: ls + content });
         ls = le + 1;
