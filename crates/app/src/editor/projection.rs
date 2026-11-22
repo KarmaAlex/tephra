@@ -42,7 +42,13 @@ pub enum SegKind {
     Text,
     Hidden,
     Atom,
+    /// A zero-width space standing in for an empty leaf, so it gets real text metrics
+    /// (an empty leaf is taller and draws a taller caret). Maps to no source text.
+    Pad,
 }
+
+/// Zero-width space used by [`SegKind::Pad`].
+pub const PAD: &str = "\u{200B}";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Seg {
@@ -68,7 +74,7 @@ impl LeafMap {
             }
         }
         for s in &self.segs {
-            if s.kind == SegKind::Atom && s.leaf.start <= idx && idx <= s.leaf.end {
+            if matches!(s.kind, SegKind::Atom | SegKind::Pad) && s.leaf.start <= idx && idx <= s.leaf.end {
                 return if idx <= s.leaf.start { s.src.start } else { s.src.end };
             }
         }
@@ -398,10 +404,15 @@ impl<'a> LeafBuilder<'a> {
     }
 
     fn finish(mut self, key: u64, proj: &mut Projection) -> Paragraph {
-        self.flush();
-        if self.para.children().is_empty() {
-            self.para.push(InlineNode::new(""));
+        if self.map.len == 0 {
+            // nothing visible (blank line, empty list item, all markers hidden)
+            let at = self.map.segs.last().map(|s| s.src.end).unwrap_or(self.map.src.start);
+            self.run.push_str(PAD);
+            self.run_marks.push((0..PAD.len(), TextMark::default()));
+            self.map.segs.push(Seg { kind: SegKind::Pad, leaf: 0..PAD.len(), src: at..at });
+            self.map.len = PAD.len();
         }
+        self.flush();
         if !self.muted.is_empty() {
             proj.muted.insert(key, std::mem::take(&mut self.muted));
         }
@@ -688,6 +699,21 @@ mod tests {
         assert_eq!(s, "[!thm] T\n\u{FFFC}");
         let p = proj(t, 3);
         assert!(leaf_text(&p, p.leaves[0].0).starts_with("> [!thm] T\n"));
+    }
+
+    #[test]
+    fn empty_lines_get_a_pad_mapped_to_the_line() {
+        let t = "a\n\n- \nb";
+        let p = proj(t, 0);
+        let blank = &p.leaves[1].1;
+        assert_eq!(leaf_text(&p, p.leaves[1].0), PAD);
+        assert_eq!(blank.to_src(0), 2);
+        assert_eq!(blank.to_src(PAD.len()), 2);
+        assert_eq!(blank.to_leaf(2), 0);
+        let item = &p.leaves[2].1; // "- " with nothing after the hidden marker
+        assert_eq!(item.to_src(0), 5);
+        assert_eq!(item.to_leaf(5), 0);
+        assert!(p.selection_ranges(&(0..t.len())).get(&p.leaves[1].0).is_none());
     }
 
     #[test]

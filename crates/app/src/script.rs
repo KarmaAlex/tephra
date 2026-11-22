@@ -24,7 +24,10 @@ fn state(e: &Editor) -> String {
     let text = e.doc.line_text(line);
     let col = (s.head - ls).min(text.len());
     let shown: String = format!("{}|{}", &text[..col], &text[col..]).chars().take(120).collect();
-    let caret = e.caret_bounds(s.head).map(|b| format!("({:.0},{:.0})", f32::from(b.origin.x), f32::from(b.origin.y))).unwrap_or("none".into());
+    let caret = e
+        .caret_bounds(s.head)
+        .map(|b| format!("({:.0},{:.0} h{:.1})", f32::from(b.origin.x), f32::from(b.origin.y), f32::from(b.size.height)))
+        .unwrap_or("none".into());
     format!(
         "STATE sel={}..{} line={} dirty={} caret_px={} text=\"{}\"",
         s.anchor,

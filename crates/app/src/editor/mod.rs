@@ -544,7 +544,7 @@ impl Render for Editor {
         }
         for ix in lo..hi {
             let b = &proj.blocks[ix];
-            let el = b.node.render(ix, FlowPosition::at(&refs, ix, ix + 1 == n), &rcx, window, cx);
+            let el = b.node.render(ix, FlowPosition::at(&refs, ix, ix + 1 == n).first(true).last(true), &rcx, window, cx);
             let el = if b.indent > 0.0 { div().pl(px(b.indent)).child(el).into_any_element() } else { el };
             children.push(measured::Measured::new(b.hash, self.heights.clone(), el).into_any_element());
         }
