@@ -1,6 +1,7 @@
 //! The live-preview Markdown editor view.
 
 pub mod api;
+pub mod assist;
 pub mod element;
 pub mod input;
 pub mod measured;
@@ -35,7 +36,7 @@ actions!(
         MoveLeft, MoveRight, MoveUp, MoveDown, MoveWordLeft, MoveWordRight, MoveLineStart, MoveLineEnd, MoveDocStart, MoveDocEnd,
         SelectLeft, SelectRight, SelectUp, SelectDown, SelectWordLeft, SelectWordRight, SelectLineStart, SelectLineEnd,
         SelectDocStart, SelectDocEnd, SelectAll, PageUp, PageDown, Backspace, Delete, DeleteWordLeft, DeleteWordRight,
-        Newline, ShiftNewline, Tab, ShiftTab, Undo, Redo, Copy, Cut, Paste, Save, ToggleReading, ToggleSource
+        Newline, ShiftNewline, Tab, ShiftTab, Undo, Redo, Copy, Cut, Paste, Save, ToggleReading, ToggleSource, Cancel
     ]
 );
 
@@ -85,6 +86,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-s", Save, c),
         KeyBinding::new("ctrl-e", ToggleReading, c),
         KeyBinding::new("ctrl-shift-e", ToggleSource, c),
+        KeyBinding::new("escape", Cancel, c),
     ]);
 }
 
@@ -141,6 +143,11 @@ pub struct Editor {
     deco_cache: HashMap<(u64, usize, u64), Rc<Vec<Range<usize>>>>,
     /// A re-render is scheduled because a decorator was still loading.
     deco_retry: bool,
+    /// Link suggestions after `[[` (see `assist`).
+    pub(crate) suggest: Option<SuggestState>,
+    /// `[[` position whose suggestions were dismissed with Escape.
+    suggest_dismissed: Option<usize>,
+    suggest_key: (u64, usize),
     pub perf: Perf,
 }
 
@@ -189,6 +196,9 @@ impl Editor {
             plugin_gen: 0,
             deco_cache: HashMap::new(),
             deco_retry: false,
+            suggest: None,
+            suggest_dismissed: None,
+            suggest_key: (u64::MAX, 0),
             perf: Perf::default(),
         };
         this.proj.version = u64::MAX;
@@ -521,8 +531,22 @@ impl Editor {
             .on_action(cx.listener(|e, _: &SelectRight, _, cx| e.horiz(1, false, true, cx)))
             .on_action(cx.listener(|e, _: &SelectWordLeft, _, cx| e.horiz(-1, true, true, cx)))
             .on_action(cx.listener(|e, _: &SelectWordRight, _, cx| e.horiz(1, true, true, cx)))
-            .on_action(cx.listener(|e, _: &MoveUp, _, cx| e.vertical(-1, false, false, cx)))
-            .on_action(cx.listener(|e, _: &MoveDown, _, cx| e.vertical(1, false, false, cx)))
+            .on_action(cx.listener(|e, _: &MoveUp, _, cx| {
+                if !e.suggest_move(-1, cx) {
+                    e.vertical(-1, false, false, cx)
+                }
+            }))
+            .on_action(cx.listener(|e, _: &MoveDown, _, cx| {
+                if !e.suggest_move(1, cx) {
+                    e.vertical(1, false, false, cx)
+                }
+            }))
+            .on_action(cx.listener(|e, _: &Cancel, _, cx| {
+                if let Some(s) = e.suggest.take() {
+                    e.suggest_dismissed = Some(s.start);
+                    cx.notify();
+                }
+            }))
             .on_action(cx.listener(|e, _: &SelectUp, _, cx| e.vertical(-1, true, false, cx)))
             .on_action(cx.listener(|e, _: &SelectDown, _, cx| e.vertical(1, true, false, cx)))
             .on_action(cx.listener(|e, _: &PageUp, _, cx| e.vertical(-1, false, true, cx)))
@@ -538,13 +562,25 @@ impl Editor {
             .on_action(cx.listener(|e, _: &SelectAll, _, cx| e.set_selection(Selection::new(0, e.doc.len()), false, cx)))
             .on_action(cx.listener(|e, _: &Backspace, _, cx| {
                 if !e.run_key_hooks(EditorKey::Backspace, cx) {
-                    e.delete(-1, false, cx)
+                    // inside an empty auto-paired (), [], "" … both halves go
+                    let s = e.doc.selection();
+                    let (b, a) = (e.char_before(s.head), e.char_after(s.head));
+                    if s.is_empty() && crate::app_settings::AppSettings::flag(cx, "autoPairBrackets") && assist::deletes_pair(b, a) {
+                        let n = b.map_or(1, char::len_utf8) + a.map_or(1, char::len_utf8);
+                        let start = s.head - b.map_or(1, char::len_utf8);
+                        e.edit(start..start + n, "", EditKind::Delete, cx);
+                    } else {
+                        e.delete(-1, false, cx)
+                    }
                 }
             }))
             .on_action(cx.listener(|e, _: &Delete, _, cx| e.delete(1, false, cx)))
             .on_action(cx.listener(|e, _: &DeleteWordLeft, _, cx| e.delete(-1, true, cx)))
             .on_action(cx.listener(|e, _: &DeleteWordRight, _, cx| e.delete(1, true, cx)))
             .on_action(cx.listener(|e, _: &Newline, _, cx| {
+                if e.suggest_accept(None, cx) {
+                    return;
+                }
                 if !e.run_key_hooks(EditorKey::Enter, cx) {
                     e.newline(cx)
                 }
@@ -555,6 +591,9 @@ impl Editor {
                 }
             }))
             .on_action(cx.listener(|e, _: &Tab, _, cx| {
+                if e.suggest_accept(None, cx) {
+                    return;
+                }
                 if !e.run_key_hooks(EditorKey::Tab, cx) {
                     let r = e.doc.selection().range();
                     e.edit(r, "\t", EditKind::Insert, cx)
@@ -634,7 +673,128 @@ impl api::Backend for Live<'_, '_> {
     }
 }
 
+/// The open link-suggestion popup.
+pub(crate) struct SuggestState {
+    /// Document offset just after `[[`.
+    pub start: usize,
+    /// The caret (end of the query).
+    pub end: usize,
+    pub items: Vec<assist::Suggestion>,
+    pub selected: usize,
+}
+
 impl Editor {
+    pub(crate) fn char_before(&self, at: usize) -> Option<char> {
+        (at > 0).then(|| self.doc.slice(at.saturating_sub(4)..at).chars().next_back()).flatten()
+    }
+    pub(crate) fn char_after(&self, at: usize) -> Option<char> {
+        self.doc.slice(at..(at + 4).min(self.doc.len())).chars().next()
+    }
+
+    /// Recomputes link suggestions when the text or caret moved.
+    fn refresh_suggest(&mut self) {
+        let sel = self.doc.selection();
+        let key = (self.doc.version(), sel.head);
+        if key == self.suggest_key {
+            return;
+        }
+        self.suggest_key = key;
+        let keep = self.suggest.as_ref().map_or(0, |s| s.selected);
+        self.suggest = None;
+        if !sel.is_empty() || self.mode == ViewMode::Reading {
+            return;
+        }
+        let line = self.doc.line_of(sel.head);
+        let ls = self.doc.line_start(line);
+        let text = self.doc.line_text(line);
+        let Some((qs, query, _embed)) = assist::link_query(&text, sel.head - ls) else {
+            self.suggest_dismissed = None;
+            return;
+        };
+        let start = ls + qs;
+        if self.suggest_dismissed == Some(start) {
+            return;
+        }
+        let vault = self.vault.borrow();
+        let from = vault.relative(&self.path);
+        let items = assist::suggestions(&vault.index, &from, &query, 50);
+        if !items.is_empty() {
+            let selected = keep.min(items.len() - 1);
+            self.suggest = Some(SuggestState { start, end: sel.head, items, selected: if query.is_empty() { 0 } else { selected } });
+        }
+    }
+
+    fn suggest_move(&mut self, d: i32, cx: &mut Context<Self>) -> bool {
+        let Some(s) = self.suggest.as_mut() else { return false };
+        let n = s.items.len() as i32;
+        s.selected = ((s.selected as i32 + d).rem_euclid(n)) as usize;
+        cx.notify();
+        true
+    }
+
+    /// Inserts the chosen suggestion (`ix`, or the highlighted one) and closes the link.
+    pub(crate) fn suggest_accept(&mut self, ix: Option<usize>, cx: &mut Context<Self>) -> bool {
+        let Some(s) = self.suggest.take() else { return false };
+        let Some(item) = s.items.get(ix.unwrap_or(s.selected)) else { return false };
+        let has_close = self.doc.slice(s.end..(s.end + 2).min(self.doc.len())) == "]]";
+        let text = if has_close { item.insert.clone() } else { format!("{}]]", item.insert) };
+        self.edit(s.start..s.end, &text, EditKind::Other, cx);
+        let caret = s.start + item.insert.len() + 2;
+        self.set_selection(Selection::caret(caret), false, cx);
+        self.suggest_dismissed = Some(s.start);
+        true
+    }
+
+    /// The popup under the caret.
+    fn render_suggest(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        self.refresh_suggest();
+        let s = self.suggest.as_ref()?;
+        let caret = self.caret_bounds(self.doc.selection().head)?;
+        let theme = cx.theme().clone();
+        const SHOWN: usize = 10;
+        let top = s.selected.saturating_sub(SHOWN - 1);
+        let rows: Vec<AnyElement> = s
+            .items
+            .iter()
+            .enumerate()
+            .skip(top)
+            .take(SHOWN)
+            .map(|(i, it)| {
+                div()
+                    .id(("link-suggestion", i))
+                    .px_2()
+                    .py_1()
+                    .rounded(px(4.))
+                    .cursor_pointer()
+                    .when(i == s.selected, |d| d.bg(theme.accent))
+                    .child(div().text_sm().child(it.label.clone()))
+                    .when(!it.detail.is_empty(), |d| d.child(div().text_xs().text_color(theme.muted_foreground).child(it.detail.clone())))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |e, _: &MouseDownEvent, _, cx| {
+                            e.suggest_accept(Some(i), cx);
+                            cx.stop_propagation();
+                        }),
+                    )
+                    .into_any_element()
+            })
+            .collect();
+        let popup = div()
+            .w(px(380.))
+            .p_1()
+            .flex()
+            .flex_col()
+            .bg(theme.popover)
+            .text_color(theme.popover_foreground)
+            .border_1()
+            .border_color(theme.border)
+            .rounded(px(6.))
+            .shadow_lg()
+            .children(rows)
+            .when(s.items.len() > SHOWN, |d| d.child(div().px_2().text_xs().text_color(theme.muted_foreground).child(format!("{}{} matches · ↑↓ to browse", s.items.len(), if s.items.len() >= 50 { "+" } else { "" }))));
+        Some(deferred(anchored().position(point(caret.left(), caret.bottom() + px(4.))).snap_to_window_with_margin(px(8.)).child(popup)).with_priority(1).into_any_element())
+    }
+
     /// Plugin decorations (e.g. misspellings) for the rendered blocks, as leaf ranges. Results
     /// are cached per block text, so typing re-checks only the edited block. The word at the
     /// caret is left alone while it is being typed.
@@ -822,6 +982,7 @@ impl Render for Editor {
         children.push(div().h(px((view_h * 0.5).max(0.0))).into_any_element());
         let squiggles = self.decorations(lo..hi, cx);
         let content = div().w_full().max_w(px(760.)).mx_auto().px_8().py_6().flex().flex_col().children(children);
+        let suggest_popup = self.render_suggest(cx);
         let editor = cx.entity();
         let menu_editor = editor.downgrade();
         let status = self.status.clone();
@@ -851,6 +1012,7 @@ impl Render for Editor {
                     .track_scroll(&self.scroll)
                     .child(EditorElement::new(editor, content.into_any_element(), decorations, squiggles, self.scroll.clone())),
             )
+            .children(suggest_popup)
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(|e, ev: &MouseDownEvent, window, cx| {

@@ -162,6 +162,30 @@ impl EntityInputHandler for Editor {
         if typed && text.chars().count() == 1 && self.run_char_hooks(text, cx) {
             return;
         }
+        if typed && text.chars().count() == 1 && crate::app_settings::AppSettings::flag(cx, "autoPairBrackets") && self.mode != super::ViewMode::Reading {
+            use super::assist::{on_type, Pair};
+            let ch = text.chars().next().expect("one char");
+            match on_type(ch, self.char_before(r.start), self.char_after(r.end), !r.is_empty()) {
+                Pair::Insert { text, caret_back } => {
+                    self.edit(r, &text, EditKind::Insert, cx);
+                    let h = self.doc.selection().head;
+                    self.set_selection(Selection::caret(h - caret_back), false, cx);
+                    return;
+                }
+                Pair::StepOver => {
+                    self.set_selection(Selection::caret(r.end + ch.len_utf8()), false, cx);
+                    return;
+                }
+                Pair::Wrap { open, close } => {
+                    let inner = self.doc.slice(r.clone());
+                    self.edit(r.clone(), &format!("{open}{inner}{close}"), EditKind::Other, cx);
+                    let s = r.start + open.len_utf8();
+                    self.set_selection(Selection::new(s, s + inner.len()), false, cx);
+                    return;
+                }
+                Pair::None => {}
+            }
+        }
         self.edit(r, text, EditKind::Insert, cx);
     }
 

@@ -233,6 +233,11 @@ impl VaultIndex {
     pub fn notes(&self) -> impl Iterator<Item = &NoteMeta> {
         self.notes.values()
     }
+    /// Shortest link text resolving to `target` (vault path) from the note `from`.
+    pub fn shortest_link(&self, target: &str, from: &str) -> String {
+        self.resolver.shortest_link(target, from, !is_note(target))
+    }
+
     pub fn resolve(&self, link: &str, from: &str) -> Option<String> {
         Self::resolve_in(&self.resolver, link, from)
     }

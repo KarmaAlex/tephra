@@ -187,6 +187,13 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                         println!("RESOLVE {target} -> {r:?}");
                     });
                 }
+                "suggest" => {
+                    let active = ws.update(cx, |ws, _| ws.tabs.get(ws.active).cloned()).ok().flatten().unwrap_or_else(|| editor.clone());
+                    let _ = active.update(cx, |e, _| match &e.suggest {
+                        Some(s) => println!("SUGGEST sel={} {:?}", s.selected, s.items.iter().map(|i| i.label.clone()).collect::<Vec<_>>()),
+                        None => println!("SUGGEST none"),
+                    });
+                }
                 "ws-tree" => {
                     let _ = ws.update(cx, |ws, _| {
                         let mut f = ws.tree_files.clone();

@@ -14,6 +14,7 @@ impl Global for AppSettings {}
 
 /// (key, label, description, default) of every boolean core setting.
 pub const TOGGLES: &[(&str, &str, &str, bool)] = &[
+    ("autoPairBrackets", "Auto-pair brackets", "Typing ( [ { \" or ` also types the closing half, with the caret in between.", true),
     ("centerDisplayMath", "Centre display math", "Draw $$…$$ formulas centred, as Obsidian does (off: aligned left).", false),
 ];
 
