@@ -152,3 +152,58 @@ fn every_embed_resolves() {
     assert!(total >= 1000, "expected the fixture's ~1,283 embeds, found {total}");
     assert!(missing.is_empty(), "unresolved embeds:\n{}", missing.join("\n"));
 }
+
+/// Vault index: builds within the §6 budget, and rename plans keep every link pointing at the
+/// same (moved) file. Runs in memory; the fixture is not modified.
+#[test]
+fn index_build_and_rename_plans() {
+    use obsidilight_core::index::{apply_edits, parse_note, VaultIndex};
+    use obsidilight_core::links::Resolver;
+    let Some(root) = fixture() else { return };
+    let t = std::time::Instant::now();
+    // (block ids referenced by same-note links must be found)
+    let idx = VaultIndex::build(&root);
+    let ms = t.elapsed().as_secs_f64() * 1000.0;
+    eprintln!("index build: {ms:.0} ms");
+    assert!(ms < 2000.0, "full index took {ms:.0} ms (budget 2 s)");
+    let notes: Vec<_> = idx.notes().collect();
+    assert_eq!(notes.len(), 233);
+    let links: usize = notes.iter().map(|n| n.links.len()).sum();
+    let unresolved: Vec<String> = notes.iter().flat_map(|n| n.links.iter().filter(|l| l.resolved.is_none()).map(move |l| format!("{}: line {}", n.path, l.line + 1))).collect();
+    let callouts: usize = notes.iter().map(|n| n.callouts.len()).sum();
+    eprintln!("{links} links, {} unresolved, {callouts} callouts", unresolved.len());
+    assert!(unresolved.is_empty(), "unresolved links:\n{}", unresolved.join("\n"));
+    assert_eq!(callouts, 199, "callout count changed (grep finds 199)");
+
+    // rename a sample of targets (notes and images) and check every link still resolves
+    let mut targets: Vec<String> = idx.files().filter(|f| !idx.backlinks(f).is_empty()).cloned().collect();
+    targets.sort();
+    let sample: Vec<String> = targets.iter().step_by((targets.len() / 25).max(1)).cloned().collect();
+    for old in sample {
+        let (dir, name) = old.rsplit_once('/').unwrap_or(("", &old));
+        let new = format!("{}Rinominato {name}", if dir.is_empty() { String::new() } else { format!("{dir}/") });
+        let moves = vec![(old.clone(), new.clone())];
+        let plan = idx.rename_plan(&moves);
+        let after = Resolver::new(idx.files().map(|f| if *f == old { new.as_str() } else { f.as_str() }));
+        for edit in &plan {
+            let src = if edit.note == new { old.clone() } else { edit.note.clone() };
+            let text = std::fs::read_to_string(root.join(&src)).unwrap();
+            let edited = apply_edits(&text, &edit.edits);
+            let before = idx.note(&src).unwrap();
+            let now = parse_note(&edit.note, &edited);
+            assert_eq!(now.links.len(), before.links.len());
+            for (b, a) in before.links.iter().zip(&now.links) {
+                let want = b.resolved.as_ref().map(|r| if *r == old { new.clone() } else { r.clone() });
+                assert_eq!(after.resolve(&a.target, &edit.note), want, "{} -> {}: link {:?} in {}", old, new, a.target, edit.note);
+            }
+        }
+        // every backlink of the renamed file got an edit
+        let edited_notes: std::collections::HashSet<&str> = plan.iter().map(|e| e.note.as_str()).collect();
+        for bl in idx.backlinks(&old) {
+            if bl.source == old {
+                continue; // same-note links ([[#^id]]) have no path to rewrite
+            }
+            assert!(edited_notes.contains(bl.source.as_str()), "{old}: backlink in {} not updated", bl.source);
+        }
+    }
+}

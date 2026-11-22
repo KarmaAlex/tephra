@@ -167,7 +167,8 @@ pub fn parse_inline(text: &str, range: Range<usize>) -> Vec<Inline> {
                     continue;
                 }
             }
-            b'^' if char_before(s, i).is_some_and(char::is_whitespace) => {
+            // `^id` at the end of a line, after whitespace, at line start, or right after a quote `>`
+            b'^' if char_before(s, i).is_none_or(|c| c.is_whitespace() || c == '>') => {
                 let len = s[i + 1..].bytes().take_while(|c| c.is_ascii_alphanumeric() || *c == b'-').count();
                 let le = line_end(i);
                 if len > 0 && s[i + 1 + len..le].trim().is_empty() {
@@ -383,6 +384,8 @@ mod tests {
         assert_eq!(p("x %%nascosto%% y"), [(Comment, "%%nascosto%%", "%%nascosto%%")]);
         assert_eq!(p("#tag e #123 e c#"), [(Tag, "#tag", "#tag")]);
         assert_eq!(p("Lemma 1 ^lemma1"), [(BlockId, "^lemma1", "")]);
+        assert_eq!(p("^lemma1"), [(BlockId, "^lemma1", "")]);
+        assert_eq!(p(">^clm1"), [(BlockId, "^clm1", "")]);
         assert_eq!(p("2^n"), []);
     }
 

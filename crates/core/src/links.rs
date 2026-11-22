@@ -1,32 +1,111 @@
 //! Obsidian link resolution (shortest-unique-path rule). Validated by the 16 hidden tests of
 //! bench task t1 (moved here from the reference solution) plus the fixture embed test.
 
-/// Resolves a link (`![[x]]`, `[[x|alias]]`, `x#heading`, or a bare target) to a vault path.
-/// `files` are vault-relative paths with `/` separators; `from` is the linking note's path.
-pub fn resolve_link(link: &str, files: &[&str], from: &str) -> Option<String> {
+use std::collections::HashMap;
+
+/// The path part of a link: wrapper, `|alias` and `#subpath` removed, trimmed. None if empty.
+pub fn link_path(link: &str) -> Option<&str> {
     let mut t = link.trim();
-    if let Some(s) = t.strip_prefix('!') { if s.starts_with("[[") { t = s; } }
-    if let Some(s) = t.strip_prefix("[[") { t = s.strip_suffix("]]").unwrap_or(s); }
+    if let Some(s) = t.strip_prefix('!') {
+        if s.starts_with("[[") {
+            t = s;
+        }
+    }
+    if let Some(s) = t.strip_prefix("[[") {
+        t = s.strip_suffix("]]").unwrap_or(s);
+    }
     let t = t.split('|').next().unwrap_or("");
     let t = t.split('#').next().unwrap_or("").trim();
-    if t.is_empty() { return None; }
-    let last = t.rsplit('/').next().unwrap_or(t);
-    let target = if last.contains('.') { t.to_string() } else { format!("{t}.md") };
-    let tl = target.to_lowercase();
-    if let Some(f) = files.iter().find(|f| f.to_lowercase() == tl) { return Some(f.to_string()); }
-    let suffix = format!("/{tl}");
-    let mut cands: Vec<&str> = files.iter().copied().filter(|f| f.to_lowercase().ends_with(&suffix)).collect();
-    if cands.is_empty() { return None; }
-    let dir = |p: &str| p.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default();
-    let from_dir = dir(from);
-    if let Some(c) = cands.iter().filter(|c| dir(c) == from_dir).min() { return Some(c.to_string()); }
-    cands.sort_by(|a, b| a.split('/').count().cmp(&b.split('/').count()).then(a.cmp(b)));
-    Some(cands[0].to_string())
+    (!t.is_empty()).then_some(t)
+}
+
+fn dir_of(p: &str) -> &str {
+    p.rsplit_once('/').map(|(d, _)| d).unwrap_or("")
+}
+
+/// Obsidian link resolution over a fixed set of vault files, indexed by lowercase basename.
+#[derive(Clone, Debug, Default)]
+pub struct Resolver {
+    /// lowercase path -> original path
+    exact: HashMap<String, String>,
+    /// lowercase basename -> original paths
+    by_name: HashMap<String, Vec<String>>,
+}
+
+impl Resolver {
+    pub fn new<'a>(files: impl IntoIterator<Item = &'a str>) -> Self {
+        let mut r = Self::default();
+        for f in files {
+            r.add(f);
+        }
+        r
+    }
+
+    pub fn add(&mut self, f: &str) {
+        let l = f.to_lowercase();
+        let name = l.rsplit('/').next().unwrap_or(&l).to_string();
+        self.exact.insert(l, f.to_string());
+        let v = self.by_name.entry(name).or_default();
+        if !v.iter().any(|x| x == f) {
+            v.push(f.to_string());
+        }
+    }
+
+    pub fn remove(&mut self, f: &str) {
+        let l = f.to_lowercase();
+        let name = l.rsplit('/').next().unwrap_or(&l).to_string();
+        self.exact.remove(&l);
+        if let Some(v) = self.by_name.get_mut(&name) {
+            v.retain(|x| x != f);
+        }
+    }
+
+    /// Resolves a link (`![[x]]`, `[[x|alias]]`, `x#heading`, or a bare target) from the note at `from`.
+    pub fn resolve(&self, link: &str, from: &str) -> Option<String> {
+        let t = link_path(link)?;
+        let last = t.rsplit('/').next().unwrap_or(t);
+        let target = if last.contains('.') { t.to_string() } else { format!("{t}.md") };
+        let tl = target.to_lowercase();
+        if let Some(f) = self.exact.get(&tl) {
+            return Some(f.clone());
+        }
+        let name = tl.rsplit('/').next().unwrap_or(&tl);
+        let suffix = format!("/{tl}");
+        let mut cands: Vec<&String> = self.by_name.get(name)?.iter().filter(|f| f.to_lowercase().ends_with(&suffix)).collect();
+        if cands.is_empty() {
+            return None;
+        }
+        let from_dir = dir_of(from);
+        if let Some(c) = cands.iter().filter(|c| dir_of(c) == from_dir).min() {
+            return Some((*c).clone());
+        }
+        cands.sort_by(|a, b| a.split('/').count().cmp(&b.split('/').count()).then(a.cmp(b)));
+        Some(cands[0].clone())
+    }
+
+    /// The shortest link text that resolves to `target` from `from` (a path suffix; `.md`
+    /// dropped when `keep_ext` is false).
+    pub fn shortest_link(&self, target: &str, from: &str, keep_ext: bool) -> String {
+        let shown = |s: &str| if !keep_ext { s.strip_suffix(".md").unwrap_or(s).to_string() } else { s.to_string() };
+        let parts: Vec<&str> = target.split('/').collect();
+        for n in 1..=parts.len() {
+            let cand = shown(&parts[parts.len() - n..].join("/"));
+            if self.resolve(&cand, from).as_deref() == Some(target) {
+                return cand;
+            }
+        }
+        shown(target)
+    }
+}
+
+/// One-shot resolution over a file list (see [`Resolver`]).
+pub fn resolve_link(link: &str, files: &[&str], from: &str) -> Option<String> {
+    Resolver::new(files.iter().copied()).resolve(link, from)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_link;
+    use super::{resolve_link, Resolver};
     const FILES: &[&str] = &[
         "Images/Pasted image 20250101.png",
         "Terzo anno/Algoritmi/Borůvka.md",
@@ -56,4 +135,13 @@ mod tests {
     #[test] fn empty() { assert_eq!(resolve_link("[[]]", FILES, "Index.md"), None); assert_eq!(resolve_link("[[#heading]]", FILES, "Index.md"), None); }
     #[test] fn no_partial_component_match() { assert_eq!(resolve_link("[[ndex]]", FILES, "Index.md"), None); }
     #[test] fn whitespace_trim() { assert_eq!(resolve_link("[[ Borůvka ]]", FILES, "Index.md").as_deref(), Some("Terzo anno/Algoritmi/Borůvka.md")); }
+
+    #[test]
+    fn shortest_link_text() {
+        let r = Resolver::new(FILES.iter().copied());
+        assert_eq!(r.shortest_link("Terzo anno/Algoritmi/Borůvka.md", "Index.md", false), "Borůvka");
+        assert_eq!(r.shortest_link("B/C/dup.md", "Index.md", false), "C/dup");
+        assert_eq!(r.shortest_link("B/C/dup.md", "B/C/x.md", false), "dup");
+        assert_eq!(r.shortest_link("Images/Pasted image 20250101.png", "Index.md", true), "Pasted image 20250101.png");
+    }
 }
