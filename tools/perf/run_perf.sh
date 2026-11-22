@@ -13,7 +13,14 @@ mkdir -p reports "$SCRATCH"
 MESA=/usr/share/glvnd/egl_vendor.d/50_mesa.json
 tag() { python3 -c "import json,sys; d=json.load(sys.stdin); d.pop('log_tail',None); d['label']=sys.argv[1]; print(json.dumps(d))" "$1"; }
 
-if [[ -x spikes/tauri/src-tauri/target/release/spike-tauri ]]; then
+# the app itself (M1a+): idle memory, start-up, and the typing benchmark (never saves)
+if [[ -x target/release/obsidilight ]]; then
+  for i in $(seq "$RUNS"); do
+    python3 tools/perf/proctree.py --settle 6 -- target/release/obsidilight "$VAULT/$NOTE" | tag obsidilight-idle >> "$OUT"
+  done
+  OBSIDILIGHT_BENCH=1 python3 tools/perf/proctree.py --report --timeout 90 -- target/release/obsidilight "$VAULT/$NOTE" | tag obsidilight-bench >> "$OUT"
+fi
+if [[ "${SPIKES:-0}" == 1 && -x spikes/tauri/src-tauri/target/release/spike-tauri ]]; then
   for i in $(seq "$RUNS"); do
     env VAULT="$VAULT" NOTE="$NOTE" __EGL_VENDOR_LIBRARY_FILENAMES=$MESA WEBKIT_DISABLE_DMABUF_RENDERER=1 \
       python3 tools/perf/proctree.py --settle 6 -- spikes/tauri/src-tauri/target/release/spike-tauri | tag tauri-tuned-idle >> "$OUT"
@@ -22,7 +29,7 @@ if [[ -x spikes/tauri/src-tauri/target/release/spike-tauri ]]; then
   env VAULT="$VAULT" NOTE="$NOTE" BENCH=1 __EGL_VENDOR_LIBRARY_FILENAMES=$MESA WEBKIT_DISABLE_DMABUF_RENDERER=1 \
     python3 tools/perf/proctree.py --report --timeout 120 -- spikes/tauri/src-tauri/target/release/spike-tauri | tag tauri-tuned-bench >> "$OUT"
 fi
-if [[ -x spikes/gpui/target/release/spike-gpui ]]; then
+if [[ "${SPIKES:-0}" == 1 && -x spikes/gpui/target/release/spike-gpui ]]; then
   for i in $(seq "$RUNS"); do
     env NOTE_PATH="$VAULT/$NOTE" MATHJAX_BUNDLE=spikes/gpui/assets/mathjax-svg.js \
       python3 tools/perf/proctree.py --settle 6 -- spikes/gpui/target/release/spike-gpui | tag gpui-idle >> "$OUT"
@@ -48,6 +55,7 @@ for k, rs in g.items():
     med = lambda key: st.median([r[key] for r in rs if r.get(key) is not None] or [float('nan')])
     print(f"{k:22} {len(rs):>2} {med('ready_ms'):>9.0f} {med('rss_mib'):>8.1f} {med('pss_mib'):>8.1f} {med('uss_mib'):>8.1f}")
     for r in rs:
-        if r.get("report"): print("   bench:", json.dumps({k2: r['report'][k2] for k2 in ('plain','inMath','scroll','firstRenderMs') if k2 in r['report']}))
+        rep = r.get("report") or {}
+        if rep: print("   bench:", json.dumps({k2: rep[k2] for k2 in ('plain','inMath','scroll','firstRenderMs','plain_frame_work','math_frame_work','plain_latency') if k2 in rep}))
 print("raw:", sys.argv[1])
 EOF

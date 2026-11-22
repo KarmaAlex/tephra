@@ -1,9 +1,18 @@
 # obsidilight — developer entry points
 VAULT ?= $(HOME)/dev/vault-fixture
 
-.PHONY: perf perf-obsidian corpus-math vault-stats bench-ref spikes mathjax-bundle cm6-bundle
+build: crates/app/assets/mathjax-svg.js
+	cargo build --release -p obsidilight
 
-perf:            ## idle memory / startup / typing for the spikes (add OBSIDIAN=1 for the baseline)
+crates/app/assets/mathjax-svg.js:
+	$(MAKE) mathjax-bundle
+
+test: crates/app/assets/mathjax-svg.js ## unit + fixture tests (fixture tests skip if the fixture is absent)
+	cargo test --release --workspace
+
+.PHONY: build test ui-smoke perf perf-obsidian corpus-math vault-stats bench-ref spikes mathjax-bundle cm6-bundle
+
+perf: build      ## idle memory / startup / typing for the app (OBSIDIAN=1 adds the baseline, SPIKES=1 the M0 spikes)
 	VAULT="$(VAULT)" tools/perf/run_perf.sh
 
 perf-obsidian:   ## same, including Obsidian on the fixture (isolated profile)
@@ -27,3 +36,6 @@ mathjax-bundle:  ## MathJax SVG bundle for the GPUI spike's embedded QuickJS
 
 cm6-bundle:      ## headless CM6 + Lezer Markdown bundle for QuickJS (snippet function bridge)
 	cd spikes/gpui/js && ../../tauri/node_modules/.bin/esbuild cm6-entry.js --bundle --minify --format=iife --platform=neutral --main-fields=module,main --target=es2020 --outfile=../assets/cm6-headless.js
+
+ui-smoke: build    ## scripted UI test on a temp copy of the perf note (needs a display)
+	tests/ui/smoke.sh
