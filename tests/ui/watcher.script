@@ -1,0 +1,8 @@
+# Watcher: external changes (Syncthing) reach the index and open editors. See watcher.sh.
+wait 700
+ws-resolve b
+wait 2500
+ws-resolve b
+key ctrl-home
+state
+quit

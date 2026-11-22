@@ -169,6 +169,15 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                     let r = ws.update(cx, |ws, cx| ws.rename_path(old.trim(), new.trim(), cx));
                     println!("RENAME {old} -> {new}: {:?}", r.ok());
                 }
+                "ws-resolve" => {
+                    // ws-resolve <link target>: resolution from the active note, via the live index
+                    let target = rest.trim().to_string();
+                    let _ = ws.update(cx, |ws, cx| {
+                        let from = ws.tabs.get(ws.active).map(|e| e.read(cx).path.clone()).unwrap_or_default();
+                        let r = ws.vault.borrow().resolve(&target, &from).map(|p| p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default());
+                        println!("RESOLVE {target} -> {r:?}");
+                    });
+                }
                 "ws-tabs" => {
                     let _ = ws.update(cx, |ws, cx| {
                         let root = ws.vault.borrow().root.clone();

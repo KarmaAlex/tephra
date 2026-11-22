@@ -132,6 +132,7 @@ pub struct CalloutView {
     pub fold_key: String,
     /// The header line as a keyed leaf: marker hidden, title text editable in place.
     pub title: Paragraph,
+    #[allow(dead_code)] // M3: "Theorem 1.2" vs "Theorem 1.2 (Title)"
     pub title_empty: bool,
     pub children: Vec<ProjNode>,
 }
