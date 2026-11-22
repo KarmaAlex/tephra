@@ -1,0 +1,11 @@
+[package]
+name = "obsidilight-core"
+description = "Platform-agnostic core: document buffer, file I/O, Obsidian Markdown parser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ropey.workspace = true
+unicode-segmentation.workspace = true
