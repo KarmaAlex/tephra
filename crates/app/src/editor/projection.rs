@@ -13,10 +13,11 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::path::PathBuf;
 
-use gpui_kit::base::text::editor_host::{BlockNode, CodeBlock, InlineNode, LinkMark, Paragraph, Span, TextMark};
+use gpui_kit::base::text::editor_host::{BlockNode, CodeBlock, ColumnAlign, InlineNode, LinkMark, Paragraph, Span, Table, TextMark};
 use gpui_kit::base::text::MarkdownNode;
 use gpui_kit::Hsla;
-use obsidilight_core::markdown::{parse_blocks, parse_inline, BlockKind, Inline, InlineKind};
+use obsidilight_core::markdown::callouts::{parse_quote, Callout, QuoteItem};
+use obsidilight_core::markdown::{parse_blocks, parse_inline, parse_table, Align, BlockKind, Inline, InlineKind};
 use obsidilight_core::Selection;
 
 pub const ATOM: &str = "\u{FFFC}";
@@ -115,8 +116,28 @@ pub struct Palette {
     pub highlight: Hsla,
 }
 
+/// What a block renders as: a gpui-kit block, or a callout container (drawn by the editor).
+pub enum ProjNode {
+    Block(BlockNode),
+    Callout(CalloutView),
+}
+
+pub struct CalloutView {
+    /// Lowercased type (`thm`, `pf`…).
+    pub kind: String,
+    /// Display name of the type (`Theorem`), shown as the badge.
+    pub label: String,
+    pub fold: Option<char>,
+    /// Identity for the fold state (header line text + occurrence).
+    pub fold_key: String,
+    /// The header line as a keyed leaf: marker hidden, title text editable in place.
+    pub title: Paragraph,
+    pub title_empty: bool,
+    pub children: Vec<ProjNode>,
+}
+
 pub struct ProjBlock {
-    pub node: BlockNode,
+    pub node: ProjNode,
     /// Left indent in pixels (list nesting).
     pub indent: f32,
     /// Leaf keys rendered by this block.
@@ -178,7 +199,55 @@ impl Projection {
 }
 
 fn key(block: usize, sub: usize) -> u64 {
-    ((block as u64) << 8) | sub as u64
+    ((block as u64) << 16) | sub as u64
+}
+
+/// Display name for a callout type (Obsidian built-ins and the vault's Academic Notes types).
+pub fn callout_label(kind: &str) -> String {
+    let named = match kind {
+        "def" | "definition" => "Definition",
+        "thm" | "theorem" => "Theorem",
+        "lem" | "lemma" => "Lemma",
+        "cor" | "corollary" => "Corollary",
+        "prop" | "prp" | "proposition" => "Proposition",
+        "rem" | "remark" | "rmk" => "Remark",
+        "pf" | "proof" => "Proof",
+        "clm" | "claim" => "Claim",
+        "obs" | "observation" => "Observation",
+        "ex" | "exa" | "exm" | "example" => "Example",
+        "algorithm" | "alg" => "Algorithm",
+        _ => "",
+    };
+    if !named.is_empty() {
+        return named.to_string();
+    }
+    let mut c = kind.chars();
+    c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
+}
+
+/// Normalises a code fence language for the highlighter (Bison/Yacc/Flex use C: their actions are C).
+fn code_lang(lang: &str) -> Option<String> {
+    let l = lang.to_lowercase();
+    let mapped = match l.as_str() {
+        "" => return None,
+        "c++" | "cxx" | "cc" | "hpp" => "cpp",
+        "bison" | "yacc" | "flex" | "lex" | "h" => "c",
+        "sh" | "shell" | "zsh" => "bash",
+        "py" => "python",
+        "yml" => "yaml",
+        "json" | "js" => "javascript",
+        other => other,
+    };
+    Some(mapped.to_string())
+}
+
+fn column_align(a: Align) -> ColumnAlign {
+    match a {
+        Align::None => ColumnAlign::None,
+        Align::Left => ColumnAlign::Left,
+        Align::Center => ColumnAlign::Center,
+        Align::Right => ColumnAlign::Right,
+    }
 }
 
 struct LeafBuilder<'a> {
@@ -192,6 +261,8 @@ struct LeafBuilder<'a> {
     muted: Vec<Range<usize>>,
     /// Source ranges hidden at the text level (quote prefixes), sorted; `.1` = revealed.
     prefixes: Vec<(Range<usize>, bool)>,
+    /// Inside a table cell: `\|` in math is a literal pipe (Obsidian's table escaping).
+    table_cell: bool,
     resolve: &'a dyn Fn(&str) -> Option<PathBuf>,
 }
 
@@ -207,6 +278,7 @@ impl<'a> LeafBuilder<'a> {
             map: LeafMap { segs: Vec::new(), src, len: 0 },
             muted: Vec::new(),
             prefixes: Vec::new(),
+            table_cell: false,
             resolve,
         }
     }
@@ -318,6 +390,7 @@ impl<'a> LeafBuilder<'a> {
         } else {
             tex.split('\n').map(|l| l.trim_start().trim_start_matches(['>', ' '])).collect::<Vec<_>>().join("\n")
         };
+        let tex = if self.table_cell { tex.replace("\\|", "|") } else { tex };
         self.atom(src, MarkdownNode::new(MATH_NODE, MathAtom { tex, display }));
     }
 
@@ -370,11 +443,13 @@ impl<'a> LeafBuilder<'a> {
             InlineKind::WikiLink { embed: false } | InlineKind::Link => {
                 let target = n.link_target(self.text).to_string();
                 let m = styled(&|m| m.link(LinkMark { url: target.clone().into(), ..Default::default() }));
+                // wikilinks to notes that don't exist yet are dimmed (Obsidian); Ctrl+click creates them
+                let unresolved = n.kind != InlineKind::Link && (self.resolve)(&target).is_none();
                 self.marker(open, &m, reveal);
                 if n.kind == InlineKind::Link {
                     self.inlines(&n.children, n.inner.clone(), &m);
                 } else {
-                    self.text(n.inner.clone(), &m, false);
+                    self.text(n.inner.clone(), &m, unresolved);
                 }
                 self.marker(close, &m, reveal);
             }
@@ -449,6 +524,75 @@ fn quote_prefixes(text: &str, r: &Range<usize>, sel: &Range<usize>) -> Vec<(Rang
     out
 }
 
+/// Builds rendered callouts (caret outside the quote block).
+struct QuoteCtx<'a> {
+    text: &'a str,
+    sel: Range<usize>,
+    palette: Palette,
+    resolve: &'a dyn Fn(&str) -> Option<PathBuf>,
+    bi: usize,
+    sub: usize,
+    keys: Vec<u64>,
+    occurrences: HashMap<String, usize>,
+}
+
+impl QuoteCtx<'_> {
+    fn next_key(&mut self) -> u64 {
+        let k = key(self.bi, self.sub);
+        self.sub += 1;
+        self.keys.push(k);
+        k
+    }
+
+    fn leaf(&self, src: Range<usize>) -> LeafBuilder<'_> {
+        LeafBuilder::new(self.text, src, self.sel.clone(), self.palette, self.resolve)
+    }
+
+    fn lines(&mut self, r: &Range<usize>, proj: &mut Projection) -> ProjNode {
+        let k = self.next_key();
+        let mut lb = self.leaf(r.clone());
+        lb.prefixes = obsidilight_core::markdown::callouts::quote_prefixes(self.text, r).into_iter().map(|p| (p, false)).collect();
+        let inl = parse_inline(self.text, r.clone());
+        lb.inlines(&inl, r.clone(), &TextMark::default());
+        ProjNode::Block(BlockNode::Paragraph(lb.finish(k, proj)))
+    }
+
+    fn callout(&mut self, c: &Callout, proj: &mut Projection) -> ProjNode {
+        let k = self.next_key();
+        let mut lb = self.leaf(c.header.clone());
+        lb.hidden(c.marker.clone());
+        let inl = parse_inline(self.text, c.title.clone());
+        lb.inlines(&inl, c.title.clone(), &TextMark::default());
+        let title = lb.finish(k, proj);
+        let header = self.text[c.header.clone()].to_string();
+        let n = self.occurrences.entry(header.clone()).or_insert(0);
+        *n += 1;
+        let fold_key = format!("{header}\u{0}{n}");
+        let children = c.body.iter().map(|it| self.item(it, true, proj)).collect();
+        ProjNode::Callout(CalloutView {
+            kind: c.kind.clone(),
+            label: callout_label(&c.kind),
+            fold: c.fold,
+            fold_key,
+            title,
+            title_empty: self.text[c.title.clone()].trim().is_empty(),
+            children,
+        })
+    }
+
+    /// `in_callout`: body lines of a callout are plain paragraphs; quote lines outside any
+    /// callout keep the blockquote style.
+    fn item(&mut self, it: &QuoteItem, in_callout: bool, proj: &mut Projection) -> ProjNode {
+        match it {
+            QuoteItem::Lines(r) => match self.lines(r, proj) {
+                ProjNode::Block(b) if !in_callout => ProjNode::Block(BlockNode::Blockquote { children: vec![b], span: None }),
+                other => other,
+            },
+            QuoteItem::Callout(c) => self.callout(c, proj),
+        }
+    }
+}
+
 /// The part of the selection inside a block (revealed markers change its height).
 fn sel_signature(sel: &Range<usize>, block: &Range<usize>) -> (usize, usize) {
     if sel.start <= block.end && sel.end >= block.start {
@@ -474,9 +618,38 @@ pub fn project(inp: &ProjectionInput) -> Projection {
     for (bi, b) in blocks.iter().enumerate() {
         let rev = sel.start <= b.range.end && sel.end >= b.range.start;
         let new_leaf = |src: Range<usize>| LeafBuilder::new(text, src, sel.clone(), inp.palette, inp.resolve);
-        let mut nodes: Vec<(BlockNode, Vec<u64>)> = Vec::new();
+        let mut nodes: Vec<(ProjNode, Vec<u64>)> = Vec::new();
         let mut indent = 0.0;
         match &b.kind {
+            BlockKind::Table if !rev && parse_table(text, b.range.clone()).is_some() => {
+                let t = parse_table(text, b.range.clone()).expect("checked");
+                let cols = t.rows[0].len();
+                let mut keys = Vec::new();
+                let mut sub = 0;
+                let rows: Vec<Vec<Paragraph>> = t
+                    .rows
+                    .iter()
+                    .map(|row| {
+                        (0..cols)
+                            .map(|c| match row.get(c) {
+                                Some(cell) => {
+                                    let k = key(bi, sub);
+                                    sub += 1;
+                                    let mut lb = new_leaf(cell.clone());
+                                    lb.table_cell = true;
+                                    let inl = parse_inline(text, cell.clone());
+                                    lb.inlines(&inl, cell.clone(), &TextMark::default());
+                                    keys.push(k);
+                                    lb.finish(k, &mut proj)
+                                }
+                                None => Paragraph::default(),
+                            })
+                            .collect()
+                    })
+                    .collect();
+                let aligns = t.aligns.iter().map(|a| column_align(*a)).collect();
+                nodes.push((ProjNode::Block(BlockNode::Table(Table::new(rows, aligns))), keys));
+            }
             BlockKind::Blank | BlockKind::Paragraph | BlockKind::Table | BlockKind::Frontmatter => {
                 let k = key(bi, 0);
                 let mut lb = new_leaf(b.range.clone());
@@ -486,16 +659,27 @@ pub fn project(inp: &ProjectionInput) -> Projection {
                     let inl = parse_inline(text, b.range.clone());
                     lb.inlines(&inl, b.range.clone(), &TextMark::default());
                 }
-                nodes.push((BlockNode::Paragraph(lb.finish(k, &mut proj)), vec![k]));
+                nodes.push((ProjNode::Block(BlockNode::Paragraph(lb.finish(k, &mut proj))), vec![k]));
             }
             BlockKind::Quote => {
-                let k = key(bi, 0);
-                let mut lb = new_leaf(b.range.clone());
-                lb.prefixes = quote_prefixes(text, &b.range, &sel);
-                let inl = parse_inline(text, b.range.clone());
-                lb.inlines(&inl, b.range.clone(), &TextMark::default());
-                let para = lb.finish(k, &mut proj);
-                nodes.push((BlockNode::Blockquote { children: vec![BlockNode::Paragraph(para)], span: None }, vec![k]));
+                let items = parse_quote(text, b.range.clone());
+                let has_callout = items.iter().any(|i| matches!(i, QuoteItem::Callout(_)));
+                if rev || !has_callout {
+                    // caret inside (or a plain quote): the source lines, `>` hidden except on the caret's line
+                    let k = key(bi, 0);
+                    let mut lb = new_leaf(b.range.clone());
+                    lb.prefixes = quote_prefixes(text, &b.range, &sel);
+                    let inl = parse_inline(text, b.range.clone());
+                    lb.inlines(&inl, b.range.clone(), &TextMark::default());
+                    let para = lb.finish(k, &mut proj);
+                    nodes.push((ProjNode::Block(BlockNode::Blockquote { children: vec![BlockNode::Paragraph(para)], span: None }), vec![k]));
+                } else {
+                    let mut ctx = QuoteCtx { text, sel: sel.clone(), palette: inp.palette, resolve: inp.resolve, bi, sub: 0, keys: Vec::new(), occurrences: HashMap::new() };
+                    for item in &items {
+                        let node = ctx.item(item, false, &mut proj);
+                        nodes.push((node, std::mem::take(&mut ctx.keys)));
+                    }
+                }
             }
             BlockKind::Heading { level } => {
                 let k = key(bi, 0);
@@ -503,7 +687,7 @@ pub fn project(inp: &ProjectionInput) -> Projection {
                 lb.marker(b.marker.clone(), &TextMark::default(), rev);
                 let inl = parse_inline(text, b.content.clone());
                 lb.inlines(&inl, b.content.clone(), &TextMark::default());
-                nodes.push((BlockNode::Heading { level: *level, children: lb.finish(k, &mut proj), span: None }, vec![k]));
+                nodes.push((ProjNode::Block(BlockNode::Heading { level: *level, children: lb.finish(k, &mut proj), span: None }), vec![k]));
             }
             BlockKind::ListItem { ordered, task } => {
                 let k = key(bi, 0);
@@ -520,7 +704,7 @@ pub fn project(inp: &ProjectionInput) -> Projection {
                 };
                 indent = b.indent as f32 * 6.0;
                 nodes.push((
-                    BlockNode::List {
+                    ProjNode::Block(BlockNode::List {
                         children: vec![BlockNode::ListItem {
                             children: vec![BlockNode::Paragraph(para)],
                             spread: false,
@@ -531,7 +715,7 @@ pub fn project(inp: &ProjectionInput) -> Projection {
                         ordered: *ordered,
                         start,
                         span: None,
-                    },
+                    }),
                     vec![k],
                 ));
             }
@@ -544,7 +728,7 @@ pub fn project(inp: &ProjectionInput) -> Projection {
                     let k = key(bi, 1);
                     let mut lb = new_leaf(open_line.clone());
                     lb.text(open_line.clone(), &TextMark::default().code(), true);
-                    nodes.push((BlockNode::Paragraph(lb.finish(k, &mut proj)), vec![k]));
+                    nodes.push((ProjNode::Block(BlockNode::Paragraph(lb.finish(k, &mut proj))), vec![k]));
                 }
                 let k = key(bi, 0);
                 let mut code_map = LeafMap { segs: Vec::new(), src: b.content.clone(), len: b.content.len() };
@@ -560,13 +744,13 @@ pub fn project(inp: &ProjectionInput) -> Projection {
                 proj.index.insert(k, proj.leaves.len());
                 proj.leaves.push((k, code_map));
                 keys.push(k);
-                let code = CodeBlock::new(text[b.content.clone()].to_string().into(), (!lang.is_empty()).then(|| lang.clone().into()), None::<Span>).with_leaf_key(k);
-                nodes.push((BlockNode::CodeBlock(code), keys));
+                let code = CodeBlock::new(text[b.content.clone()].to_string().into(), code_lang(lang).map(Into::into), None::<Span>).with_leaf_key(k);
+                nodes.push((ProjNode::Block(BlockNode::CodeBlock(code)), keys));
                 if rev && *closed {
                     let k = key(bi, 2);
                     let mut lb = new_leaf(close_line.clone());
                     lb.text(close_line.clone(), &TextMark::default().code(), true);
-                    nodes.push((BlockNode::Paragraph(lb.finish(k, &mut proj)), vec![k]));
+                    nodes.push((ProjNode::Block(BlockNode::Paragraph(lb.finish(k, &mut proj))), vec![k]));
                 }
             }
             BlockKind::MathBlock => {
@@ -575,14 +759,14 @@ pub fn project(inp: &ProjectionInput) -> Projection {
                 let mut lb = new_leaf(b.range.clone());
                 if rev {
                     lb.text(b.range.clone(), &TextMark::default().code(), false);
-                    nodes.push((BlockNode::Paragraph(lb.finish(k, &mut proj)), vec![k]));
+                    nodes.push((ProjNode::Block(BlockNode::Paragraph(lb.finish(k, &mut proj))), vec![k]));
                     // rendered preview under the source (not editable, no key)
                     let mut preview = Paragraph::default();
                     preview.push(InlineNode::custom(MarkdownNode::new(MATH_NODE, MathAtom { tex, display: true }).text(ATOM)));
-                    nodes.push((BlockNode::Paragraph(preview), vec![]));
+                    nodes.push((ProjNode::Block(BlockNode::Paragraph(preview)), vec![]));
                 } else {
                     lb.math_atom(b.range.clone(), &tex, true);
-                    nodes.push((BlockNode::Paragraph(lb.finish(k, &mut proj)), vec![k]));
+                    nodes.push((ProjNode::Block(BlockNode::Paragraph(lb.finish(k, &mut proj))), vec![k]));
                 }
             }
             BlockKind::Rule => {
@@ -590,9 +774,9 @@ pub fn project(inp: &ProjectionInput) -> Projection {
                 if rev {
                     let mut lb = new_leaf(b.range.clone());
                     lb.text(b.range.clone(), &TextMark::default(), true);
-                    nodes.push((BlockNode::Paragraph(lb.finish(k, &mut proj)), vec![k]));
+                    nodes.push((ProjNode::Block(BlockNode::Paragraph(lb.finish(k, &mut proj))), vec![k]));
                 } else {
-                    nodes.push((BlockNode::HorizontalRule { span: None }, vec![]));
+                    nodes.push((ProjNode::Block(BlockNode::HorizontalRule { span: None }), vec![]));
                 }
             }
         }
@@ -619,6 +803,19 @@ mod tests {
     /// The leaf text the renderer sees (atoms as U+FFFC).
     fn leaf_text(p: &Projection, k: u64) -> String {
         let block = p.blocks.iter().find(|b| b.keys.contains(&k)).unwrap();
+        fn node_text(n: &ProjNode, k: u64, out: &mut String) {
+            match n {
+                ProjNode::Block(b) => para_text(b, out),
+                ProjNode::Callout(c) => {
+                    let mut t = String::new();
+                    for ch in c.title.children() {
+                        t.push_str(if ch.as_custom().is_some() { ATOM } else { ch.text() });
+                    }
+                    out.push_str(&t);
+                    c.children.iter().for_each(|x| node_text(x, k, out));
+                }
+            }
+        }
         fn para_text(n: &BlockNode, out: &mut String) {
             match n {
                 BlockNode::Paragraph(p) | BlockNode::Heading { children: p, .. } => {
@@ -634,7 +831,7 @@ mod tests {
             }
         }
         let mut s = String::new();
-        para_text(&block.node, &mut s);
+        node_text(&block.node, k, &mut s);
         s
     }
 
@@ -696,7 +893,9 @@ mod tests {
         let t = "> [!thm] T\n> $$\n> x\n> $$\n\nend";
         let p = proj(t, t.len());
         let s = leaf_text(&p, p.leaves[0].0);
-        assert_eq!(s, "[!thm] T\n\u{FFFC}");
+        // rendered callout: title leaf "T" (marker hidden), body leaf = the display formula
+        assert_eq!(s, "T\u{FFFC}");
+        assert!(matches!(p.blocks[0].node, ProjNode::Callout(ref c) if c.kind == "thm" && c.label == "Theorem"));
         let p = proj(t, 3);
         assert!(leaf_text(&p, p.leaves[0].0).starts_with("> [!thm] T\n"));
     }
@@ -714,6 +913,40 @@ mod tests {
         assert_eq!(item.to_src(0), 5);
         assert_eq!(item.to_leaf(5), 0);
         assert!(p.selection_ranges(&(0..t.len())).get(&p.leaves[1].0).is_none());
+    }
+
+    #[test]
+    fn unresolved_wikilinks_are_dimmed() {
+        let t = "[[Esiste]] e [[Manca]]\n\nx";
+        let resolve = |target: &str| (target == "Esiste").then(|| PathBuf::from("/v/Esiste.md"));
+        let p = project(&ProjectionInput { text: t, sel: Selection::caret(t.len()), version: 0, palette: Palette { highlight: gpui_kit::hsla(0., 0., 0., 1.) }, resolve: &resolve });
+        assert_eq!(p.muted[&p.leaves[0].0], vec![9..14]); // "Esiste e Manca": only "Manca"
+    }
+
+    #[test]
+    fn table_cells_are_leaves() {
+        let t = "| a | $x\\|y$ |\n|:-|--:|\n| **1** | 2 |\n\nz";
+        let p = proj(t, t.len());
+        assert!(matches!(p.blocks[0].node, ProjNode::Block(BlockNode::Table(_))));
+        let cells: Vec<(String, std::ops::Range<usize>)> = p.leaves.iter().take(4).map(|(_, m)| (t[m.src.clone()].to_string(), m.src.clone())).collect();
+        assert_eq!(cells.iter().map(|c| c.0.as_str()).collect::<Vec<_>>(), vec!["a", "$x\\|y$", "**1**", "2"]);
+        // a cell's leaf maps back to its own source bytes
+        let (_, m) = &p.leaves[2];
+        assert_eq!(m.to_src(0), t.find("1").unwrap());
+        // caret inside the table: source text again
+        let p = proj(t, 2);
+        assert!(matches!(p.blocks[0].node, ProjNode::Block(BlockNode::Paragraph(_))));
+    }
+
+    #[test]
+    fn nested_callouts_and_fold() {
+        let t = "> [!thm]- T\n> testo\n> > [!pf]\n> > dim\n\nz";
+        let p = proj(t, t.len());
+        let ProjNode::Callout(c) = &p.blocks[0].node else { panic!() };
+        assert_eq!((c.kind.as_str(), c.fold, c.title_empty), ("thm", Some('-'), false));
+        assert_eq!(c.children.len(), 2);
+        let ProjNode::Callout(pf) = &c.children[1] else { panic!() };
+        assert_eq!((pf.label.as_str(), pf.title_empty), ("Proof", true));
     }
 
     #[test]

@@ -20,7 +20,8 @@ use obsidilight_core::{Document, EditKind, Selection};
 
 use crate::embeds::SharedVault;
 use element::EditorElement;
-use projection::{Palette, Projection, ProjectionInput};
+use gpui_kit::component::h_flex;
+use projection::{Palette, ProjNode, Projection, ProjectionInput};
 
 actions!(
     editor,
@@ -119,6 +120,8 @@ pub struct Editor {
     /// Measured block heights by block hash (virtualized rendering).
     heights: measured::Heights,
     measured_once: bool,
+    /// Callout fold state by callout identity (true = collapsed); absent = the file's default.
+    folds: HashMap<String, bool>,
     pub perf: Perf,
 }
 
@@ -161,6 +164,7 @@ impl Editor {
             saving_disabled: false,
             heights: Default::default(),
             measured_once: false,
+            folds: HashMap::new(),
             perf: Perf::default(),
         };
         this.proj.version = u64::MAX;
@@ -545,6 +549,72 @@ impl Editor {
     }
 }
 
+/// Accent colours: the vault's Academic Notes "forest" palette for its theorem-like types,
+/// Obsidian's defaults for the built-in callouts.
+fn callout_color(kind: &str) -> Hsla {
+    let hex = match kind {
+        "def" | "definition" | "asm" | "assumption" => 0x2e7055,
+        "thm" | "theorem" | "axiom" | "axm" | "hyp" | "hypothesis" => 0x296a70,
+        "lem" | "lemma" => 0x537354,
+        "prop" | "prp" | "proposition" => 0x73723d,
+        "cor" | "corollary" => 0x367d69,
+        "clm" | "claim" | "conjecture" | "cnj" => 0x477486,
+        "ex" | "exa" | "exm" | "example" | "exercise" | "exr" | "solution" | "sol" => 0x87653e,
+        "pf" | "proof" | "rem" | "remark" | "rmk" => 0x5c6d61,
+        "algorithm" | "alg" => 0x6c5b7b,
+        "tip" | "hint" | "important" => 0x00bfa5,
+        "success" | "check" | "done" => 0x08b94e,
+        "question" | "help" | "faq" | "warning" | "caution" | "attention" => 0xec7500,
+        "failure" | "fail" | "missing" | "danger" | "error" | "bug" => 0xe93147,
+        "quote" | "cite" => 0x9e9e9e,
+        "abstract" | "summary" | "tldr" => 0x00b0ff,
+        _ => 0x448aff, // note, info, todo, observation, unknown types
+    };
+    rgb(hex).into()
+}
+
+/// Renders a projected node; callouts become containers drawn here (gpui-kit renders the rest).
+fn render_node(node: &ProjNode, ix: usize, folds: &HashMap<String, bool>, rcx: &RenderContext, window: &mut Window, cx: &mut Context<Editor>) -> AnyElement {
+    match node {
+        ProjNode::Block(b) => b.render(ix, FlowPosition::at(&[b], 0, true).first(true).last(true), rcx, window, cx),
+        ProjNode::Callout(c) => {
+            let color = callout_color(&c.kind);
+            let soft = matches!(c.kind.as_str(), "pf" | "proof" | "rem" | "remark" | "rmk");
+            let collapsed = c.fold.is_some() && folds.get(&c.fold_key).copied().unwrap_or(c.fold == Some('-'));
+            let title = gpui_kit::base::text::editor_host::BlockNode::Paragraph(c.title.clone());
+            let title_el = title.render(ix, FlowPosition::at(&[&title], 0, true).first(true).last(true), rcx, window, cx);
+            let badge = if soft {
+                div().italic().font_weight(FontWeight::SEMIBOLD).text_color(color).child(format!("{}.", c.label))
+            } else {
+                div().px_2().py_0p5().rounded(px(4.)).bg(color).text_color(gpui_kit::white()).text_sm().font_weight(FontWeight::SEMIBOLD).child(c.label.clone())
+            };
+            let fold_btn = c.fold.map(|_| {
+                let key = c.fold_key.clone();
+                let default = c.fold == Some('-');
+                div()
+                    .id(SharedString::from(format!("fold-{}", c.fold_key)))
+                    .cursor_pointer()
+                    .text_color(color)
+                    .child(if collapsed { "▸" } else { "▾" })
+                    .on_click(cx.listener(move |e, _: &ClickEvent, _, cx| {
+                        let cur = e.folds.get(&key).copied().unwrap_or(default);
+                        e.folds.insert(key.clone(), !cur);
+                        cx.notify();
+                    }))
+            });
+            let header = h_flex().gap_2().items_center().children(fold_btn).child(badge).child(div().flex_1().min_w_0().when(soft, |d| d.italic()).child(title_el));
+            let body: Vec<AnyElement> = if collapsed { Vec::new() } else { c.children.iter().map(|ch| render_node(ch, ix, folds, rcx, window, cx)).collect() };
+            let mut el = div().my_1().flex().flex_col().gap_1().child(header).children(body);
+            el = if soft {
+                el.pl_3().border_l_2().border_color(color.opacity(0.6))
+            } else {
+                el.px_3().pt_2().pb_2().border(px(1.4)).border_color(color).rounded(px(6.)).bg(color.opacity(0.06))
+            };
+            el.into_any_element()
+        }
+    }
+}
+
 impl Focusable for Editor {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus.clone()
@@ -579,8 +649,7 @@ impl Render for Editor {
         }
         let decorations: HashMap<u64, Vec<(Range<usize>, Hsla)>> =
             proj.selection_ranges(&sel_range).into_iter().map(|(k, v)| (k, v.into_iter().map(|r| (r, sel_color)).collect())).collect();
-        let refs: Vec<&gpui_kit::base::text::editor_host::BlockNode> = proj.blocks.iter().map(|b| &b.node).collect();
-        let n = refs.len();
+        let n = proj.blocks.len();
         // ---- virtualization: render the blocks within a screen of the viewport (plus the caret's)
         let caret_key = proj.locate(self.doc.selection().head).map(|(k, _)| k);
         let caret_ix = caret_key.and_then(|k| proj.blocks.iter().position(|b| b.keys.contains(&k)));
@@ -615,7 +684,7 @@ impl Render for Editor {
         }
         for ix in lo..hi {
             let b = &proj.blocks[ix];
-            let el = b.node.render(ix, FlowPosition::at(&refs, ix, ix + 1 == n).first(true).last(true), &rcx, window, cx);
+            let el = render_node(&b.node, ix, &self.folds, &rcx, window, cx);
             let el = if b.indent > 0.0 { div().pl(px(b.indent)).child(el).into_any_element() } else { el };
             children.push(measured::Measured::new(b.hash, self.heights.clone(), el).into_any_element());
         }

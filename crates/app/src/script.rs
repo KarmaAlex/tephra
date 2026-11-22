@@ -118,6 +118,23 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                         }
                     });
                 }
+                "find" => {
+                    // find <text> [+lines]: caret at the start of the first occurrence, moved +/- lines
+                    let (needle, delta) = match rest.rsplit_once(" @") {
+                        Some((n, d)) => (n.to_string(), d.trim().parse::<i64>().unwrap_or(0)),
+                        None => (rest.to_string(), 0),
+                    };
+                    let active = ws.update(cx, |ws, _| ws.tabs.get(ws.active).cloned()).ok().flatten().unwrap_or_else(|| editor.clone());
+                    let _ = active.update(cx, |e, cx| {
+                        if let Some(off) = e.doc.text().find(&needle) {
+                            let line = (e.doc.line_of(off) as i64 + delta).max(0) as usize;
+                            let at = e.doc.line_start(line.min(e.doc.line_count() - 1));
+                            e.set_selection(obsidilight_core::Selection::caret(at), false, cx);
+                        } else {
+                            println!("FIND not found: {needle}");
+                        }
+                    });
+                }
                 "ws-open" => {
                     // ws-open <vault path> [new]
                     let new_tab = rest.ends_with(" new");
