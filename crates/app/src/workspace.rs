@@ -14,7 +14,7 @@ use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::list::ListItem;
 use gpui_kit::component::menu::ContextMenuExt as _;
-use gpui_kit::component::tab::{Tab, TabBar};
+use gpui_kit::component::tab::{Tab as TabButton, TabBar};
 use gpui_kit::component::tree::{tree, TreeItem, TreeState};
 use gpui_kit::component::{h_flex, v_flex, ActiveTheme as _, Icon, IconName, Selectable as _, Sizable as _};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -85,6 +85,53 @@ impl Layout {
     }
 }
 
+/// A tab: a note's editor, or a view a plugin opened in a tab (the graph).
+#[derive(Clone)]
+pub enum Tab {
+    Note(Entity<Editor>),
+    View(ViewTab),
+}
+
+#[derive(Clone)]
+pub struct ViewTab {
+    /// The tab view type (`<plugin>:<id>`); the tab closes when its plugin is turned off.
+    pub kind: String,
+    pub arg: Option<String>,
+    pub title: SharedString,
+    pub view: AnyView,
+    pub focus: FocusHandle,
+}
+
+impl Tab {
+    pub fn editor(&self) -> Option<&Entity<Editor>> {
+        match self {
+            Tab::Note(e) => Some(e),
+            Tab::View(_) => None,
+        }
+    }
+    fn focus(&self, cx: &App) -> FocusHandle {
+        match self {
+            Tab::Note(e) => e.read(cx).focus.clone(),
+            Tab::View(v) => v.focus.clone(),
+        }
+    }
+    /// (title, unsaved).
+    fn label(&self, cx: &App) -> (SharedString, bool) {
+        match self {
+            Tab::Note(e) => {
+                let e = e.read(cx);
+                (e.path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default().into(), e.doc.is_dirty())
+            }
+            Tab::View(v) => (v.title.clone(), false),
+        }
+    }
+    fn save(&self, cx: &mut App) {
+        if let Tab::Note(e) = self {
+            e.update(cx, |e, cx| e.save(cx));
+        }
+    }
+}
+
 /// A hover preview shown for a sidebar row.
 struct WsPreview {
     key: String,
@@ -101,11 +148,11 @@ pub struct Workspace {
     expanded: HashSet<String>,
     /// Tabs of the focused pane, and its active tab. Other panes wait in `parked` (focusing a
     /// pane swaps it in), so tab code only ever deals with the focused pane.
-    pub tabs: Vec<Entity<Editor>>,
+    pub tabs: Vec<Tab>,
     pub active: usize,
     /// Id of the focused pane.
     pub pane: usize,
-    parked: BTreeMap<usize, (Vec<Entity<Editor>>, usize)>,
+    parked: BTreeMap<usize, (Vec<Tab>, usize)>,
     /// How panes are arranged (split right / split down).
     layout: Layout,
     next_pane: usize,
@@ -201,15 +248,15 @@ impl Workspace {
 
     /// Every open editor, in every pane.
     pub fn all_editors(&self) -> Vec<Entity<Editor>> {
-        let mut v = self.tabs.clone();
+        let mut v: Vec<Entity<Editor>> = self.tabs.iter().filter_map(|t| t.editor().cloned()).collect();
         for (tabs, _) in self.parked.values() {
-            v.extend(tabs.iter().cloned());
+            v.extend(tabs.iter().filter_map(|t| t.editor().cloned()));
         }
         v
     }
 
     /// The tabs of pane `id`.
-    pub fn pane_tabs(&self, id: usize) -> Vec<Entity<Editor>> {
+    pub fn pane_tabs(&self, id: usize) -> Vec<Tab> {
         if id == self.pane { self.tabs.clone() } else { self.parked.get(&id).map(|p| p.0.clone()).unwrap_or_default() }
     }
 
@@ -229,8 +276,8 @@ impl Workspace {
         let old = (std::mem::replace(&mut self.tabs, tabs), std::mem::replace(&mut self.active, active));
         self.parked.insert(self.pane, old);
         self.pane = id;
-        if let Some(e) = self.tabs.get(self.active) {
-            let f = e.read(cx).focus.clone();
+        if let Some(t) = self.tabs.get(self.active) {
+            let f = t.focus(cx);
             window.focus(&f, cx);
         }
         self.select_active_in_tree(cx);
@@ -269,8 +316,8 @@ impl Workspace {
         if ids.len() < 2 {
             return;
         }
-        for e in &self.tabs {
-            e.update(cx, |e, cx| e.save(cx));
+        for t in self.tabs.clone() {
+            t.save(cx);
         }
         let gone = self.pane;
         let i = ids.iter().position(|p| *p == gone).unwrap_or(0);
@@ -282,7 +329,7 @@ impl Workspace {
     }
 
     pub fn active_editor(&self) -> Option<Entity<Editor>> {
-        self.tabs.get(self.active).cloned()
+        self.tabs.get(self.active).and_then(|t| t.editor().cloned())
     }
 
     /// The narrow strip on the far left: file tree toggle, plugin buttons, settings.
@@ -514,7 +561,7 @@ impl Workspace {
     }
 
     fn select_active_in_tree(&mut self, cx: &mut Context<Self>) {
-        let Some(e) = self.tabs.get(self.active) else { return };
+        let Some(e) = self.active_editor() else { return };
         let rel = self.rel(&e.read(cx).path);
         // expand its folders (remembered, so a rebuild keeps them open), scroll to it, select it
         let mut dir = rel.as_str();
@@ -535,9 +582,11 @@ impl Workspace {
 
     /// Opens a note: focuses its tab if already open, else replaces the active tab (or adds one).
     pub fn open_path(&mut self, path: PathBuf, new_tab: bool, window: &mut Window, cx: &mut Context<Self>) -> Entity<Editor> {
-        if let Some(ix) = self.tabs.iter().position(|e| e.read(cx).path == path) {
+        if let Some(ix) = self.tabs.iter().position(|t| t.editor().is_some_and(|e| e.read(cx).path == path)) {
             self.activate(ix, window, cx);
-            return self.tabs[ix].clone();
+            if let Some(e) = self.tabs[ix].editor() {
+                return e.clone();
+            }
         }
         let vault = self.vault.clone();
         let editor = cx.new(|cx| Editor::open(path, vault, window, cx));
@@ -553,12 +602,13 @@ impl Workspace {
             self.synced.insert(editor.entity_id(), v);
         }
         if new_tab || self.tabs.is_empty() {
-            self.tabs.push(editor.clone());
+            self.tabs.push(Tab::Note(editor.clone()));
             self.active = self.tabs.len() - 1;
         } else {
             // leaving the replaced note: make sure its edits are on disk
-            self.tabs[self.active].update(cx, |e, cx| e.save(cx));
-            self.tabs[self.active] = editor.clone();
+            let old = self.tabs[self.active].clone();
+            old.save(cx);
+            self.tabs[self.active] = Tab::Note(editor.clone());
         }
         let f = editor.read(cx).focus.clone();
         window.focus(&f, cx);
@@ -615,6 +665,35 @@ impl Workspace {
         }
         self.open_path(path, new_tab, window, cx);
         Ok(())
+    }
+
+    /// Opens a plugin's tab view in the focused pane (or focuses it, if already there).
+    pub fn open_view(&mut self, id: &str, arg: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(ix) = self.tabs.iter().position(|t| matches!(t, Tab::View(v) if v.kind == id && v.arg == arg)) {
+            self.activate(ix, window, cx);
+            return;
+        }
+        let Some(t) = cx.try_global::<PluginHost>().and_then(|h| h.reg.tab_views.iter().find(|(_, t)| t.id == id).map(|(_, t)| t.clone())) else { return };
+        let (view, focus) = (t.create)(arg.clone(), window, cx);
+        self.tabs.push(Tab::View(ViewTab { kind: id.to_string(), arg, title: t.title.clone().into(), view, focus: focus.clone() }));
+        self.active = self.tabs.len() - 1;
+        window.focus(&focus, cx);
+        cx.notify();
+    }
+
+    /// Tabs of views whose plugin was turned off go away.
+    fn prune_view_tabs(&mut self, cx: &App) {
+        let kinds: HashSet<String> = cx.try_global::<PluginHost>().map(|h| h.reg.tab_views.iter().map(|(_, t)| t.id.clone()).collect()).unwrap_or_default();
+        let keep = |t: &Tab| !matches!(t, Tab::View(v) if !kinds.contains(&v.kind));
+        if self.tabs.iter().all(keep) && self.parked.values().all(|(ts, _)| ts.iter().all(keep)) {
+            return;
+        }
+        self.tabs.retain(keep);
+        self.active = self.active.min(self.tabs.len().saturating_sub(1));
+        for (ts, a) in self.parked.values_mut() {
+            ts.retain(keep);
+            *a = (*a).min(ts.len().saturating_sub(1));
+        }
     }
 
     /// Reveals a sidebar view (opening its sidebar) and hands it an argument.
@@ -685,7 +764,7 @@ impl Workspace {
     pub(crate) fn activate(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         if ix < self.tabs.len() {
             self.active = ix;
-            let f = self.tabs[ix].read(cx).focus.clone();
+            let f = self.tabs[ix].focus(cx);
             window.focus(&f, cx);
             self.select_active_in_tree(cx);
             self.note_recent(cx);
@@ -697,7 +776,8 @@ impl Workspace {
         if ix >= self.tabs.len() {
             return;
         }
-        self.tabs[ix].update(cx, |e, cx| e.save(cx));
+        let t = self.tabs[ix].clone();
+        t.save(cx);
         self.tabs.remove(ix);
         if self.active >= self.tabs.len() {
             self.active = self.tabs.len().saturating_sub(1);
@@ -874,7 +954,7 @@ impl Workspace {
     fn notify_status(&self, msg: impl Into<SharedString>, cx: &mut Context<Self>) {
         let msg = msg.into();
         println!("STATUS {msg}");
-        if let Some(e) = self.tabs.get(self.active) {
+        if let Some(e) = self.active_editor() {
             e.update(cx, |e, cx| {
                 e.status = Some(msg.clone());
                 cx.notify();
@@ -1090,7 +1170,8 @@ impl Workspace {
         let abs = root.join(rel);
         // tabs of it in other panes go first (saving disabled: the file is going away)
         for (tabs, active) in self.parked.values_mut() {
-            tabs.retain(|e| {
+            tabs.retain(|t| {
+                let Some(e) = t.editor() else { return true };
                 let gone = e.read(cx).path.starts_with(&abs);
                 if gone {
                     e.update(cx, |e, _| e.disable_saving());
@@ -1099,9 +1180,11 @@ impl Workspace {
             });
             *active = (*active).min(tabs.len().saturating_sub(1));
         }
-        let doomed: Vec<usize> = self.tabs.iter().enumerate().filter(|(_, e)| e.read(cx).path.starts_with(&abs)).map(|(i, _)| i).collect();
+        let doomed: Vec<usize> = self.tabs.iter().enumerate().filter(|(_, t)| t.editor().is_some_and(|e| e.read(cx).path.starts_with(&abs))).map(|(i, _)| i).collect();
         for &i in doomed.iter().rev() {
-            self.tabs[i].update(cx, |e, _| e.disable_saving());
+            if let Some(e) = self.tabs[i].editor() {
+                e.update(cx, |e, _| e.disable_saving());
+            }
             self.close_tab(i, window, cx);
         }
         trash::delete(&abs).map_err(|e| e.to_string())?;
@@ -1482,14 +1565,9 @@ impl Workspace {
         let focused = id == self.pane;
         let (tabs, active) = if focused { (self.tabs.clone(), self.active) } else { self.parked.get(&id).cloned().unwrap_or_default() };
         let split = self.pane_ids().len() > 1;
-        let names: Vec<(SharedString, bool)> = tabs
-            .iter()
-            .map(|e| {
-                let e = e.read(cx);
-                (e.path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default().into(), e.doc.is_dirty())
-            })
-            .collect();
-        let editor = tabs.get(active).cloned();
+        let names: Vec<(SharedString, bool)> = tabs.iter().map(|t| t.label(cx)).collect();
+        let current = tabs.get(active).cloned();
+        let editor = current.as_ref().and_then(|t| t.editor().cloned());
         v_flex()
             .id(("pane", id))
             .size_full()
@@ -1513,7 +1591,7 @@ impl Workspace {
                             ws.activate(*ix, w, cx)
                         }))
                         .children(names.into_iter().enumerate().map(|(ix, (name, dirty))| {
-                            Tab::new().label(if dirty { format!("{name} •").into() } else { name }).suffix(
+                            TabButton::new().label(if dirty { format!("{name} •").into() } else { name }).suffix(
                                 Button::new(SharedString::from(format!("close-tab-{id}-{ix}"))).ghost().xsmall().icon(IconName::Close).on_click(cx.listener(move |ws, _, w, cx| {
                                     ws.focus_pane(id, w, cx);
                                     ws.close_tab(ix, w, cx)
@@ -1527,8 +1605,9 @@ impl Workspace {
                 let ctx = ViewCtx { editor: editor.clone(), workspace: WorkspaceHandle(cx.entity().downgrade()), vault: self.vault.clone(), active_note: editor.as_ref().map(|e| self.rel(&e.read(cx).path)), arg: None };
                 d.children(slots.iter().map(|t| (t.render)(&ctx, _window, cx)))
             })
-            .child(match editor {
-                Some(e) => div().flex_1().min_h_0().child(e).into_any_element(),
+            .child(match current {
+                Some(Tab::Note(e)) => div().flex_1().min_h_0().child(e).into_any_element(),
+                Some(Tab::View(v)) => div().flex_1().min_h_0().child(v.view).into_any_element(),
                 None => div()
                     .flex_1()
                     .flex()
@@ -1551,6 +1630,7 @@ impl Focusable for Workspace {
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
+        self.prune_view_tabs(cx);
         let layout = self.layout.clone();
         let panes = self.render_layout(&layout, window, cx);
         let sidebar = self.sidebar.then(|| self.render_left(window, cx));

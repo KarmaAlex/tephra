@@ -357,6 +357,12 @@ mod tests {
         }
     }
     impl VaultListener for Nop {}
+    struct Empty;
+    impl gpui_kit::Render for Empty {
+        fn render(&mut self, _: &mut Window, _: &mut gpui_kit::Context<Self>) -> impl gpui_kit::IntoElement {
+            div()
+        }
+    }
     impl HoverPolicy for Nop {
         fn wants(&self, _: &str, _: HoverSource, _: bool) -> bool {
             false
@@ -388,6 +394,7 @@ mod tests {
             r.vault_listener(Rc::new(Nop));
             r.toolbar(ToolbarSlot { id: "t".into(), render: Rc::new(|_, _, _| div().into_any_element()) });
             r.hover_policy(Rc::new(Nop));
+            r.tab_view(TabViewType { id: "tv".into(), title: "TV".into(), create: Rc::new(|_, _, cx| (gpui_kit::AnyView::from(gpui_kit::AppContext::new(cx, |_| Empty)), cx.focus_handle())) });
         }
     }
 
@@ -400,18 +407,18 @@ mod tests {
         let mut h = PluginHost::new(None, vec![Box::new(KitchenSink(manifest("a", true))), Box::new(KitchenSink(manifest("b", false)))]);
         assert!(h.load_plugin("a"));
         assert!(!h.load_plugin("a"), "loading twice is a no-op");
-        assert_eq!(h.reg.count("a"), 15);
+        assert_eq!(h.reg.count("a"), 16);
         assert_eq!(h.reg.commands[0].1.id, "a:c");
         h.apply_enabled("b", true);
-        assert_eq!(h.reg.count("b"), 15);
+        assert_eq!(h.reg.count("b"), 16);
         let g = h.generation;
         h.apply_enabled("a", false);
         assert_eq!(h.reg.count("a"), 0, "unload must remove every registration");
-        assert_eq!(h.reg.count("b"), 15, "other plugins untouched");
+        assert_eq!(h.reg.count("b"), 16, "other plugins untouched");
         assert!(!h.is_loaded("a") && h.is_loaded("b") && !h.is_enabled("a"));
         assert!(h.generation > g);
         h.apply_setting("b", "k", Value::Bool(false)); // reloads b
-        assert_eq!((h.reg.count("b"), h.setting("b", "k")), (15, Value::Bool(false)));
+        assert_eq!((h.reg.count("b"), h.setting("b", "k")), (16, Value::Bool(false)));
     }
 
     #[test]

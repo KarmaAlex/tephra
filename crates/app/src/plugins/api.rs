@@ -321,6 +321,12 @@ impl WorkspaceHandle {
             None => target.trim_end_matches(".md").to_string(),
         }
     }
+    /// Opens a plugin's tab view (full id `<plugin>:<view>`) with `arg`; focuses the tab if
+    /// the focused pane already shows that view with that argument.
+    pub fn open_view(&self, id: &str, arg: Option<String>, window: &mut Window, cx: &mut App) {
+        let id = id.to_string();
+        let _ = self.0.update(cx, |ws, cx| ws.open_view(&id, arg, window, cx));
+    }
     /// Shows the hover preview of a vault note (`sub` = heading or `^block`, may be empty) near
     /// `at` after a short delay, or hides it (`None`). For sidebar lists; the editor has its own.
     pub fn preview_link(&self, target: Option<(String, String)>, at: Point<Pixels>, cx: &mut App) {
@@ -426,6 +432,16 @@ pub struct MenuItem {
     pub run: Rc<dyn Fn(&mut ActionCtx, Option<&str>)>,
 }
 
+/// A view a plugin opens in a tab, like a note (Obsidian's graph view). `create` builds the
+/// view when a tab opens; `arg` is what [`WorkspaceHandle::open_view`] was given.
+#[derive(Clone)]
+pub struct TabViewType {
+    /// Namespaced automatically as `<plugin id>:<id>`.
+    pub id: String,
+    pub title: String,
+    pub create: Rc<dyn Fn(Option<String>, &mut Window, &mut App) -> (AnyView, FocusHandle)>,
+}
+
 /// A toolbar drawn above the editor of the focused pane (e.g. the editing toolbar).
 #[derive(Clone)]
 pub struct ToolbarSlot {
@@ -462,6 +478,7 @@ pub struct Registry {
     pub vault_listeners: Vec<(PluginId, Rc<dyn VaultListener>)>,
     pub toolbars: Vec<(PluginId, ToolbarSlot)>,
     pub hover_policies: Vec<(PluginId, Rc<dyn HoverPolicy>)>,
+    pub tab_views: Vec<(PluginId, TabViewType)>,
 }
 
 impl Registry {
@@ -481,6 +498,7 @@ impl Registry {
         self.vault_listeners.retain(|(p, _)| *p != id);
         self.toolbars.retain(|(p, _)| *p != id);
         self.hover_policies.retain(|(p, _)| *p != id);
+        self.tab_views.retain(|(p, _)| *p != id);
     }
 
     /// How many registrations a plugin currently holds (tests: unload must leave zero).
@@ -500,6 +518,7 @@ impl Registry {
             + self.vault_listeners.iter().filter(|(p, _)| *p == id).count()
             + self.toolbars.iter().filter(|(p, _)| *p == id).count()
             + self.hover_policies.iter().filter(|(p, _)| *p == id).count()
+            + self.tab_views.iter().filter(|(p, _)| *p == id).count()
     }
 
     /// Whether hovering `target` from `source` previews it.
@@ -572,6 +591,10 @@ impl Registrar<'_> {
     }
     pub fn vault_listener(&mut self, l: Rc<dyn VaultListener>) {
         self.reg.vault_listeners.push((self.plugin, l));
+    }
+    pub fn tab_view(&mut self, mut t: TabViewType) {
+        t.id = format!("{}:{}", self.plugin, t.id);
+        self.reg.tab_views.push((self.plugin, t));
     }
     pub fn hover_policy(&mut self, p: Rc<dyn HoverPolicy>) {
         self.reg.hover_policies.push((self.plugin, p));

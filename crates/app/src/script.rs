@@ -40,6 +40,14 @@ fn state(e: &Editor) -> String {
     )
 }
 
+/// A tab as UI tests print it: the note's vault path, or `view:<kind>`.
+fn tab_name(t: &crate::workspace::Tab, root: &std::path::Path, cx: &App) -> String {
+    match t {
+        crate::workspace::Tab::Note(e) => e.read(cx).path.strip_prefix(root).map(|p| p.display().to_string()).unwrap_or_default(),
+        crate::workspace::Tab::View(v) => format!("view:{}", v.kind),
+    }
+}
+
 pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>, window: &mut Window, cx: &mut App) {
     let Ok(script) = std::env::var("OBSIDILIGHT_SCRIPT").map(std::fs::read_to_string) else { return };
     let Ok(script) = script else { return };
@@ -98,7 +106,7 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                 "moveat" => {
                     // moveat <offset> [ctrl]: hover just right of where a document offset is drawn
                     let off = num(0) as usize;
-                    let active = ws.update(cx, |ws, _| ws.tabs.get(ws.active).cloned()).ok().flatten().unwrap_or_else(|| editor.clone());
+                    let active = ws.update(cx, |ws, _| ws.active_editor()).ok().flatten().unwrap_or_else(|| editor.clone());
                     let Some(b) = active.update(cx, |e, _| e.caret_bounds(off)) else {
                         println!("MOVEAT {off}: not on screen");
                         continue;
@@ -121,7 +129,7 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                 "clickat" => {
                     // clickat <offset> [ctrl]: click just right of where a document offset is drawn
                     let off = num(0) as usize;
-                    let active = ws.update(cx, |ws, _| ws.tabs.get(ws.active).cloned()).ok().flatten().unwrap_or_else(|| editor.clone());
+                    let active = ws.update(cx, |ws, _| ws.active_editor()).ok().flatten().unwrap_or_else(|| editor.clone());
                     let at = active.update(cx, |e, _| e.caret_bounds(off));
                     let Some(b) = at else {
                         println!("CLICKAT {off}: not on screen");
@@ -173,7 +181,7 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                         Some((n, d)) => (n.to_string(), d.trim().parse::<i64>().unwrap_or(0)),
                         None => (rest.to_string(), 0),
                     };
-                    let active = ws.update(cx, |ws, _| ws.tabs.get(ws.active).cloned()).ok().flatten().unwrap_or_else(|| editor.clone());
+                    let active = ws.update(cx, |ws, _| ws.active_editor()).ok().flatten().unwrap_or_else(|| editor.clone());
                     let _ = active.update(cx, |e, cx| {
                         if let Some(off) = e.doc.text().find(&needle) {
                             let line = (e.doc.line_of(off) as i64 + delta).max(0) as usize;
@@ -205,13 +213,13 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                     // ws-resolve <link target>: resolution from the active note, via the live index
                     let target = rest.trim().to_string();
                     let _ = ws.update(cx, |ws, cx| {
-                        let from = ws.tabs.get(ws.active).map(|e| e.read(cx).path.clone()).unwrap_or_default();
+                        let from = ws.active_editor().map(|e| e.read(cx).path.clone()).unwrap_or_default();
                         let r = ws.vault.borrow().resolve(&target, &from).map(|p| p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default());
                         println!("RESOLVE {target} -> {r:?}");
                     });
                 }
                 "suggest" => {
-                    let active = ws.update(cx, |ws, _| ws.tabs.get(ws.active).cloned()).ok().flatten().unwrap_or_else(|| editor.clone());
+                    let active = ws.update(cx, |ws, _| ws.active_editor()).ok().flatten().unwrap_or_else(|| editor.clone());
                     let _ = active.update(cx, |e, _| match &e.suggest {
                         Some(s) => println!("SUGGEST sel={} {:?}", s.selected, s.items.iter().map(|i| i.label.clone()).collect::<Vec<_>>()),
                         None => println!("SUGGEST none"),
@@ -219,7 +227,7 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                 }
                 "numbers" => {
                     // numbers: plugin callout labels of the active note, and the hover preview
-                    let active = ws.update(cx, |ws, _| ws.tabs.get(ws.active).cloned()).ok().flatten().unwrap_or_else(|| editor.clone());
+                    let active = ws.update(cx, |ws, _| ws.active_editor()).ok().flatten().unwrap_or_else(|| editor.clone());
                     let _ = active.update(cx, |e, cx| {
                         let mut n: Vec<(usize, String)> = e.debug_numbers(cx).into_iter().collect();
                         n.sort();
@@ -244,7 +252,7 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                         let focused = ws.pane;
                         let mut out = Vec::new();
                         for id in ws.pane_ids() {
-                            let tabs: Vec<String> = ws.pane_tabs(id).iter().map(|e| e.read(cx).path.strip_prefix(&root).map(|p| p.display().to_string()).unwrap_or_default()).collect();
+                            let tabs: Vec<String> = ws.pane_tabs(id).iter().map(|t| tab_name(t, &root, cx)).collect();
                             out.push(format!("{}{:?}", if id == focused { "*" } else { "" }, tabs));
                         }
                         println!("PANES {}", out.join(" | "));
@@ -257,7 +265,7 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                         for id in ws.pane_ids() {
                             let tabs = ws.pane_tabs(id);
                             let active = if id == ws.pane { ws.active } else { 0 };
-                            if let Some(e) = tabs.get(active.min(tabs.len().saturating_sub(1))) {
+                            if let Some(e) = tabs.get(active.min(tabs.len().saturating_sub(1))).and_then(|t| t.editor()) {
                                 let e = e.read(cx);
                                 out.push(format!("{}{:?}", if e.doc.is_dirty() { "d" } else { "" }, e.doc.text()));
                             }
@@ -268,12 +276,12 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                 "ws-tabs" => {
                     let _ = ws.update(cx, |ws, cx| {
                         let root = ws.vault.borrow().root.clone();
-                        let tabs: Vec<String> = ws.tabs.iter().map(|e| e.read(cx).path.strip_prefix(&root).map(|p| p.display().to_string()).unwrap_or_default()).collect();
+                        let tabs: Vec<String> = ws.tabs.iter().map(|t| tab_name(t, &root, cx)).collect();
                         println!("TABS active={} {:?}", ws.active, tabs);
                     });
                 }
                 "state" => {
-                    let active = ws.update(cx, |ws, _| ws.tabs.get(ws.active).cloned()).ok().flatten();
+                    let active = ws.update(cx, |ws, _| ws.active_editor()).ok().flatten();
                     match active {
                         Some(e) => {
                             let _ = e.update(cx, |e, _| println!("{}", state(e)));
