@@ -137,9 +137,15 @@ pub fn parse_note(path: &str, text: &str) -> NoteMeta {
 /// Tags listed in YAML frontmatter (`tags:` or `tag:`), as Obsidian reads them:
 /// `tags: [a, b]`, `tags: a, b`, `tags: a b`, or a `- a` list on the following lines.
 pub fn frontmatter_tags(fm: &str) -> Vec<String> {
+    frontmatter_list(fm, &["tags", "tag"]).into_iter().map(|t| t.trim_start_matches('#').to_string()).filter(|t| !t.is_empty()).collect()
+}
+
+/// The values of a list property (any of `keys`) in YAML frontmatter, in the same forms as
+/// [`frontmatter_tags`].
+pub fn frontmatter_list(fm: &str, keys: &[&str]) -> Vec<String> {
     let mut out = Vec::new();
     let mut in_list = false;
-    let clean = |t: &str| t.trim().trim_matches(['"', '\'']).trim_start_matches('#').to_string();
+    let clean = |t: &str| t.trim().trim_matches(['"', '\'']).to_string();
     for line in fm.lines() {
         if in_list {
             if let Some(item) = line.trim_start().strip_prefix("- ") {
@@ -155,7 +161,7 @@ pub fn frontmatter_tags(fm: &str) -> Vec<String> {
             in_list = false;
         }
         let Some((key, value)) = line.split_once(':') else { continue };
-        if !matches!(key.trim(), "tags" | "tag") || line.starts_with([' ', '\t']) {
+        if !keys.contains(&key.trim()) || line.starts_with([' ', '\t']) {
             continue;
         }
         let value = value.trim().trim_start_matches('[').trim_end_matches(']');
@@ -166,6 +172,17 @@ pub fn frontmatter_tags(fm: &str) -> Vec<String> {
         out.extend(value.split([',', ' ']).map(clean).filter(|t| !t.is_empty()));
     }
     out
+}
+
+/// The note's `cssclasses` (and the older `cssclass`), from its frontmatter.
+pub fn cssclasses(text: &str) -> Vec<String> {
+    let t = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let Some(body) = t.strip_prefix("---\n").or_else(|| t.strip_prefix("---\r\n")) else { return Vec::new() };
+    let end = body.find("\n---").map(|i| i + 1).unwrap_or(0);
+    if end == 0 && !body.starts_with("---") {
+        return Vec::new();
+    }
+    frontmatter_list(&body[..end], &["cssclasses", "cssclass"])
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -625,5 +642,15 @@ mod tests {
         assert_eq!(get("Dst.md").as_deref(), Some("dst [[Dst|alias]]\n"));
         assert_eq!(get("Other.md").as_deref(), Some("[[Dst#^b1]] ![[Dst]] [[Dst]]\n"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn css_classes_from_frontmatter() {
+        assert_eq!(cssclasses("---\ncssclasses: NoBorder\n---\n# x"), ["NoBorder"]);
+        assert_eq!(cssclasses("---\ntitle: a\ncssclasses: [wide, \"NoBorder\"]\n---\n"), ["wide", "NoBorder"]);
+        assert_eq!(cssclasses("---\ncssclasses:\n  - a\n  - b\ntags: x\n---\n"), ["a", "b"]);
+        assert_eq!(cssclasses("---\ncssclass: old\n---\n"), ["old"]);
+        assert!(cssclasses("# no frontmatter\ncssclasses: x").is_empty());
+        assert!(cssclasses("---\ncssclasses: x\n").is_empty(), "unclosed");
     }
 }

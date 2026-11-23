@@ -51,7 +51,12 @@ pub fn obsidian_style(kind: &str, dark: bool) -> CalloutStyle {
 /// The style in effect: the first plugin claiming the type, else Obsidian's.
 pub fn callout_style(kind: &str, meta: &str, cx: &App) -> CalloutStyle {
     let dark = cx.theme().is_dark();
-    cx.try_global::<PluginHost>().and_then(|h| h.reg.callout_style(kind, meta, dark)).unwrap_or_else(|| obsidian_style(kind, dark))
+    let mut s = cx.try_global::<PluginHost>().and_then(|h| h.reg.callout_style(kind, meta, dark)).unwrap_or_else(|| obsidian_style(kind, dark));
+    // a snippet's `.callout[data-callout="kind"] { --callout-color }` wins, as it would in CSS
+    if let Some(c) = cx.try_global::<crate::theme::ThemeCss>().and_then(|t| t.callout_color(kind, dark)) {
+        s.color = c;
+    }
+    s
 }
 
 /// Renders Markdown read-only (for plugins: e.g. the columns of a layout block), with links and
@@ -106,24 +111,42 @@ impl MarkdownRenderer {
         let host = cx.try_global::<PluginHost>();
         let code_mode = |lang: &str| host.map_or(CodeMode::Plain, |h| h.code_mode(lang));
         let resolve = |t: &str| (self.resolve)(t);
+        // the note's cssclasses (a preview of another note, or nested Markdown in this one)
+        let classes = self
+            .note
+            .as_ref()
+            .map(|n| {
+                let t: &str = &n.1;
+                let mut cut = t.len().min(8192);
+                while !t.is_char_boundary(cut) {
+                    cut -= 1;
+                }
+                obsidilight_core::index::cssclasses(&t[..cut])
+            })
+            .unwrap_or_default();
+        let (style, body, highlight) = crate::theme::text_style(cx, &classes);
         let proj = project(&ProjectionInput {
             text: md,
             sel: Selection::caret(0),
             mode: ViewMode::Reading,
             version: 0,
-            palette: Palette { highlight: cx.theme().yellow.opacity(0.35) },
+            palette: Palette { highlight },
             resolve: &resolve,
             link_label: &|_| None,
             code_mode: &code_mode,
         });
         let muted = cx.theme().muted_foreground;
-        let mut rcx = RenderContext::from_app(cx).with_markdown_extensions(crate::atoms::extensions()).with_body_font_size(px(16.));
+        let mut rcx = RenderContext::from_app(cx).with_style(style).with_markdown_extensions(crate::atoms::extensions()).with_body_font_size(px(body));
+        let mut fg: HashMap<u64, Vec<(std::ops::Range<usize>, Hsla)>> = proj.colors.clone();
         for (k, ranges) in &proj.muted {
-            rcx = rcx.with_foreground_ranges(*k, ranges.iter().map(|r| (r.clone(), muted)).collect());
+            fg.entry(*k).or_default().extend(ranges.iter().map(|r| (r.clone(), muted)));
+        }
+        for (k, ranges) in fg {
+            rcx = rcx.with_foreground_ranges(k, ranges);
         }
         let inner = MarkdownRenderer { resolve: self.resolve.clone(), depth: self.depth + 1, next: Rc::default(), numbers: None, note: self.note.clone() };
         let folds = HashMap::new();
-        let h = Host { editor: None, folds: &folds, md: &inner, numbers: self.numbers.as_deref() };
+        let h = Host { editor: None, folds: &folds, md: &inner, numbers: self.numbers.as_deref(), classes: &classes };
         let children: Vec<AnyElement> = proj
             .blocks
             .iter()
@@ -145,11 +168,18 @@ pub struct Host<'a> {
     pub md: &'a MarkdownRenderer,
     /// Plugin callout numbers for this note, by header line.
     pub numbers: Option<&'a HashMap<usize, String>>,
+    /// The note's `cssclasses` (theme variables scoped by class).
+    pub classes: &'a [String],
 }
 
 /// Renders a projected node; gpui-kit renders plain blocks.
 pub fn render_node(node: &ProjNode, ix: usize, host: &Host, rcx: &RenderContext, window: &mut Window, cx: &mut App) -> AnyElement {
     match node {
+        // drawn here, not by gpui-kit, so table border settings (`.NoBorder`) leave rules alone
+        ProjNode::Block(BlockNode::HorizontalRule { .. }) => {
+            let (color, w) = crate::theme::hr(cx, host.classes);
+            div().w_full().py_3().child(div().w_full().h(px(w.max(0.5))).bg(color)).into_any_element()
+        }
         ProjNode::Block(b) => b.render(ix, FlowPosition::at(&[b], 0, true).first(true).last(true), rcx, window, cx),
         ProjNode::Callout(c) => render_callout(c, ix, host, rcx, window, cx),
         ProjNode::Display { node: b, line } => {

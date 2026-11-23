@@ -154,6 +154,8 @@ pub struct Editor {
     /// `[[` position whose suggestions were dismissed with Escape.
     suggest_dismissed: Option<usize>,
     suggest_key: (u64, usize),
+    /// The note's `cssclasses`, by document version.
+    classes: (u64, Rc<Vec<String>>),
     pub perf: Perf,
 }
 
@@ -209,6 +211,7 @@ impl Editor {
             suggest: None,
             suggest_dismissed: None,
             suggest_key: (u64::MAX, 0),
+            classes: (u64::MAX, Rc::default()),
             perf: Perf::default(),
         };
         this.proj.version = u64::MAX;
@@ -363,10 +366,22 @@ impl Editor {
 
     // ---- projection --------------------------------------------------------
 
+    /// The note's `cssclasses` (from its frontmatter, re-read when the text changes).
+    pub(crate) fn css_classes(&mut self) -> Rc<Vec<String>> {
+        if self.classes.0 != self.doc.version() {
+            let head = self.doc.slice(0..self.doc.len().min(8192));
+            self.classes = (self.doc.version(), Rc::new(obsidilight_core::index::cssclasses(&head)));
+        }
+        self.classes.1.clone()
+    }
+
     pub(crate) fn projection(&mut self, cx: &App) -> &Projection {
-        let plugin_gen = cx.try_global::<PluginHost>().map_or(0, |h| h.generation);
+        // plugins, the theme (and light/dark) change what the projection draws
+        let plugin_gen = cx.try_global::<PluginHost>().map_or(0, |h| h.generation) ^ (crate::theme::generation(cx) << 32) ^ (u64::from(cx.theme().is_dark()) << 63);
         if self.proj.version != self.doc.version() || self.proj.sel != self.doc.selection() || self.proj.mode != self.mode || self.plugin_gen != plugin_gen {
             self.plugin_gen = plugin_gen;
+            let classes = self.css_classes();
+            let highlight = crate::theme::text_style(cx, &classes).2;
             let t = Instant::now();
             let text = self.doc.text();
             let vault = self.vault.borrow();
@@ -387,13 +402,12 @@ impl Editor {
                 let t = crate::plugins::NoteCtx { path: &rel, text: target_text, index: &vault.index };
                 labelers.iter().find_map(|l| l.label(&t, sub))
             };
-            let theme = cx.theme();
             self.proj = projection::project(&ProjectionInput {
                 text: &text,
                 sel: self.doc.selection(),
                 mode: self.mode,
                 version: self.doc.version(),
-                palette: Palette { highlight: theme.yellow.opacity(0.35) },
+                palette: Palette { highlight },
                 resolve: &resolve,
                 link_label: &link_label,
                 code_mode: &code_mode,
@@ -1080,14 +1094,17 @@ impl Render for Editor {
         let sel_range = self.doc.selection().range();
         let extensions = self.extensions.clone();
         self.projection(cx);
+        let classes = self.css_classes();
         let numbers = self.callout_numbers(cx);
         let proj = &self.proj;
         // Links open on Ctrl+click only; a plain click places the caret (handled by on_mouse_down).
         // Without a handler gpui-kit would open every link on a plain click.
         let weak = cx.entity().downgrade();
+        let (style, body_size, _) = crate::theme::text_style(cx, &classes);
         let mut rcx = RenderContext::from_app(cx)
+            .with_style(style)
             .with_markdown_extensions(extensions)
-            .with_body_font_size(px(16.))
+            .with_body_font_size(px(body_size))
             .on_link_click(move |url, ev, _, cx| {
                 if ev.modifiers().secondary(cx) {
                     let url = url.to_string();
@@ -1146,7 +1163,7 @@ impl Render for Editor {
             }
             render::MarkdownRenderer::new(Rc::new(move |t: &str| vault.borrow().resolve(t, &path))).with_note(rel, self.text_rc.1.clone())
         };
-        let host = render::Host { editor: Some(cx.entity().downgrade()), folds: &self.folds, md: &md, numbers: Some(&numbers) };
+        let host = render::Host { editor: Some(cx.entity().downgrade()), folds: &self.folds, md: &md, numbers: Some(&numbers), classes: &classes };
         // this pane's text width (last frame): images wider than it shrink to fit
         let width = f32::from(self.scroll.bounds().size.width) - 64.0;
         if width > 0.0 {

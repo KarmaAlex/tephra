@@ -21,6 +21,7 @@ mod moment;
 mod plugins;
 mod script;
 mod settings_ui;
+mod theme;
 mod workspace;
 
 use std::path::PathBuf;
@@ -52,6 +53,8 @@ fn main() {
         app_settings::AppSettings::init(cx, &root);
         plugins::PluginHost::init(cx, &root);
         hotkeys::install(cx);
+        theme::init(cx, &root);
+        theme::apply(None, cx);
         let opts = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size(px(1280.), px(860.)), cx))),
             titlebar: Some(TitlebarOptions { title: Some(title), ..Default::default() }),
@@ -59,6 +62,9 @@ fn main() {
             ..Default::default()
         };
         let result = gpui_kit::open_window(opts, cx, move |window, cx| {
+            // follow the system's light/dark switch (when the base theme is "system")
+            window.observe_window_appearance(|window, cx| theme::apply(Some(window), cx)).detach();
+            theme::apply(Some(window), cx);
             let ws = cx.new(|cx| workspace::Workspace::new(root, window, cx));
             window.on_next_frame(move |_, _| println!("READY {:.1}", t0.elapsed().as_secs_f64() * 1000.0));
             if let Some(note) = note {

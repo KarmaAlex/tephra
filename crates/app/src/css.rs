@@ -113,9 +113,312 @@ pub fn style_prop(style: &str, prop: &str) -> Option<String> {
     })
 }
 
+// ---- stylesheets ---------------------------------------------------------------------
+
+/// A style rule: its selectors (split at top-level commas) and declarations in order.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Rule {
+    pub selectors: Vec<String>,
+    pub decls: Vec<(String, String)>,
+}
+
+/// A parsed stylesheet. At-rules (`@media`, `@font-face`, `@import`…) are kept only as their
+/// prelude, for the "ignored" report.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Sheet {
+    pub rules: Vec<Rule>,
+    pub at_rules: Vec<String>,
+}
+
+fn strip_comments(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find("/*") {
+        out.push_str(&rest[..i]);
+        match rest[i + 2..].find("*/") {
+            Some(j) => rest = &rest[i + 2 + j + 2..],
+            None => return out,
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Splits at `sep` outside parentheses, brackets and quotes.
+fn split_top(s: &str, sep: char) -> Vec<String> {
+    let mut out = Vec::new();
+    let (mut depth, mut quote, mut cur) = (0i32, None::<char>, String::new());
+    for c in s.chars() {
+        match quote {
+            Some(q) => {
+                if c == q {
+                    quote = None;
+                }
+            }
+            None => match c {
+                '"' | '\'' => quote = Some(c),
+                '(' | '[' => depth += 1,
+                ')' | ']' => depth -= 1,
+                _ if c == sep && depth == 0 => {
+                    out.push(std::mem::take(&mut cur));
+                    continue;
+                }
+                _ => {}
+            },
+        }
+        cur.push(c);
+    }
+    out.push(cur);
+    out
+}
+
+/// End of the block whose `{` is at `open` (index of the matching `}`), respecting quotes.
+fn block_end(s: &[u8], open: usize) -> usize {
+    let (mut depth, mut quote) = (0i32, None::<u8>);
+    for (i, &c) in s.iter().enumerate().skip(open) {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None => match c {
+                b'"' | b'\'' => quote = Some(c),
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return i;
+                    }
+                }
+                _ => {}
+            },
+        }
+    }
+    s.len()
+}
+
+/// Parses a stylesheet (the subset that matters here: plain rules; at-rules are recorded and
+/// skipped; nested rules inside a rule are skipped).
+pub fn parse_sheet(text: &str) -> Sheet {
+    let t = strip_comments(text);
+    let b = t.as_bytes();
+    let mut sheet = Sheet::default();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i].is_ascii_whitespace() {
+            i += 1;
+            continue;
+        }
+        if b[i] == b'@' {
+            let brace = t[i..].find('{').map(|x| x + i);
+            let semi = t[i..].find(';').map(|x| x + i);
+            match (brace, semi) {
+                (_, Some(sc)) if brace.is_none_or(|br| sc < br) => {
+                    sheet.at_rules.push(t[i..sc].trim().to_string());
+                    i = sc + 1;
+                }
+                (Some(br), _) => {
+                    sheet.at_rules.push(t[i..br].trim().to_string());
+                    i = block_end(b, br) + 1;
+                }
+                _ => break,
+            }
+            continue;
+        }
+        let Some(br) = t[i..].find('{').map(|x| x + i) else { break };
+        let end = block_end(b, br);
+        let selectors: Vec<String> = split_top(&t[i..br], ',').into_iter().map(|s| s.split_whitespace().collect::<Vec<_>>().join(" ")).filter(|s| !s.is_empty()).collect();
+        let body = &t[br + 1..end.min(t.len())];
+        let decls = if body.contains('{') {
+            Vec::new() // CSS nesting: not supported, the rule is reported as ignored
+        } else {
+            split_top(body, ';')
+                .into_iter()
+                .filter_map(|d| {
+                    let (k, v) = d.split_once(':')?;
+                    let k = k.trim();
+                    (!k.is_empty()).then(|| (if k.starts_with("--") { k.to_string() } else { k.to_ascii_lowercase() }, v.trim().to_string()))
+                })
+                .collect()
+        };
+        sheet.rules.push(Rule { selectors, decls });
+        i = end + 1;
+    }
+    sheet
+}
+
+/// Replaces every `var(--name[, fallback])` using `lookup` (recursively, depth-limited).
+pub fn substitute_vars(v: &str, lookup: &dyn Fn(&str) -> Option<String>, depth: u32) -> Option<String> {
+    if depth > 24 {
+        return None;
+    }
+    let mut out = String::new();
+    let mut rest = v;
+    while let Some(i) = rest.find("var(") {
+        out.push_str(&rest[..i]);
+        let inner_start = i + 4;
+        let mut d = 1;
+        let mut end = None;
+        for (j, c) in rest[inner_start..].char_indices() {
+            match c {
+                '(' => d += 1,
+                ')' => {
+                    d -= 1;
+                    if d == 0 {
+                        end = Some(inner_start + j);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let end = end?;
+        let inner = &rest[inner_start..end];
+        let (name, fallback) = match split_top(inner, ',').as_slice() {
+            [n] => (n.trim().to_string(), None),
+            [n, f @ ..] => (n.trim().to_string(), Some(f.join(",").trim().to_string())),
+            _ => return None,
+        };
+        let val = match lookup(&name) {
+            Some(v) => substitute_vars(&v, lookup, depth + 1)?,
+            None => substitute_vars(&fallback?, lookup, depth + 1)?,
+        };
+        out.push_str(&val);
+        rest = &rest[end + 1..];
+    }
+    out.push_str(rest);
+    Some(out)
+}
+
+/// Evaluates `calc(…)` with + - * / over numbers sharing a unit (`%`, `px`, `em`, `rem`, or
+/// none); other calc expressions are left as written.
+pub fn eval_calc(v: &str) -> String {
+    let mut out = String::new();
+    let mut rest = v;
+    while let Some(i) = rest.find("calc(") {
+        out.push_str(&rest[..i]);
+        let start = i + 5;
+        let mut d = 1;
+        let mut end = rest.len();
+        for (j, c) in rest[start..].char_indices() {
+            match c {
+                '(' => d += 1,
+                ')' => {
+                    d -= 1;
+                    if d == 0 {
+                        end = start + j;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let expr = &rest[start..end.min(rest.len())];
+        match calc(expr) {
+            Some((n, unit)) => out.push_str(&format!("{}{unit}", (n * 1000.0).round() / 1000.0)),
+            None => out.push_str(&rest[i..(end + 1).min(rest.len())]),
+        }
+        rest = &rest[(end + 1).min(rest.len())..];
+    }
+    out.push_str(rest);
+    out
+}
+
+fn calc(expr: &str) -> Option<(f64, String)> {
+    // tokens: numbers with units, operators, parentheses
+    let mut toks: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for c in expr.chars() {
+        if c.is_whitespace() || "()*/".contains(c) || (c == '+' || c == '-') && cur.is_empty() && toks.last().is_some_and(|t| !"*/(+-".contains(t.as_str())) {
+            if !cur.is_empty() {
+                toks.push(std::mem::take(&mut cur));
+            }
+            if !c.is_whitespace() {
+                toks.push(c.to_string());
+            }
+        } else {
+            cur.push(c);
+        }
+    }
+    if !cur.is_empty() {
+        toks.push(cur);
+    }
+    fn num(t: &str) -> Option<(f64, String)> {
+        let split = t.find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-' || c == '+')).unwrap_or(t.len());
+        Some((t[..split].parse().ok()?, t[split..].to_string()))
+    }
+    fn expr_(t: &[String], i: &mut usize) -> Option<(f64, String)> {
+        let mut a = term(t, i)?;
+        while let Some(op) = t.get(*i).filter(|o| *o == "+" || *o == "-") {
+            let op = op.clone();
+            *i += 1;
+            let b = term(t, i)?;
+            let unit = if a.1.is_empty() { b.1.clone() } else { a.1.clone() };
+            if !a.1.is_empty() && !b.1.is_empty() && a.1 != b.1 {
+                return None;
+            }
+            a = (if op == "+" { a.0 + b.0 } else { a.0 - b.0 }, unit);
+        }
+        Some(a)
+    }
+    fn term(t: &[String], i: &mut usize) -> Option<(f64, String)> {
+        let mut a = atom(t, i)?;
+        while let Some(op) = t.get(*i).filter(|o| *o == "*" || *o == "/") {
+            let op = op.clone();
+            *i += 1;
+            let b = atom(t, i)?;
+            a = if op == "*" { (a.0 * b.0, if a.1.is_empty() { b.1 } else { a.1 }) } else { (a.0 / b.0, a.1) };
+        }
+        Some(a)
+    }
+    fn atom(t: &[String], i: &mut usize) -> Option<(f64, String)> {
+        let tok = t.get(*i)?.clone();
+        *i += 1;
+        if tok == "(" {
+            let v = expr_(t, i)?;
+            (t.get(*i)? == ")").then_some(())?;
+            *i += 1;
+            return Some(v);
+        }
+        num(&tok)
+    }
+    let mut i = 0;
+    let v = expr_(&toks, &mut i)?;
+    (i == toks.len()).then_some(v)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stylesheets() {
+        let css = "/* hi */ @import url(x.css);\n.NoBorder {\n--table-border-width: 0px;\n--x: a;b; }\n@media (max-width: 10px) { body { --y: 1 } }\n.a, .b > c { color: red; background: url('a;b') }";
+        let s = parse_sheet(css);
+        assert_eq!(s.at_rules, ["@import url(x.css)", "@media (max-width: 10px)"]);
+        assert_eq!(s.rules.len(), 2);
+        assert_eq!(s.rules[0].selectors, [".NoBorder"]);
+        assert_eq!(s.rules[0].decls[0], ("--table-border-width".to_string(), "0px".to_string()));
+        assert_eq!(s.rules[1].selectors, [".a", ".b > c"]);
+        assert_eq!(s.rules[1].decls[1].1, "url('a;b')");
+    }
+
+    #[test]
+    fn vars_and_calc() {
+        let lookup = |n: &str| match n {
+            "--h" => Some("258".to_string()),
+            "--l" => Some("66%".to_string()),
+            "--accent" => Some("hsl(var(--h), 88%, var(--l))".to_string()),
+            "--loop" => Some("var(--loop)".to_string()),
+            _ => None,
+        };
+        assert_eq!(substitute_vars("var(--accent)", &lookup, 0).as_deref(), Some("hsl(258, 88%, 66%)"));
+        assert_eq!(substitute_vars("var(--nope, var(--h))", &lookup, 0).as_deref(), Some("258"));
+        assert_eq!(substitute_vars("var(--nope)", &lookup, 0), None);
+        assert_eq!(substitute_vars("var(--loop)", &lookup, 0), None);
+        assert_eq!(eval_calc("hsl(258, 88%, calc(66% - 3.8%))"), "hsl(258, 88%, 62.2%)");
+        assert_eq!(eval_calc("calc(16px * 1.5)"), "24px");
+        assert_eq!(eval_calc("calc((2 + 3) * 2em)"), "10em");
+        assert_eq!(eval_calc("calc(1px + 1em)"), "calc(1px + 1em)");
+    }
 
     fn rgb_of(h: Hsla) -> (u8, u8, u8, u8) {
         let c = Rgba::from(h);

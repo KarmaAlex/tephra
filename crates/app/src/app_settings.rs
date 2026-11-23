@@ -30,6 +30,11 @@ impl AppSettings {
         cx.try_global::<AppSettings>().and_then(|s| s.values.get(key)).and_then(Value::as_bool).unwrap_or(default)
     }
 
+    /// A stored value (None: not set).
+    pub fn value(cx: &App, key: &str) -> Option<Value> {
+        cx.try_global::<AppSettings>().and_then(|s| s.values.get(key)).cloned()
+    }
+
     pub fn set(cx: &mut App, key: &str, value: Value) {
         let s = cx.global_mut::<AppSettings>();
         s.values.insert(key.to_string(), value);

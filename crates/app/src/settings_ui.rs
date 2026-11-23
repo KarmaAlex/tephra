@@ -38,6 +38,7 @@ fn pages(cx: &App) -> Vec<SettingPage> {
         .collect();
     let mut pages = vec![
         SettingPage::new("Editor").group(SettingGroup::new().items(editor)),
+        appearance_page(cx),
         SettingPage::new("Plugins").description("Bundled plugins. Turning one off removes everything it added; no restart needed.").group(SettingGroup::new().items(toggles)),
         crate::hotkeys::settings_page(cx),
     ];
@@ -86,4 +87,94 @@ fn pages(cx: &App) -> Vec<SettingPage> {
         }
     }
     pages
+}
+
+/// Settings → Appearance: light/dark, the Obsidian theme, CSS snippets, and what each file
+/// contributed (GPUI has no CSS engine: only variables apply; see `theme.rs`).
+fn appearance_page(cx: &App) -> SettingPage {
+    use gpui_kit::component::button::Button;
+    use gpui_kit::component::{v_flex, ActiveTheme as _, Sizable as _};
+    let Some(t) = cx.try_global::<crate::theme::ThemeCss>() else { return SettingPage::new("Appearance") };
+    let set_and_reload = |key: &'static str, v: Value, cx: &mut App| {
+        crate::app_settings::AppSettings::set(cx, key, v);
+        crate::theme::reload(cx);
+    };
+    let mut themes: Vec<(SharedString, SharedString)> = vec![("".into(), "Default".into())];
+    themes.extend(t.themes.iter().map(|n| (SharedString::from(n.clone()), SharedString::from(n.clone()))));
+    let mut items = vec![
+        SettingItem::new(
+            "Base color scheme",
+            SettingField::dropdown(
+                vec![("system".into(), "Adapt to system".into()), ("light".into(), "Light".into()), ("dark".into(), "Dark".into())],
+                |cx: &App| SharedString::from(crate::theme::base_theme(cx)),
+                move |v: SharedString, cx: &mut App| set_and_reload("baseTheme", Value::from(v.to_string()), cx),
+            ),
+        )
+        .description("Light or dark colours, or follow the system."),
+        SettingItem::new(
+            "Theme",
+            SettingField::dropdown(
+                themes,
+                |cx: &App| {
+                    let root = cx.try_global::<crate::theme::ThemeCss>().map(|t| t.root.clone()).unwrap_or_default();
+                    SharedString::from(crate::theme::css_theme(cx, &root))
+                },
+                move |v: SharedString, cx: &mut App| set_and_reload("cssTheme", Value::from(v.to_string()), cx),
+            ),
+        )
+        .description("An Obsidian theme from .obsidian/themes. Its CSS variables apply (colours, fonts, sizes); other rules can't."),
+    ];
+    for r in t.reports.iter().filter(|r| !r.is_theme) {
+        let name = r.name.clone();
+        let mut desc = Vec::new();
+        if r.global_vars > 0 {
+            desc.push(format!("{} global variable(s){}", r.global_vars, if r.enabled { "" } else { ", applied when on" }));
+        }
+        if !r.classes.is_empty() {
+            desc.push(format!("{} variable(s) for notes with cssclasses: {} (always on)", r.class_vars, r.classes.join(", ")));
+        }
+        if r.callouts > 0 {
+            desc.push(format!("{} callout colour(s)", r.callouts));
+        }
+        if r.ignored > 0 {
+            desc.push(format!("{} rule(s) ignored", r.ignored));
+        }
+        let n1 = name.clone();
+        items.push(
+            SettingItem::new(
+                SharedString::from(format!("Snippet: {name}")),
+                SettingField::switch(
+                    move |cx: &App| cx.try_global::<crate::theme::ThemeCss>().is_some_and(|t| t.reports.iter().any(|r| r.name == n1 && r.enabled && !r.is_theme)),
+                    move |on: bool, cx: &mut App| {
+                        let root = cx.try_global::<crate::theme::ThemeCss>().map(|t| t.root.clone()).unwrap_or_default();
+                        let mut list = crate::theme::enabled_snippets(cx, &root);
+                        list.retain(|n| *n != name);
+                        if on {
+                            list.push(name.clone());
+                        }
+                        set_and_reload("enabledCssSnippets", Value::from(list), cx);
+                    },
+                ),
+            )
+            .description(SharedString::from(desc.join(" · "))),
+        );
+    }
+    // what each file contributed, with examples of ignored rules
+    let reports = t.reports.clone();
+    items.push(SettingItem::render(move |_, _, cx| {
+        let muted = cx.theme().muted_foreground;
+        v_flex()
+            .gap_2()
+            .w_full()
+            .child(div().text_xs().text_color(muted).child("Only CSS variables apply here: rules that style elements directly (h1 { … }, table td { … }), @media and @font-face are ignored. Snippets are read from .obsidian/snippets; class-scoped variables (e.g. .NoBorder) apply to notes listing the class in cssclasses, even when the snippet is off."))
+            .children(reports.iter().filter(|r| r.ignored > 0).map(|r| {
+                v_flex()
+                    .gap_0p5()
+                    .child(div().text_sm().child(format!("{} {}: {} rule(s) ignored, e.g.", if r.is_theme { "Theme" } else { "Snippet" }, r.name, r.ignored)))
+                    .children(r.examples.iter().map(|e| div().pl_3().text_xs().text_color(muted).font_family(cx.theme().mono_font_family.clone()).child(e.clone())))
+            }))
+            .child(Button::new("reload-css").label("Reload themes and snippets").small().outline().on_click(|_, _, cx| crate::theme::reload(cx)))
+            .into_any_element()
+    }));
+    SettingPage::new("Appearance").description("Light and dark colours, Obsidian themes and CSS snippets.").group(SettingGroup::new().items(items))
 }

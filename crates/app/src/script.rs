@@ -279,6 +279,28 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                         }
                     });
                 }
+                "theme" => {
+                    // theme: light/dark, a few resolved variables for the active note, snippet reports
+                    let active = ws.update(cx, |ws, _| ws.active_editor()).ok().flatten();
+                    let _ = cx.update(|cx| {
+                        use gpui_kit::component::ActiveTheme as _;
+                        let classes = active.map(|e| e.update(cx, |e, _| (*e.css_classes()).clone())).unwrap_or_default();
+                        let dark = cx.theme().is_dark();
+                        let Some(t) = cx.try_global::<crate::theme::ThemeCss>() else { return };
+                        let bg = gpui_kit::Rgba::from(cx.theme().background);
+                        println!(
+                            "THEME dark={dark} bg=#{:02x}{:02x}{:02x} classes={classes:?} table-border={:?} accent={:?}",
+                            (bg.r * 255.).round() as u8,
+                            (bg.g * 255.).round() as u8,
+                            (bg.b * 255.).round() as u8,
+                            t.length("--table-border-width", dark, &classes, 16.0),
+                            t.var("--interactive-accent", dark, &classes)
+                        );
+                        for r in &t.reports {
+                            println!("THEME-FILE {} theme={} on={} global={} class={} {:?} ignored={}", r.name, r.is_theme, r.enabled, r.global_vars, r.class_vars, r.classes, r.ignored);
+                        }
+                    });
+                }
                 "ws-texts" => {
                     // ws-texts: the active note's text in every pane (layout order), `d` = unsaved
                     let _ = ws.update(cx, |ws, cx| {
