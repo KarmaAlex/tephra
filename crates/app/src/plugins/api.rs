@@ -193,6 +193,104 @@ pub struct ActionCtx<'a> {
     pub editor: Option<Entity<Editor>>,
 }
 
+impl ActionCtx<'_> {
+    /// The window's workspace (open notes, sidebar views, the vault index).
+    pub fn workspace(&self) -> Option<WorkspaceHandle> {
+        WorkspaceHandle::current(self.cx)
+    }
+}
+
+// ---- workspace access ---------------------------------------------------------------------
+
+/// Where to put the caret when opening a note.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OpenAt {
+    /// Keep the note's current position (or the start, if it wasn't open).
+    Keep,
+    /// A byte offset in the note's text.
+    Offset(usize),
+    /// `Heading` or `^block-id` (the part after `#` in a link).
+    Subpath(String),
+}
+
+/// The workspace as plugins see it (D5's `WorkspaceApi` + read-only `IndexApi`): open notes,
+/// reveal sidebar views, read the vault index. File changes go through the workspace, which
+/// owns conflict checks and link updates.
+#[derive(Clone)]
+pub struct WorkspaceHandle(pub(crate) WeakEntity<crate::workspace::Workspace>);
+
+struct CurrentWorkspace(WeakEntity<crate::workspace::Workspace>);
+impl Global for CurrentWorkspace {}
+
+impl WorkspaceHandle {
+    /// Called once by the workspace when it is created (one window per vault).
+    pub(crate) fn install(ws: WeakEntity<crate::workspace::Workspace>, cx: &mut App) {
+        cx.set_global(CurrentWorkspace(ws));
+    }
+    pub fn current(cx: &App) -> Option<Self> {
+        cx.try_global::<CurrentWorkspace>().map(|c| Self(c.0.clone()))
+    }
+    /// The open vault (index and attachment handling). Borrow it briefly: never across a call
+    /// back into the workspace.
+    pub fn vault(&self, cx: &App) -> Option<crate::embeds::SharedVault> {
+        self.0.upgrade().map(|ws| ws.read(cx).vault.clone())
+    }
+    /// Vault path of the active note.
+    pub fn active_note(&self, cx: &App) -> Option<String> {
+        let ws = self.0.upgrade()?;
+        let ws = ws.read(cx);
+        let e = ws.active_editor()?;
+        let path = e.read(cx).path.clone();
+        Some(ws.vault.borrow().relative(&path))
+    }
+    /// The active editor, if any.
+    pub fn active_editor(&self, cx: &App) -> Option<Entity<Editor>> {
+        self.0.upgrade()?.read(cx).active_editor()
+    }
+    /// Recently opened notes, most recent first (vault paths).
+    pub fn recent(&self, cx: &App) -> Vec<String> {
+        self.0.upgrade().map(|ws| ws.read(cx).recent.clone()).unwrap_or_default()
+    }
+    /// Opens a vault file (focuses its tab if open; `new_tab` otherwise adds a tab).
+    pub fn open(&self, rel: &str, at: OpenAt, new_tab: bool, window: &mut Window, cx: &mut App) {
+        let rel = rel.to_string();
+        let _ = self.0.update(cx, |ws, cx| ws.open_rel(&rel, at, new_tab, window, cx));
+    }
+    /// Creates a note (vault path, `.md` added if missing; folders created) and opens it.
+    pub fn create_note(&self, rel: &str, new_tab: bool, window: &mut Window, cx: &mut App) -> Result<(), String> {
+        let rel = rel.to_string();
+        self.0.update(cx, |ws, cx| ws.create_and_open(&rel, new_tab, window, cx)).map_err(|e| e.to_string())?
+    }
+    /// Shows a sidebar view (full id `<plugin>:<view>`), opening its sidebar; `arg` is handed
+    /// to the view's next render (e.g. a search query).
+    pub fn show_view(&self, id: &str, arg: Option<String>, cx: &mut App) {
+        let id = id.to_string();
+        let _ = self.0.update(cx, |ws, cx| ws.show_view(&id, arg, cx));
+    }
+}
+
+/// Context for rendering a sidebar view. Views render while the workspace does, so read the
+/// vault and the active note from here; `workspace` is for click handlers (it can't be read
+/// during the render).
+pub struct ViewCtx {
+    pub editor: Option<Entity<Editor>>,
+    pub workspace: WorkspaceHandle,
+    pub vault: crate::embeds::SharedVault,
+    /// Vault path of the active note.
+    pub active_note: Option<String>,
+    /// Handed over by [`WorkspaceHandle::show_view`]; given to one render only.
+    pub arg: Option<String>,
+}
+
+/// Reacts to files moving or disappearing (bookmarks keep pointing at renamed notes).
+pub trait VaultListener {
+    /// A file or folder moved from `old` to `new` (vault paths); `moves` lists every file that
+    /// moved (old -> new), i.e. all files inside a moved folder.
+    fn renamed(&self, _old: &str, _new: &str, _moves: &[(String, String)], _cx: &mut App) {}
+    /// A file or folder was deleted (moved to the trash).
+    fn deleted(&self, _path: &str, _cx: &mut App) {}
+}
+
 pub type Action = Rc<dyn Fn(&mut ActionCtx)>;
 
 #[derive(Clone)]
@@ -220,12 +318,24 @@ pub struct StatusItem {
     pub text: Rc<dyn Fn(Option<&Editor>) -> Option<SharedString>>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Side {
+    /// With Files (Obsidian: Search, Bookmarks).
+    Left,
+    /// Obsidian: Backlinks, Outgoing links, Outline, Tags.
+    Right,
+}
+
 #[derive(Clone)]
 pub struct SidebarView {
+    /// Namespaced automatically as `<plugin id>:<id>`.
     pub id: String,
     pub title: String,
     pub icon: IconName,
-    pub render: Rc<dyn Fn(Option<&Entity<Editor>>, &mut Window, &mut App) -> AnyElement>,
+    pub side: Side,
+    /// Called on every render of the window: keep it cheap (cache by document version or
+    /// index generation), or keep state in an entity created on first use.
+    pub render: Rc<dyn Fn(&ViewCtx, &mut Window, &mut App) -> AnyElement>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -270,6 +380,7 @@ pub struct Registry {
     pub decorators: Vec<(PluginId, Rc<dyn TextDecorator>)>,
     pub link_labelers: Vec<(PluginId, Rc<dyn LinkLabeler>)>,
     pub editor_menus: Vec<(PluginId, EditorMenuProvider)>,
+    pub vault_listeners: Vec<(PluginId, Rc<dyn VaultListener>)>,
 }
 
 impl Registry {
@@ -286,6 +397,7 @@ impl Registry {
         self.decorators.retain(|(p, _)| *p != id);
         self.link_labelers.retain(|(p, _)| *p != id);
         self.editor_menus.retain(|(p, _)| *p != id);
+        self.vault_listeners.retain(|(p, _)| *p != id);
     }
 
     /// How many registrations a plugin currently holds (tests: unload must leave zero).
@@ -302,6 +414,7 @@ impl Registry {
             + self.decorators.iter().filter(|(p, _)| *p == id).count()
             + self.link_labelers.iter().filter(|(p, _)| *p == id).count()
             + self.editor_menus.iter().filter(|(p, _)| *p == id).count()
+            + self.vault_listeners.iter().filter(|(p, _)| *p == id).count()
     }
 
     /// The first plugin style claiming a callout type (plugins in load order).
@@ -345,7 +458,8 @@ impl Registrar<'_> {
     pub fn status_item(&mut self, s: StatusItem) {
         self.reg.status.push((self.plugin, s));
     }
-    pub fn sidebar_view(&mut self, v: SidebarView) {
+    pub fn sidebar_view(&mut self, mut v: SidebarView) {
+        v.id = format!("{}:{}", self.plugin, v.id);
         self.reg.sidebar_views.push((self.plugin, v));
     }
     pub fn menu_item(&mut self, m: MenuItem) {
@@ -362,5 +476,8 @@ impl Registrar<'_> {
     }
     pub fn editor_menu(&mut self, m: EditorMenuProvider) {
         self.reg.editor_menus.push((self.plugin, m));
+    }
+    pub fn vault_listener(&mut self, l: Rc<dyn VaultListener>) {
+        self.reg.vault_listeners.push((self.plugin, l));
     }
 }

@@ -87,6 +87,26 @@ pub fn start(editor: Entity<Editor>, _window: &mut Window, cx: &mut App) {
         });
         cx.background_executor().timer(Duration::from_millis(200)).await;
         let (math_lat, math_work) = type_text(&weak, cx, "+\\frac{a}{b}^{2}").await;
+        // 3. search across the vault (HANDOFF §6: < 100 ms) and a full re-index (< 2 s)
+        let (search_ms, index_ms) = weak
+            .update(cx, |e, _| {
+                let v = e.vault.borrow();
+                let queries = ["kruskal", "grafo", "a", "\"minimum spanning\"", "albero -grafo", "path:Secondo matrice", "tag:#corso", "dimostrazione OR teorema", "file:mst"];
+                let mut ms = Vec::new();
+                for _ in 0..5 {
+                    for q in queries {
+                        let t = std::time::Instant::now();
+                        let n = obsidilight_core::search::parse_query(q).map(|q| v.index.search(&q).len()).unwrap_or(0);
+                        ms.push(t.elapsed().as_secs_f64() * 1000.0);
+                        std::hint::black_box(n);
+                    }
+                }
+                let t = std::time::Instant::now();
+                let idx = obsidilight_core::index::VaultIndex::build(&v.root);
+                std::hint::black_box(idx.files().count());
+                (stats(&ms), format!("{:.1}", t.elapsed().as_secs_f64() * 1000.0))
+            })
+            .unwrap_or_default();
         let proj = weak.update(cx, |e, _| stats(&e.perf.projection_ms)).unwrap_or_default();
         let phases = weak
             .update(cx, |e, _| {
@@ -95,13 +115,15 @@ pub fn start(editor: Entity<Editor>, _window: &mut Window, cx: &mut App) {
             })
             .unwrap_or_default();
         println!(
-            "REPORT {{\"phases\":{},\"plain_latency\":{},\"plain_frame_work\":{},\"math_latency\":{},\"math_frame_work\":{},\"projection_ms\":{},\"rss_mib\":{:.1}}}",
+            "REPORT {{\"phases\":{},\"plain_latency\":{},\"plain_frame_work\":{},\"math_latency\":{},\"math_frame_work\":{},\"projection_ms\":{},\"search_ms\":{},\"index_ms\":{},\"rss_mib\":{:.1}}}",
             phases,
             stats(&plain_lat),
             stats(&plain_work),
             stats(&math_lat),
             stats(&math_work),
             proj,
+            search_ms,
+            index_ms,
             rss_mib()
         );
         let _ = cx.update(|cx| cx.quit());

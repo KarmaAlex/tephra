@@ -491,6 +491,13 @@ impl Editor {
         cx.notify();
     }
 
+    /// Switches to `mode`, or back to live preview if already in it (Ctrl+E, Ctrl+Shift+E).
+    pub fn toggle_mode(&mut self, mode: ViewMode, cx: &mut Context<Self>) {
+        self.mode = if self.mode == mode { ViewMode::LivePreview } else { mode };
+        self.autoscroll = true;
+        cx.notify();
+    }
+
     /// Moves the caret to `#Heading` or `#^block-id` (the part after `#` in a link).
     pub fn go_to_subpath(&mut self, sub: &str, cx: &mut Context<Self>) {
         let text = self.doc.text();
@@ -658,16 +665,8 @@ impl Editor {
                 }
             }))
             .on_action(cx.listener(|e, _: &Save, _, cx| e.save(cx)))
-            .on_action(cx.listener(|e, _: &ToggleReading, _, cx| {
-                e.mode = if e.mode == ViewMode::Reading { ViewMode::LivePreview } else { ViewMode::Reading };
-                e.autoscroll = true;
-                cx.notify();
-            }))
-            .on_action(cx.listener(|e, _: &ToggleSource, _, cx| {
-                e.mode = if e.mode == ViewMode::Source { ViewMode::LivePreview } else { ViewMode::Source };
-                e.autoscroll = true;
-                cx.notify();
-            }))
+            .on_action(cx.listener(|e, _: &ToggleReading, _, cx| e.toggle_mode(ViewMode::Reading, cx)))
+            .on_action(cx.listener(|e, _: &ToggleSource, _, cx| e.toggle_mode(ViewMode::Source, cx)))
     }
 }
 

@@ -2,7 +2,7 @@
 //! open editors in sync with the disk (Syncthing, other editors).
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::mpsc;
@@ -24,6 +24,7 @@ use obsidilight_core::links::link_path;
 
 use crate::editor::{Editor, EditorEvent};
 use crate::embeds::{SharedVault, Vault};
+use crate::plugins::api::{OpenAt, Side, ViewCtx, WorkspaceHandle};
 use crate::plugins::{run_action, MenuTarget, PluginHost};
 
 actions!(workspace, [CloseTab, NextTab, PrevTab, NewNote, NewFolder, OpenInNewTab, RenameItem, DeleteItem, ToggleSidebar, ToggleRightSidebar, OpenSettings]);
@@ -61,9 +62,15 @@ pub struct Workspace {
     /// The tree entry a context menu was opened on: (vault path, is folder).
     menu_target: Rc<RefCell<Option<(String, bool)>>>,
     sidebar: bool,
-    /// Right sidebar (plugin views) shown, and which view.
+    /// Left sidebar view: None = Files, else a plugin view id (`search:search`).
+    left_view: Option<String>,
+    /// Right sidebar (plugin views) shown, and which view (None = the first).
     right_sidebar: bool,
-    right_view: usize,
+    right_view: Option<String>,
+    /// Arguments for views, handed to their next render (`WorkspaceHandle::show_view`).
+    view_args: HashMap<String, String>,
+    /// Recently opened notes, most recent first (vault paths; the quick switcher shows them).
+    pub recent: Vec<String>,
     /// Files shown in the tree after the last rebuild (for UI tests).
     pub tree_files: Vec<String>,
     _watcher: Option<notify::RecommendedWatcher>,
@@ -98,12 +105,18 @@ impl Workspace {
             focus: cx.focus_handle(),
             menu_target: Rc::default(),
             sidebar: true,
+            left_view: None,
             right_sidebar: false,
-            right_view: 0,
+            right_view: None,
+            view_args: HashMap::new(),
+            recent: Vec::new(),
             tree_files: Vec::new(),
             _watcher: None,
             _subs: subs,
         };
+        WorkspaceHandle::install(cx.entity().downgrade(), cx);
+        crate::commands::register_core(cx);
+        this.load_layout();
         let t = std::time::Instant::now();
         this._watcher = this.watch(&root, cx);
         let tw = t.elapsed().as_secs_f64() * 1000.0;
@@ -128,7 +141,7 @@ impl Workspace {
     fn render_ribbon(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let items: Vec<_> = cx.try_global::<PluginHost>().map(|h| h.reg.ribbon.iter().map(|(_, r)| r.clone()).collect()).unwrap_or_default();
-        let has_views = cx.try_global::<PluginHost>().is_some_and(|h| !h.reg.sidebar_views.is_empty());
+        let has_views = cx.try_global::<PluginHost>().is_some_and(|h| h.reg.sidebar_views.iter().any(|(_, v)| v.side == Side::Right));
         let weak = cx.entity().downgrade();
         v_flex()
             .w(px(40.))
@@ -140,8 +153,9 @@ impl Workspace {
             .border_r_1()
             .border_color(theme.border)
             .bg(theme.sidebar)
-            .child(Button::new("ribbon-files").ghost().small().icon(gpui_kit::assets::IconName::Folder).tooltip("Files (Ctrl+Shift+B)").on_click(cx.listener(|ws, _, _, cx| {
+            .child(Button::new("ribbon-files").ghost().small().icon(gpui_kit::assets::IconName::PanelLeft).tooltip("Left sidebar (Ctrl+Shift+B)").on_click(cx.listener(|ws, _, _, cx| {
                 ws.sidebar = !ws.sidebar;
+                ws.save_layout();
                 cx.notify();
             })))
             .children(items.into_iter().enumerate().map(|(i, it)| {
@@ -155,22 +169,35 @@ impl Workspace {
             .when(has_views, |d| {
                 d.child(Button::new("ribbon-right").ghost().small().icon(gpui_kit::assets::IconName::PanelRight).tooltip("Right sidebar").on_click(cx.listener(|ws, _, _, cx| {
                     ws.right_sidebar = !ws.right_sidebar;
+                    ws.save_layout();
                     cx.notify();
                 })))
             })
             .child(Button::new("ribbon-settings").ghost().small().icon(gpui_kit::assets::IconName::Settings).tooltip("Settings (Ctrl+,)").on_click(|_, window, cx| crate::settings_ui::open(window, cx)))
     }
 
+    /// Plugin views on one side.
+    fn views(cx: &App, side: Side) -> Vec<crate::plugins::SidebarView> {
+        cx.try_global::<PluginHost>().map(|h| h.reg.sidebar_views.iter().filter(|(_, v)| v.side == side).map(|(_, v)| v.clone()).collect()).unwrap_or_default()
+    }
+
+    /// Renders one plugin view, handing over a pending argument.
+    fn render_view(&mut self, v: &crate::plugins::SidebarView, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let editor = self.active_editor();
+        let active_note = editor.as_ref().map(|e| self.rel(&e.read(cx).path));
+        let ctx = ViewCtx { editor, workspace: WorkspaceHandle(cx.entity().downgrade()), vault: self.vault.clone(), active_note, arg: self.view_args.remove(&v.id) };
+        (v.render)(&ctx, window, cx)
+    }
+
     /// Plugin views on the right; a row of icons picks the view.
     fn render_right_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let views: Vec<_> = cx.try_global::<PluginHost>().map(|h| h.reg.sidebar_views.iter().map(|(_, v)| v.clone()).collect()).unwrap_or_default();
+        let views = Self::views(cx, Side::Right);
         if !self.right_sidebar || views.is_empty() {
             return None;
         }
-        let ix = self.right_view.min(views.len() - 1);
+        let ix = self.right_view.as_ref().and_then(|id| views.iter().position(|v| &v.id == id)).unwrap_or(0);
         let theme = cx.theme().clone();
-        let editor = self.active_editor();
-        let body = (views[ix].render)(editor.as_ref(), window, cx);
+        let body = self.render_view(&views[ix], window, cx);
         Some(
             v_flex()
                 .w(px(300.))
@@ -180,11 +207,14 @@ impl Workspace {
                 .border_color(theme.border)
                 .bg(theme.sidebar)
                 .child(h_flex().gap_1().px_2().py_1().border_b_1().border_color(theme.border).children(views.iter().enumerate().map(|(i, v)| {
+                    let id = v.id.clone();
                     Button::new(("right-view", i)).ghost().xsmall().selected(i == ix).icon(v.icon).tooltip(v.title.clone()).on_click(cx.listener(move |ws, _, _, cx| {
-                        ws.right_view = i;
+                        ws.right_view = Some(id.clone());
+                        ws.save_layout();
                         cx.notify();
                     }))
                 })))
+                .child(div().px_3().pt_2().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.muted_foreground).child(views[ix].title.to_uppercase()))
                 .child(div().flex_1().min_h_0().overflow_hidden().p_2().child(body))
                 .into_any_element(),
         )
@@ -223,9 +253,44 @@ impl Workspace {
             cx.try_global::<PluginHost>().map(|h| h.reg.commands.iter().filter_map(|(_, c)| Some((c.hotkey.clone()?, c.run.clone()))).collect()).unwrap_or_default();
         let hit = cmds.into_iter().find(|(h, _)| hotkey_matches(h, &ev.keystroke)).map(|(_, r)| r);
         if let Some(run) = hit {
+            // after this handler: commands may update the workspace
             let editor = self.active_editor();
-            run_action(&run, editor, window, cx);
+            window.defer(cx, move |window, cx| run_action(&run, editor, window, cx));
             cx.stop_propagation();
+        }
+    }
+
+    pub(crate) fn toggle_sidebar(&mut self, left: bool, cx: &mut Context<Self>) {
+        if left {
+            self.sidebar = !self.sidebar;
+        } else {
+            self.right_sidebar = !self.right_sidebar;
+        }
+        self.save_layout();
+        cx.notify();
+    }
+
+    pub(crate) fn reveal_active(&mut self, cx: &mut Context<Self>) {
+        self.sidebar = true;
+        self.left_view = None;
+        self.save_layout();
+        self.select_active_in_tree(cx);
+        cx.notify();
+    }
+
+    fn active_rel(&self, cx: &App) -> Option<String> {
+        self.active_editor().map(|e| self.rel(&e.read(cx).path))
+    }
+
+    pub(crate) fn rename_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(rel) = self.active_rel(cx) {
+            self.rename_dialog(rel, false, window, cx);
+        }
+    }
+
+    pub(crate) fn delete_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(rel) = self.active_rel(cx) {
+            self.delete_dialog(rel, false, window, cx);
         }
     }
 
@@ -336,21 +401,127 @@ impl Workspace {
         let f = editor.read(cx).focus.clone();
         window.focus(&f, cx);
         self.select_active_in_tree(cx);
+        self.note_recent(cx);
         cx.notify();
         editor
     }
 
-    fn activate(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+    /// Opens a vault file by vault path, placing the caret.
+    pub fn open_rel(&mut self, rel: &str, at: OpenAt, new_tab: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let path = self.vault.borrow().root.join(rel);
+        let ed = self.open_path(path, new_tab, window, cx);
+        match at {
+            OpenAt::Keep => {}
+            OpenAt::Offset(off) => ed.update(cx, |e, cx| {
+                let off = e.doc.clamp(off);
+                e.set_selection(obsidilight_core::Selection::caret(off), false, cx);
+            }),
+            OpenAt::Subpath(sub) => ed.update(cx, |e, cx| e.go_to_subpath(&sub, cx)),
+        }
+    }
+
+    /// Creates a note (vault path; `.md` added; folders created) and opens it.
+    pub fn create_and_open(&mut self, rel: &str, new_tab: bool, window: &mut Window, cx: &mut Context<Self>) -> Result<(), String> {
+        let mut rel = rel.trim().trim_matches('/').to_string();
+        if !is_note(&rel) {
+            rel.push_str(".md");
+        }
+        if rel.split('/').any(|c| c.is_empty() || c == ".." || c.starts_with('.')) {
+            return Err("invalid name".into());
+        }
+        let path = self.vault.borrow().root.join(&rel);
+        if !path.exists() {
+            if let Some(d) = path.parent() {
+                std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
+            }
+            std::fs::OpenOptions::new().write(true).create_new(true).open(&path).map_err(|e| e.to_string())?;
+            self.vault.borrow_mut().index.refresh(&rel);
+            self.rebuild_tree(cx);
+            for t in self.tabs.clone() {
+                t.update(cx, |e, cx| e.invalidate(cx));
+            }
+        }
+        self.open_path(path, new_tab, window, cx);
+        Ok(())
+    }
+
+    /// Reveals a sidebar view (opening its sidebar) and hands it an argument.
+    pub fn show_view(&mut self, id: &str, arg: Option<String>, cx: &mut Context<Self>) {
+        let Some(v) = Self::views(cx, Side::Left).into_iter().chain(Self::views(cx, Side::Right)).find(|v| v.id == id) else { return };
+        if let Some(a) = arg {
+            self.view_args.insert(id.to_string(), a);
+        }
+        match v.side {
+            Side::Left => {
+                self.sidebar = true;
+                self.left_view = Some(id.to_string());
+            }
+            Side::Right => {
+                self.right_sidebar = true;
+                self.right_view = Some(id.to_string());
+            }
+        }
+        self.save_layout();
+        cx.notify();
+    }
+
+    fn note_recent(&mut self, cx: &mut Context<Self>) {
+        let Some(e) = self.active_editor() else { return };
+        let rel = self.rel(&e.read(cx).path);
+        self.recent.retain(|r| *r != rel);
+        self.recent.insert(0, rel);
+        self.recent.truncate(50);
+        self.save_layout();
+    }
+
+    // ---- layout (`.obsidilight/workspace.json`) --------------------------------------
+
+    fn layout_path(&self) -> PathBuf {
+        self.vault.borrow().root.join(".obsidilight/workspace.json")
+    }
+
+    fn load_layout(&mut self) {
+        let Some(v) = std::fs::read_to_string(self.layout_path()).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()) else { return };
+        let s = |k: &str| v.get(k).and_then(|x| x.as_str()).map(String::from);
+        self.left_view = s("leftView");
+        self.right_view = s("rightView");
+        self.sidebar = v.get("leftSidebar").and_then(|x| x.as_bool()).unwrap_or(true);
+        self.right_sidebar = v.get("rightSidebar").and_then(|x| x.as_bool()).unwrap_or(false);
+        self.recent = v.get("recent").and_then(|x| x.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
+    }
+
+    fn save_layout(&self) {
+        // benchmarks and UI tests run on throwaway copies, but never write while benchmarking
+        if std::env::var_os("OBSIDILIGHT_BENCH").is_some() {
+            return;
+        }
+        let v = serde_json::json!({
+            "leftSidebar": self.sidebar, "leftView": self.left_view,
+            "rightSidebar": self.right_sidebar, "rightView": self.right_view,
+            "recent": self.recent,
+        });
+        let p = self.layout_path();
+        if let Some(d) = p.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        let tmp = p.with_extension("json.obsidilight-tmp");
+        if std::fs::write(&tmp, serde_json::to_string_pretty(&v).unwrap_or_default()).is_ok() {
+            let _ = std::fs::rename(&tmp, &p);
+        }
+    }
+
+    pub(crate) fn activate(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         if ix < self.tabs.len() {
             self.active = ix;
             let f = self.tabs[ix].read(cx).focus.clone();
             window.focus(&f, cx);
             self.select_active_in_tree(cx);
+            self.note_recent(cx);
             cx.notify();
         }
     }
 
-    fn close_tab(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn close_tab(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         if ix >= self.tabs.len() {
             return;
         }
@@ -423,7 +594,7 @@ impl Workspace {
     }
 
     /// New empty note "Untitled.md" ("Untitled 1.md"…) in `folder` (vault-relative), opened in a new tab.
-    fn new_note_in(&mut self, folder: &str, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn new_note_in(&mut self, folder: &str, window: &mut Window, cx: &mut Context<Self>) {
         let root = self.vault.borrow().root.clone();
         let dir = root.join(folder);
         let mut name = "Untitled.md".to_string();
@@ -526,9 +697,19 @@ impl Workspace {
                 failures.push(edit.note.clone());
             }
         }
-        // 5. re-index
+        // 5. re-index, tell plugins (bookmarks), keep the recent list pointing at the files
         let fresh = obsidilight_core::index::VaultIndex::build(&root);
         self.vault.borrow_mut().index = fresh;
+        for r in self.recent.iter_mut() {
+            if let Some((_, n)) = moves.iter().find(|(o, _)| o == r) {
+                *r = n.clone();
+            }
+        }
+        self.save_layout();
+        let listeners: Vec<_> = cx.try_global::<PluginHost>().map(|h| h.reg.vault_listeners.iter().map(|(_, l)| l.clone()).collect()).unwrap_or_default();
+        for l in listeners {
+            l.renamed(old, &new, &moves, cx);
+        }
         if old_abs.is_dir() || new_abs.is_dir() {
             self.expanded.insert(format!("dir:{new}"));
         }
@@ -556,6 +737,13 @@ impl Workspace {
         trash::delete(&abs).map_err(|e| e.to_string())?;
         let fresh = obsidilight_core::index::VaultIndex::build(&root);
         self.vault.borrow_mut().index = fresh;
+        let prefix = format!("{rel}/");
+        self.recent.retain(|r| r != rel && !r.starts_with(&prefix));
+        self.save_layout();
+        let listeners: Vec<_> = cx.try_global::<PluginHost>().map(|h| h.reg.vault_listeners.iter().map(|(_, l)| l.clone()).collect()).unwrap_or_default();
+        for l in listeners {
+            l.deleted(rel, cx);
+        }
         self.rebuild_tree(cx);
         for e in &self.tabs {
             e.update(cx, |e, cx| e.invalidate(cx));
@@ -754,19 +942,47 @@ impl Workspace {
 
     // ---- rendering ------------------------------------------------------------------
 
-    fn render_sidebar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The left sidebar: a row of view icons (Files, then plugin views such as Search and
+    /// Bookmarks) over the chosen view.
+    fn render_left(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let views = Self::views(cx, Side::Left);
+        let current = self.left_view.as_ref().and_then(|id| views.iter().position(|v| &v.id == id));
         let theme = cx.theme().clone();
+        let mut tabs = vec![Button::new("left-files").ghost().xsmall().selected(current.is_none()).icon(IconName::Folder).tooltip("Files").on_click(cx.listener(|ws, _, _, cx| {
+            ws.left_view = None;
+            ws.save_layout();
+            cx.notify();
+        }))];
+        for (i, v) in views.iter().enumerate() {
+            let id = v.id.clone();
+            tabs.push(Button::new(("left-view", i)).ghost().xsmall().selected(current == Some(i)).icon(v.icon).tooltip(v.title.clone()).on_click(cx.listener(move |ws, _, _, cx| {
+                ws.left_view = Some(id.clone());
+                ws.save_layout();
+                cx.notify();
+            })));
+        }
+        let header = h_flex().gap_1().px_2().py_1().border_b_1().border_color(theme.border).children(tabs);
+        let body = match current {
+            None => self.render_sidebar(cx).into_any_element(),
+            Some(i) => {
+                let v = views[i].clone();
+                v_flex()
+                    .size_full()
+                    .child(div().px_3().pt_2().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.muted_foreground).child(v.title.to_uppercase()))
+                    .child(div().flex_1().min_h_0().overflow_hidden().p_2().child(self.render_view(&v, window, cx)))
+                    .into_any_element()
+            }
+        };
+        v_flex().w(px(280.)).h_full().flex_none().border_r_1().border_color(theme.border).bg(theme.sidebar).child(header).child(div().flex_1().min_h_0().child(body)).into_any_element()
+    }
+
+    fn render_sidebar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let weak = cx.entity().downgrade();
         let root = self.vault.borrow().root.clone();
         let target = self.menu_target.clone();
         let menu_ws = cx.entity().downgrade();
         v_flex()
-            .w(px(280.))
-            .h_full()
-            .flex_none()
-            .border_r_1()
-            .border_color(theme.border)
-            .bg(theme.sidebar)
+            .size_full()
             .child(h_flex().px_3().py_2().justify_between().child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("Files")).child(
                 Button::new("new-note").ghost().xsmall().icon(IconName::Plus).tooltip("New note (Ctrl+N)").on_click(cx.listener(|ws, _, w, cx| ws.new_note_in("", w, cx))),
             ))
@@ -875,7 +1091,7 @@ impl Render for Workspace {
             })
             .collect();
         let active = self.tabs.get(self.active).cloned();
-        let sidebar = self.sidebar.then(|| self.render_sidebar(cx).into_any_element());
+        let sidebar = self.sidebar.then(|| self.render_left(window, cx));
         let ribbon = self.render_ribbon(cx).into_any_element();
         let right = self.render_right_sidebar(window, cx);
         let status = self.render_status_bar(cx);
@@ -905,10 +1121,12 @@ impl Render for Workspace {
             .on_action(cx.listener(|_, _: &OpenSettings, w, cx| crate::settings_ui::open(w, cx)))
             .on_action(cx.listener(|ws, _: &ToggleRightSidebar, _, cx| {
                 ws.right_sidebar = !ws.right_sidebar;
+                ws.save_layout();
                 cx.notify();
             }))
             .on_action(cx.listener(|ws, _: &ToggleSidebar, _, cx| {
                 ws.sidebar = !ws.sidebar;
+                ws.save_layout();
                 cx.notify();
             }))
             .on_action(cx.listener(|ws, _: &NewNote, w, cx| {

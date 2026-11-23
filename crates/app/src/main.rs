@@ -8,8 +8,10 @@
 mod app_settings;
 mod atoms;
 mod bench;
+mod commands;
 mod editor;
 mod embeds;
+mod fuzzy;
 mod icons;
 mod math;
 mod plugins;

@@ -252,8 +252,9 @@ impl Plugin for AcademicNotes {
             id: "contents".into(),
             title: "Contents".into(),
             icon: gpui_kit::assets::IconName::ListOrdered,
-            render: Rc::new(move |editor, _window, cx| {
-                let Some(editor) = editor.cloned() else { return div().text_sm().child("No note open").into_any_element() };
+            side: Side::Right,
+            render: Rc::new(move |v, _window, cx| {
+                let Some(editor) = v.editor.clone() else { return div().text_sm().child("No note open").into_any_element() };
                 let text = editor.read(cx).doc.text();
                 let muted = cx.theme().muted_foreground;
                 let rows: Vec<AnyElement> = contents(&text, depth)

@@ -56,6 +56,6 @@ for k, rs in g.items():
     print(f"{k:22} {len(rs):>2} {med('ready_ms'):>9.0f} {med('rss_mib'):>8.1f} {med('pss_mib'):>8.1f} {med('uss_mib'):>8.1f}")
     for r in rs:
         rep = r.get("report") or {}
-        if rep: print("   bench:", json.dumps({k2: rep[k2] for k2 in ('plain','inMath','scroll','firstRenderMs','plain_frame_work','math_frame_work','plain_latency') if k2 in rep}))
+        if rep: print("   bench:", json.dumps({k2: rep[k2] for k2 in ('plain','inMath','scroll','firstRenderMs','plain_frame_work','math_frame_work','plain_latency','search_ms','index_ms') if k2 in rep}))
 print("raw:", sys.argv[1])
 EOF

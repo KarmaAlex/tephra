@@ -45,3 +45,4 @@ ui-smoke: build    ## scripted UI test on a temp copy of the perf note (needs a 
 	tests/ui/snippets.sh
 	tests/ui/assist.sh
 	tests/ui/academic.sh
+	tests/ui/m4.sh
