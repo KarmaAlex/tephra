@@ -262,6 +262,10 @@ pub struct ProjBlock {
     pub keys: Vec<u64>,
     /// Identity for caching the block's measured height: source text, reveal state, part.
     pub hash: u64,
+    /// Stable identity across edits inside the block (`key(block, part)`): when `hash` is new
+    /// (typed text), the last height measured for this `id` is a much better estimate than a
+    /// constant, so the virtualized layout doesn't jump a frame while the block re-measures.
+    pub id: u64,
     /// Text alignment (a paragraph wrapped in `<center>` / `<p align=…>`).
     pub align: Option<BlockAlign>,
 }
@@ -728,6 +732,7 @@ struct QuoteCtx<'a> {
     link_label: &'a dyn Fn(&str) -> Option<String>,
     bi: usize,
     sub: usize,
+    key_base: u64,
     keys: Vec<u64>,
     occurrences: HashMap<String, usize>,
     /// Offsets of the note's newlines (line numbers of formulas).
@@ -741,7 +746,7 @@ fn line_at(newlines: &[usize], off: usize) -> usize {
 
 impl QuoteCtx<'_> {
     fn next_key(&mut self) -> u64 {
-        let k = key(self.bi, self.sub);
+        let k = self.key_base + key(self.bi, self.sub);
         self.sub += 1;
         self.keys.push(k);
         k
@@ -1011,6 +1016,9 @@ pub struct ProjectionInput<'a> {
     pub resolve: &'a dyn Fn(&str) -> Option<PathBuf>,
     pub link_label: &'a dyn Fn(&str) -> Option<String>,
     pub code_mode: &'a dyn Fn(&str) -> CodeMode,
+    /// Added to every leaf key: nested Markdown renders (plugin blocks) get a fresh base, so
+    /// their leaves never collide with the editor's own keys in the geometry map.
+    pub key_base: u64,
 }
 
 /// A file that isn't a note (`.css`, `.json`, `.txt`…): its text as one editable leaf, with
@@ -1028,7 +1036,7 @@ pub fn project_plain(text: &str, sel: Selection, version: u64) -> Projection {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     text.hash(&mut h);
-    proj.blocks.push(ProjBlock { node: ProjNode::Block(BlockNode::CodeBlock(code)), indent: 0.0, keys: vec![k], hash: h.finish(), align: None });
+    proj.blocks.push(ProjBlock { node: ProjNode::Block(BlockNode::CodeBlock(code)), indent: 0.0, keys: vec![k], hash: h.finish(), id: k, align: None });
     proj
 }
 
@@ -1040,6 +1048,7 @@ pub fn project(inp: &ProjectionInput) -> Projection {
         ViewMode::Source => 0..usize::MAX,
         ViewMode::Reading => usize::MAX..usize::MAX,
     };
+    let kb = inp.key_base;
     let mut proj = Projection { version: inp.version, sel: inp.sel, mode: inp.mode, ..Default::default() };
     let blocks = parse_blocks(text);
     let newlines: Vec<usize> = text.bytes().enumerate().filter(|(_, c)| *c == b'\n').map(|(i, _)| i).collect();
@@ -1062,7 +1071,7 @@ pub fn project(inp: &ProjectionInput) -> Projection {
                         (0..cols)
                             .map(|c| match row.get(c) {
                                 Some(cell) => {
-                                    let k = key(bi, sub);
+                                    let k = kb + key(bi, sub);
                                     sub += 1;
                                     let mut lb = new_leaf(cell.clone());
                                     lb.table_cell = true;
@@ -1080,7 +1089,7 @@ pub fn project(inp: &ProjectionInput) -> Projection {
                 nodes.push((ProjNode::Block(BlockNode::Table(Table::new(rows, aligns))), keys));
             }
             BlockKind::Blank | BlockKind::Paragraph | BlockKind::Table | BlockKind::Frontmatter => {
-                let k = key(bi, 0);
+                let k = kb + key(bi, 0);
                 let mut lb = new_leaf(b.range.clone());
                 if b.kind == BlockKind::Frontmatter {
                     lb.text(b.range.clone(), &TextMark::default(), true);
@@ -1096,7 +1105,7 @@ pub fn project(inp: &ProjectionInput) -> Projection {
                 let has_callout = items.iter().any(|i| matches!(i, QuoteItem::Callout(_)));
                 if rev || !has_callout {
                     // caret inside (or a plain quote): the source lines, `>` hidden except on the caret's line
-                    let k = key(bi, 0);
+                    let k = kb + key(bi, 0);
                     let mut lb = new_leaf(b.range.clone());
                     lb.prefixes = quote_prefixes(text, &b.range, &sel);
                     let inl = parse_inline(text, b.range.clone());
@@ -1104,7 +1113,7 @@ pub fn project(inp: &ProjectionInput) -> Projection {
                     let para = lb.finish(k, &mut proj);
                     nodes.push((ProjNode::Block(BlockNode::Blockquote { children: vec![BlockNode::Paragraph(para)], span: None }), vec![k]));
                 } else {
-                    let mut ctx = QuoteCtx { text, sel: sel.clone(), palette: inp.palette, resolve: inp.resolve, link_label: inp.link_label, bi, sub: 0, keys: Vec::new(), occurrences: HashMap::new(), newlines: &newlines };
+                    let mut ctx = QuoteCtx { text, sel: sel.clone(), palette: inp.palette, resolve: inp.resolve, link_label: inp.link_label, bi, sub: 0, key_base: kb, keys: Vec::new(), occurrences: HashMap::new(), newlines: &newlines };
                     for item in &items {
                         let node = ctx.item(item, false, &mut proj);
                         nodes.push((node, std::mem::take(&mut ctx.keys)));
@@ -1112,7 +1121,7 @@ pub fn project(inp: &ProjectionInput) -> Projection {
                 }
             }
             BlockKind::Heading { level } => {
-                let k = key(bi, 0);
+                let k = kb + key(bi, 0);
                 let mut lb = new_leaf(b.range.clone());
                 lb.marker(b.marker.clone(), &TextMark::default(), rev);
                 let inl = parse_inline(text, b.content.clone());
@@ -1122,7 +1131,7 @@ pub fn project(inp: &ProjectionInput) -> Projection {
             BlockKind::ListItem { task: Some(done), .. } if inp.mode != ViewMode::Source => {
                 // Our own checkbox, not the list renderer's: the line stays an ordinary leaf (caret,
                 // clicks, editing), and the source `- [ ] ` shows while the caret is on the item.
-                let k = key(bi, 0);
+                let k = kb + key(bi, 0);
                 let mut lb = new_leaf(b.range.clone());
                 lb.marker(b.marker.clone(), &TextMark::default(), rev);
                 let inl = parse_inline(text, b.content.clone());
@@ -1140,7 +1149,7 @@ pub fn project(inp: &ProjectionInput) -> Projection {
                 nodes.push((node, vec![k]));
             }
             BlockKind::ListItem { ordered, task } => {
-                let k = key(bi, 0);
+                let k = kb + key(bi, 0);
                 let mut lb = new_leaf(b.range.clone());
                 // the bullet/number is drawn by the list; the source marker stays hidden
                 if inp.mode == ViewMode::Source {
@@ -1188,12 +1197,12 @@ pub fn project(inp: &ProjectionInput) -> Projection {
                 let close_line = if *closed { text[..b.range.end].rfind('\n').map(|i| i + 1).unwrap_or(b.range.start)..b.range.end } else { b.range.end..b.range.end };
                 let mut keys = Vec::new();
                 if rev {
-                    let k = key(bi, 1);
+                    let k = kb + key(bi, 1);
                     let mut lb = new_leaf(open_line.clone());
                     lb.text(open_line.clone(), &TextMark::default().code(), true);
                     nodes.push((ProjNode::Block(BlockNode::Paragraph(lb.finish(k, &mut proj))), vec![k]));
                 }
-                let k = key(bi, 0);
+                let k = kb + key(bi, 0);
                 let mut code_map = LeafMap { segs: Vec::new(), src: b.content.clone(), len: b.content.len() };
                 if !b.content.is_empty() {
                     code_map.segs.push(Seg { kind: SegKind::Text, leaf: 0..b.content.len(), src: b.content.clone() });
@@ -1214,7 +1223,7 @@ pub fn project(inp: &ProjectionInput) -> Projection {
                 };
                 nodes.push((node, keys));
                 if rev && *closed {
-                    let k = key(bi, 2);
+                    let k = kb + key(bi, 2);
                     let mut lb = new_leaf(close_line.clone());
                     lb.text(close_line.clone(), &TextMark::default().code(), true);
                     nodes.push((ProjNode::Block(BlockNode::Paragraph(lb.finish(k, &mut proj))), vec![k]));
@@ -1222,7 +1231,7 @@ pub fn project(inp: &ProjectionInput) -> Projection {
             }
             BlockKind::MathBlock => {
                 let tex = text[b.content.clone()].to_string();
-                let k = key(bi, 0);
+                let k = kb + key(bi, 0);
                 let mut lb = new_leaf(b.range.clone());
                 if rev {
                     lb.pad_empty_lines = true;
@@ -1238,7 +1247,7 @@ pub fn project(inp: &ProjectionInput) -> Projection {
                 }
             }
             BlockKind::Rule => {
-                let k = key(bi, 0);
+                let k = kb + key(bi, 0);
                 if rev {
                     let mut lb = new_leaf(b.range.clone());
                     lb.text(b.range.clone(), &TextMark::default(), true);
@@ -1252,7 +1261,7 @@ pub fn project(inp: &ProjectionInput) -> Projection {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
             (&text[b.range.clone()], rev, part, &sel_signature(&sel, &b.range)).hash(&mut h);
-            proj.blocks.push(ProjBlock { node, indent, keys, hash: h.finish(), align });
+            proj.blocks.push(ProjBlock { node, indent, keys, hash: h.finish(), id: kb + key(bi, part), align });
         }
     }
     proj
@@ -1265,7 +1274,31 @@ mod tests {
 
     fn proj(text: &str, caret: usize) -> Projection {
         let none = |_: &str| None;
-        project(&ProjectionInput { text, sel: Selection::caret(caret), mode: ViewMode::LivePreview, version: 0, palette: Palette { highlight: hsla(0.15, 1., 0.5, 0.4) }, resolve: &none, code_mode: &|_| CodeMode::Plain, link_label: &|_| None })
+        project(&ProjectionInput { text, sel: Selection::caret(caret), mode: ViewMode::LivePreview, version: 0, palette: Palette { highlight: hsla(0.15, 1., 0.5, 0.4) }, resolve: &none, code_mode: &|_| CodeMode::Plain, link_label: &|_| None, key_base: 0 })
+    }
+
+    /// A nested Markdown render (a plugin block's body) gets a `key_base`, so its leaf keys and
+    /// block ids never collide with the editor's own — otherwise the nested text overwrites the
+    /// editor's leaf geometry and the first line becomes unclickable / the caret jumps on edit.
+    #[test]
+    fn key_base_offsets_every_leaf_key_and_block_id() {
+        let none = |_: &str| None;
+        let t = "## H\n\npara with $x$ math\n\n> [!algorithm] A\n> body line\n";
+        let base = 1u64 << 40;
+        let p = project(&ProjectionInput { text: t, sel: Selection::caret(0), mode: ViewMode::Reading, version: 0, palette: Palette { highlight: hsla(0., 0., 0., 1.) }, resolve: &none, code_mode: &|_| CodeMode::Plain, link_label: &|_| None, key_base: base });
+        assert!(!p.leaves.is_empty());
+        for (k, _) in &p.leaves {
+            assert!(k >= &base, "leaf key {k} below the base");
+        }
+        for b in &p.blocks {
+            assert!(b.id >= base, "block id {} below the base", b.id);
+            assert!(b.keys.iter().all(|k| *k >= base));
+        }
+        // the same text at base 0 has the same keys minus the base
+        let p0 = proj(t, 0);
+        let k0: Vec<u64> = p0.leaves.iter().map(|(k, _)| *k).collect();
+        let k1: Vec<u64> = p.leaves.iter().map(|(k, _)| *k).collect();
+        assert_eq!(k1, k0.iter().map(|k| k + base).collect::<Vec<_>>());
     }
 
     /// The leaf text the renderer sees (atoms as U+FFFC).
@@ -1497,7 +1530,7 @@ mod tests {
     fn unresolved_wikilinks_are_dimmed() {
         let t = "[[Esiste]] e [[Manca]]\n\nx";
         let resolve = |target: &str| (target == "Esiste").then(|| PathBuf::from("/v/Esiste.md"));
-        let p = project(&ProjectionInput { text: t, sel: Selection::caret(t.len()), mode: ViewMode::LivePreview, version: 0, palette: Palette { highlight: gpui_kit::hsla(0., 0., 0., 1.) }, resolve: &resolve, code_mode: &|_| CodeMode::Plain, link_label: &|_| None });
+        let p = project(&ProjectionInput { text: t, sel: Selection::caret(t.len()), mode: ViewMode::LivePreview, version: 0, palette: Palette { highlight: gpui_kit::hsla(0., 0., 0., 1.) }, resolve: &resolve, code_mode: &|_| CodeMode::Plain, link_label: &|_| None, key_base: 0 });
         assert_eq!(p.muted[&p.leaves[0].0], vec![9..14]); // "Esiste e Manca": only "Manca"
     }
 
@@ -1532,7 +1565,7 @@ mod tests {
     fn source_and_reading_modes() {
         let none = |_: &str| None;
         let t = "# H\n- **b** $x$\n> [!thm] T\n> c";
-        let mk = |mode| project(&ProjectionInput { text: t, sel: Selection::caret(0), mode, version: 0, palette: Palette { highlight: hsla(0., 0., 0., 1.) }, resolve: &none, code_mode: &|_| CodeMode::Plain, link_label: &|_| None });
+        let mk = |mode| project(&ProjectionInput { text: t, sel: Selection::caret(0), mode, version: 0, palette: Palette { highlight: hsla(0., 0., 0., 1.) }, resolve: &none, code_mode: &|_| CodeMode::Plain, link_label: &|_| None, key_base: 0 });
         let src = mk(ViewMode::Source);
         assert_eq!(leaf_text(&src, src.leaves[0].0), "# H");
         assert_eq!(leaf_text(&src, src.leaves[1].0), "- **b** $x$");

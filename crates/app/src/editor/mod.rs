@@ -129,6 +129,9 @@ pub struct Editor {
     saving_disabled: bool,
     /// Measured block heights by block hash (virtualized rendering).
     heights: measured::Heights,
+    /// Measured block heights by stable block id: the fallback when the hash is new (typed text),
+    /// so the layout estimate doesn't jump back to a constant for a frame.
+    id_heights: measured::Heights,
     measured_once: bool,
     pub mode: ViewMode,
     /// Callout fold state by callout identity (true = collapsed); absent = the file's default.
@@ -199,6 +202,7 @@ impl Editor {
             save_generation: 0,
             saving_disabled: false,
             heights: Default::default(),
+            id_heights: Default::default(),
             measured_once: false,
             folds: HashMap::new(),
             mode: ViewMode::LivePreview,
@@ -419,6 +423,7 @@ impl Editor {
                 resolve: &resolve,
                 link_label: &link_label,
                 code_mode: &code_mode,
+                key_base: 0,
             });
             self.perf.projection_ms.push(t.elapsed().as_secs_f64() * 1000.0);
         }
@@ -1148,9 +1153,10 @@ impl Render for Editor {
         let view_h = f32::from(self.scroll.bounds().size.height);
         let top = -f32::from(self.scroll.offset().y);
         let heights = self.heights.borrow();
+        let id_heights = self.id_heights.borrow();
         const EST: f32 = 30.0;
-        let h = |ix: usize| heights.get(&proj.blocks[ix].hash).copied().unwrap_or(EST);
-        let all_known = proj.blocks.iter().all(|b| heights.contains_key(&b.hash));
+        let h = |ix: usize| heights.get(&proj.blocks[ix].hash).copied().or_else(|| id_heights.get(&proj.blocks[ix].id).copied()).unwrap_or(EST);
+        let all_known = proj.blocks.iter().all(|b| heights.contains_key(&b.hash) || id_heights.contains_key(&b.id));
         let mut ys = Vec::with_capacity(n + 1);
         let scale = crate::theme::ui_scale(cx);
         let pad = 24.0 * scale; // content top padding (py_6: 1.5 rem)
@@ -1174,6 +1180,7 @@ impl Render for Editor {
             }
         };
         drop(heights);
+        drop(id_heights);
         self.measured_once |= lo == 0 && hi == n;
         let md = {
             let vault = self.vault.clone();
@@ -1204,7 +1211,7 @@ impl Render for Editor {
                 Some(projection::BlockAlign::Right) => div().w_full().flex().justify_end().child(div().max_w_full().text_right().child(el)).into_any_element(),
                 _ => el, // justify: GPUI has no justified text; left as written
             };
-            children.push(measured::Measured::new(b.hash, self.heights.clone(), el).into_any_element());
+            children.push(measured::Measured::new(b.hash, b.id, self.heights.clone(), self.id_heights.clone(), el).into_any_element());
         }
         if hi < n {
             children.push(div().h(px(ys[n] - ys[hi])).into_any_element());
