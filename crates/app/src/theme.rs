@@ -499,9 +499,31 @@ pub fn apply(window: Option<&Window>, cx: &mut App) {
     cx.refresh_windows();
 }
 
+thread_local! {
+    /// `text_style` results by (theme generation, dark, classes): it runs on every frame.
+    static STYLES: std::cell::RefCell<HashMap<(u64, bool, Vec<String>), (TextViewStyle, f32, Hsla)>> = Default::default();
+}
+
 /// The editor's text style for a note with `classes` (`cssclasses`): headings, links, code,
 /// quotes, tables. `body` = the body font size in px.
 pub fn text_style(cx: &App, classes: &[String]) -> (TextViewStyle, f32, Hsla) {
+    use gpui_kit::component::ActiveTheme as _;
+    let key = (generation(cx), cx.theme().is_dark(), classes.to_vec());
+    if let Some(hit) = STYLES.with(|c| c.borrow().get(&key).cloned()) {
+        return hit;
+    }
+    let v = compute_text_style(cx, classes);
+    STYLES.with(|c| {
+        let mut c = c.borrow_mut();
+        if c.len() > 64 {
+            c.clear();
+        }
+        c.insert(key, v.clone());
+    });
+    v
+}
+
+fn compute_text_style(cx: &App, classes: &[String]) -> (TextViewStyle, f32, Hsla) {
     use gpui_kit::component::ActiveTheme as _;
     let base = TextViewStyle::from_theme(&gpui_kit::base::Theme::global(cx));
     let dark = cx.theme().is_dark();
