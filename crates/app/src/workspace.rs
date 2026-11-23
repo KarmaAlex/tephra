@@ -22,6 +22,7 @@ use obsidilight_core::index::{is_note, is_sync_conflict};
 use obsidilight_core::links::link_path;
 
 use crate::editor::{Editor, EditorEvent};
+use crate::file_drag::{self, TreeDrag};
 use crate::embeds::{SharedVault, Vault};
 use crate::plugins::api::{OpenAt, Side, ViewCtx, WorkspaceHandle};
 use crate::plugins::{run_action, MenuTarget, PluginHost};
@@ -175,6 +176,14 @@ pub struct Workspace {
     pub recent: Vec<String>,
     /// Files shown in the tree after the last rebuild (for UI tests).
     pub tree_files: Vec<String>,
+    /// While something is dragged: the file-list rows drawn last frame (bounds, tree id).
+    drag_rows: Rc<RefCell<Vec<(Bounds<Pixels>, String)>>>,
+    /// The folder a drop would move into ("" = the vault root), drawn highlighted.
+    drop_dest: Option<String>,
+    /// The collapsed folder the pointer rests on while dragging (it opens after a moment).
+    drag_hover: Option<String>,
+    /// Scrolling the file list while dragging near its top (+) or bottom (-) edge.
+    drag_scroll: f32,
     /// Hover preview requested by a sidebar list (key = `rel#sub`), and the one shown.
     preview_pending: Option<String>,
     preview: Option<WsPreview>,
@@ -223,6 +232,10 @@ impl Workspace {
             view_args: HashMap::new(),
             recent: Vec::new(),
             tree_files: Vec::new(),
+            drag_rows: Rc::default(),
+            drop_dest: None,
+            drag_hover: None,
+            drag_scroll: 0.0,
             synced: HashMap::new(),
             preview_pending: None,
             preview: None,
@@ -1125,7 +1138,14 @@ impl Workspace {
             l.renamed(old, &new, &moves, cx);
         }
         if old_abs.is_dir() || new_abs.is_dir() {
-            self.expanded.insert(format!("dir:{new}"));
+            // folders inside keep their open/closed state
+            let (o, n) = (format!("dir:{old}"), format!("dir:{new}"));
+            let moved: Vec<String> = self.expanded.iter().filter(|e| **e == o || e.starts_with(&format!("{o}/"))).cloned().collect();
+            for e in moved {
+                self.expanded.remove(&e);
+                self.expanded.insert(format!("{n}{}", &e[o.len()..]));
+            }
+            self.expanded.insert(n);
         }
         self.rebuild_tree(cx);
         for e in &self.all_editors() {
@@ -1506,11 +1526,124 @@ impl Workspace {
         v_flex().w(crate::ui::r(crate::ui::SIDEBAR)).h_full().flex_none().border_r_1().border_color(theme.border).bg(theme.sidebar).child(header).child(div().flex_1().min_h_0().child(body)).into_any_element()
     }
 
+    // ---- moving by drag and drop (M8) ------------------------------------------------
+
+    /// The file-list row under `pos` (from the rows drawn last frame).
+    fn row_at(&self, pos: Point<Pixels>) -> Option<String> {
+        self.drag_rows.borrow().iter().find(|(b, _)| b.contains(&pos)).map(|(_, id)| id.clone())
+    }
+
+    fn drag_moved(&mut self, ev: &DragMoveEvent<TreeDrag>, cx: &mut Context<Self>) {
+        let pos = ev.event.position;
+        let inside = ev.bounds.contains(&pos);
+        let drag = ev.drag(cx).clone();
+        let row = if inside { self.row_at(pos) } else { None };
+        let dest = if inside { Some(row.as_deref().map(file_drag::dest_of_row).unwrap_or_default()) } else { None };
+        let dest = dest.filter(|d| file_drag::move_target(&drag.rel, drag.folder, d).is_some());
+        if dest != self.drop_dest {
+            self.drop_dest = dest;
+            cx.notify();
+        }
+        // near the top or bottom edge: scroll, for as long as the pointer stays there
+        let edge = px(28.);
+        let scroll = if !inside {
+            0.0
+        } else if pos.y < ev.bounds.top() + edge {
+            1.0
+        } else if pos.y > ev.bounds.bottom() - edge {
+            -1.0
+        } else {
+            0.0
+        };
+        if scroll != self.drag_scroll {
+            let start = self.drag_scroll == 0.0;
+            self.drag_scroll = scroll;
+            if start && scroll != 0.0 {
+                cx.spawn(async move |this, cx| loop {
+                    cx.background_executor().timer(Duration::from_millis(30)).await;
+                    let go = this.update(cx, |ws, cx| {
+                        if ws.drag_scroll == 0.0 || !cx.has_active_drag() {
+                            ws.drag_scroll = 0.0;
+                            return false;
+                        }
+                        let h = ws.tree.read(cx).scroll_handle().0.borrow().base_handle.clone();
+                        let (off, max) = (h.offset(), h.max_offset());
+                        let y = (off.y + px(8. * ws.drag_scroll)).clamp(-max.y, px(0.));
+                        h.set_offset(point(off.x, y));
+                        cx.notify();
+                        true
+                    });
+                    if !matches!(go, Ok(true)) {
+                        break;
+                    }
+                })
+                .detach();
+            }
+        }
+        // resting on a closed folder opens it
+        let hover = row.filter(|r| r.starts_with("dir:") && !self.expanded.contains(r));
+        if hover != self.drag_hover {
+            self.drag_hover = hover.clone();
+            if let Some(h) = hover {
+                cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(Duration::from_millis(700)).await;
+                    let _ = this.update(cx, |ws, cx| {
+                        if ws.drag_hover.as_ref() == Some(&h) && cx.has_active_drag() {
+                            ws.expanded.insert(h);
+                            ws.rebuild_tree(cx);
+                            cx.notify();
+                        }
+                    });
+                })
+                .detach();
+            }
+        }
+    }
+
+    fn end_drag(&mut self) {
+        self.drop_dest = None;
+        self.drag_hover = None;
+        self.drag_scroll = 0.0;
+    }
+
+    /// A file or folder dropped on the file list: moved into the folder under the pointer.
+    fn dropped(&mut self, d: &TreeDrag, window: &mut Window, cx: &mut Context<Self>) {
+        let dest = self.row_at(window.mouse_position()).map(|r| file_drag::dest_of_row(&r)).unwrap_or_default();
+        self.end_drag();
+        let Some(new) = file_drag::move_target(&d.rel, d.folder, &dest) else {
+            cx.notify();
+            return;
+        };
+        self.move_path(&d.rel, &new, &dest, window, cx);
+    }
+
+    /// Moves a file or folder into folder `dest` (`new` = its path there), links updated.
+    pub(crate) fn move_path(&mut self, rel: &str, new: &str, dest: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if !dest.is_empty() {
+            self.expanded.insert(format!("dir:{dest}"));
+        }
+        let name = rel.rsplit('/').next().unwrap_or(rel).to_string();
+        let to = if dest.is_empty() { "the vault root".to_string() } else { format!("\"{dest}\"") };
+        match self.rename_path(rel, new, cx) {
+            Ok((links, notes)) => self.notify_status(format!("Moved \"{name}\" to {to}. Updated {links} link(s) in {notes} note(s)."), cx),
+            Err(e) => window.push_notification(format!("Move failed: {e}"), cx),
+        }
+        cx.notify();
+    }
+
     fn render_sidebar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let weak = cx.entity().downgrade();
         let root = self.vault.borrow().root.clone();
         let target = self.menu_target.clone();
         let menu_ws = cx.entity().downgrade();
+        let dragging = cx.has_active_drag();
+        if !dragging {
+            self.end_drag();
+        }
+        self.drag_rows.borrow_mut().clear();
+        let rows = self.drag_rows.clone();
+        let dest = self.drop_dest.clone();
+        let drop_bg = cx.theme().primary.opacity(0.12);
         v_flex()
             .size_full()
             .child(h_flex().px_3().py_2().justify_between().child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("Files")).child(
@@ -1521,10 +1654,14 @@ impl Workspace {
                 // right-click on empty space (below the items, or the strip at the bottom):
                 // the vault root
                 div()
+                    .id("file-list")
                     .flex_1()
                     .min_h_0()
                     .flex()
                     .flex_col()
+                    .when(self.drop_dest.as_deref() == Some(""), |d| d.bg(drop_bg))
+                    .on_drag_move::<TreeDrag>(cx.listener(|ws, ev: &DragMoveEvent<TreeDrag>, _, cx| ws.drag_moved(ev, cx)))
+                    .on_drop(cx.listener(|ws, d: &TreeDrag, window, cx| ws.dropped(d, window, cx)))
                     .child(
                     tree(&self.tree, move |ix, entry, _selected, _w, cx| {
                         let item = entry.item();
@@ -1542,6 +1679,12 @@ impl Workspace {
                         let (fg, warn) = (theme.foreground, theme.warning);
                         let weak = weak.clone();
                         let path = root.join(&id);
+                        let rel = id.strip_prefix("dir:").unwrap_or(&id).to_string();
+                        let drag = TreeDrag { rel, folder };
+                        let chip = (item.label.clone(), icon.clone());
+                        let highlighted = dest.as_deref().is_some_and(|d| file_drag::in_dest(&id, d));
+                        let rows = rows.clone();
+                        let row_id = id.clone();
                         let row = h_flex()
                             .gap_1p5()
                             .text_size(crate::ui::r(13.))
@@ -1557,12 +1700,31 @@ impl Workspace {
                             row.into_any_element()
                         };
                         ListItem::new(ix)
+                            .relative()
                             .w_full()
                             .h(crate::ui::r(25.))
                             .py_0()
                             .px_2()
                             .pl(crate::ui::r(17. * entry.depth() as f32 + 8.))
                             .child(row)
+                            // an overlay, so it shows over the selected row's colour too
+                            .when(highlighted, |li| li.child(div().absolute().top_0().left_0().size_full().bg(drop_bg)))
+                            // while dragging, rows tell the list where they are (the drop
+                            // folder is the one under the pointer)
+                            .when(dragging, |li| {
+                                li.child(
+                                    canvas(move |b, _, _| rows.borrow_mut().push((b, row_id)), |_, _, _, _| {})
+                                        .absolute()
+                                        .top_0()
+                                        .left_0()
+                                        .size_full(),
+                                )
+                            })
+                            .children(crate::script::probe(|| format!("tree:{id}"), cx))
+                            .on_drag(drag, move |_, offset, _, cx| {
+                                let (label, icon) = chip.clone();
+                                cx.new(|_| TreeChip { label, icon, offset })
+                            })
                             .when(!folder, |li| {
                                 li.on_click(move |ev, window, cx| {
                                     let new_tab = ev.modifiers().secondary(cx);
@@ -1602,7 +1764,7 @@ impl Workspace {
                     })
                     .flex_1(),
                     )
-                    .child(div().h(px(48.)).flex_none())
+                    .child(div().relative().h(px(48.)).flex_none().children(crate::script::probe(|| "tree:end".to_string(), cx)))
                     .context_menu(move |menu, _, _| {
                         *root_target.borrow_mut() = None;
                         menu.menu("New note", Box::new(NewNote)).menu("New folder", Box::new(NewFolder))
@@ -1795,5 +1957,32 @@ impl Render for Workspace {
             .child(v_flex().flex_1().min_w_0().h_full().child(div().flex_1().min_h_0().flex().child(panes)).children(status))
             .children(right)
             .children(preview)
+    }
+}
+
+/// What follows the pointer while a file or folder is dragged.
+struct TreeChip {
+    label: SharedString,
+    icon: IconName,
+    /// Where the row was grabbed: the chip is drawn from there, so it sits by the pointer.
+    offset: Point<Pixels>,
+}
+
+impl Render for TreeChip {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = cx.theme();
+        let chip = h_flex()
+            .gap_1p5()
+            .px_2()
+            .py_1()
+            .rounded(px(4.))
+            .bg(t.popover)
+            .border_1()
+            .border_color(t.border)
+            .shadow_md()
+            .text_size(crate::ui::r(13.))
+            .child(Icon::new(self.icon.clone()).small())
+            .child(self.label.clone());
+        div().pl(self.offset.x + px(14.)).pt(self.offset.y + px(6.)).child(chip)
     }
 }

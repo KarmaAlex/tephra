@@ -13,6 +13,7 @@ mod css;
 mod editor;
 mod embeds;
 mod export;
+mod file_drag;
 mod fuzzy;
 mod hotkeys;
 mod image_view;
