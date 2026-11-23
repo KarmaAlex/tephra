@@ -38,4 +38,4 @@ cm6-bundle:      ## headless CM6 state + Lezer Markdown (GFM) for the LaTeX snip
 	NODE_PATH=$(CURDIR)/spikes/gpui/js/node_modules spikes/tauri/node_modules/.bin/esbuild tools/cm6/entry.js --bundle --minify --format=iife --platform=neutral --main-fields=module,main --target=es2020 --outfile=crates/app/assets/cm6-headless.js
 
 ui-smoke: build    ## scripted UI tests (need a display; windows open briefly)
-	for t in smoke links watcher idle snippets assist academic m4 tasks hotkeys panes; do tests/ui/$$t.sh || exit 1; done
+	for t in smoke links watcher idle snippets assist academic m4 tasks hotkeys panes toolbar; do tests/ui/$$t.sh || exit 1; done

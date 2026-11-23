@@ -266,6 +266,10 @@ impl WorkspaceHandle {
         let rel = rel.to_string();
         self.0.update(cx, |ws, cx| ws.create_and_open(&rel, new_tab, window, cx)).map_err(|e| e.to_string())?
     }
+    /// Hides both sidebars (or brings them back): a distraction-free editor.
+    pub fn toggle_focus_mode(&self, cx: &mut App) {
+        let _ = self.0.update(cx, |ws, cx| ws.toggle_focus_mode(cx));
+    }
     /// Shows a sidebar view (full id `<plugin>:<view>`), opening its sidebar; `arg` is handed
     /// to the view's next render (e.g. a search query).
     pub fn show_view(&self, id: &str, arg: Option<String>, cx: &mut App) {
@@ -359,6 +363,13 @@ pub struct MenuItem {
     pub run: Rc<dyn Fn(&mut ActionCtx, Option<&str>)>,
 }
 
+/// A toolbar drawn above the editor of the focused pane (e.g. the editing toolbar).
+#[derive(Clone)]
+pub struct ToolbarSlot {
+    pub id: String,
+    pub render: Rc<dyn Fn(&ViewCtx, &mut Window, &mut App) -> AnyElement>,
+}
+
 /// A custom settings section, shown under the plugin's generated settings.
 #[derive(Clone)]
 pub struct SettingsTab {
@@ -386,6 +397,7 @@ pub struct Registry {
     pub link_labelers: Vec<(PluginId, Rc<dyn LinkLabeler>)>,
     pub editor_menus: Vec<(PluginId, EditorMenuProvider)>,
     pub vault_listeners: Vec<(PluginId, Rc<dyn VaultListener>)>,
+    pub toolbars: Vec<(PluginId, ToolbarSlot)>,
 }
 
 impl Registry {
@@ -403,6 +415,7 @@ impl Registry {
         self.link_labelers.retain(|(p, _)| *p != id);
         self.editor_menus.retain(|(p, _)| *p != id);
         self.vault_listeners.retain(|(p, _)| *p != id);
+        self.toolbars.retain(|(p, _)| *p != id);
     }
 
     /// How many registrations a plugin currently holds (tests: unload must leave zero).
@@ -420,6 +433,7 @@ impl Registry {
             + self.link_labelers.iter().filter(|(p, _)| *p == id).count()
             + self.editor_menus.iter().filter(|(p, _)| *p == id).count()
             + self.vault_listeners.iter().filter(|(p, _)| *p == id).count()
+            + self.toolbars.iter().filter(|(p, _)| *p == id).count()
     }
 
     /// The first plugin style claiming a callout type (plugins in load order).
@@ -481,6 +495,9 @@ impl Registrar<'_> {
     }
     pub fn editor_menu(&mut self, m: EditorMenuProvider) {
         self.reg.editor_menus.push((self.plugin, m));
+    }
+    pub fn toolbar(&mut self, t: ToolbarSlot) {
+        self.reg.toolbars.push((self.plugin, t));
     }
     pub fn vault_listener(&mut self, l: Rc<dyn VaultListener>) {
         self.reg.vault_listeners.push((self.plugin, l));

@@ -103,6 +103,8 @@ pub struct Workspace {
     /// The tree entry a context menu was opened on: (vault path, is folder).
     menu_target: Rc<RefCell<Option<(String, bool)>>>,
     sidebar: bool,
+    /// Sidebars as they were before focus mode (Some = in focus mode).
+    focus_mode: Option<(bool, bool)>,
     /// Left sidebar view: None = Files, else a plugin view id (`search:search`).
     left_view: Option<String>,
     /// Right sidebar (plugin views) shown, and which view (None = the first).
@@ -150,6 +152,7 @@ impl Workspace {
             focus: cx.focus_handle(),
             menu_target: Rc::default(),
             sidebar: true,
+            focus_mode: None,
             left_view: None,
             right_sidebar: false,
             right_view: None,
@@ -382,6 +385,22 @@ impl Workspace {
             self.right_sidebar = !self.right_sidebar;
         }
         self.save_layout();
+        cx.notify();
+    }
+
+    /// Focus mode: both sidebars hidden; toggling again restores them as they were.
+    pub(crate) fn toggle_focus_mode(&mut self, cx: &mut Context<Self>) {
+        match self.focus_mode.take() {
+            Some((l, r)) => {
+                self.sidebar = l;
+                self.right_sidebar = r;
+            }
+            None => {
+                self.focus_mode = Some((self.sidebar, self.right_sidebar));
+                self.sidebar = false;
+                self.right_sidebar = false;
+            }
+        }
         cx.notify();
     }
 
@@ -1269,6 +1288,11 @@ impl Workspace {
                             )
                         })),
                 )
+            })
+            .when(focused && editor.is_some(), |d| {
+                let slots: Vec<_> = cx.try_global::<PluginHost>().map(|h| h.reg.toolbars.iter().map(|(_, t)| t.clone()).collect()).unwrap_or_default();
+                let ctx = ViewCtx { editor: editor.clone(), workspace: WorkspaceHandle(cx.entity().downgrade()), vault: self.vault.clone(), active_note: editor.as_ref().map(|e| self.rel(&e.read(cx).path)), arg: None };
+                d.children(slots.iter().map(|t| (t.render)(&ctx, _window, cx)))
             })
             .child(match editor {
                 Some(e) => div().flex_1().min_h_0().child(e).into_any_element(),

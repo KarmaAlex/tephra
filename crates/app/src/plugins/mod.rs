@@ -10,6 +10,7 @@ pub mod bookmarks;
 pub mod command_palette;
 pub mod copy_block_link;
 pub mod desmos;
+pub mod editing_toolbar;
 pub mod horizontal_blocks;
 pub mod latex_suite;
 pub mod links_panes;
@@ -67,6 +68,7 @@ pub fn bundled(vault_root: &Path) -> Vec<Box<dyn Plugin>> {
         Box::new(outline_tags::TagPane::new()),
         Box::new(academic_notes::AcademicNotes::new(vault_root)),
         Box::new(copy_block_link::CopyBlockLink::new()),
+        Box::new(editing_toolbar::EditingToolbar::new(vault_root)),
         Box::new(word_count::WordCount::new()),
         Box::new(desmos::Desmos::new()),
         Box::new(horizontal_blocks::HorizontalBlocks::new(vault_root)),
@@ -347,6 +349,7 @@ mod tests {
             r.link_labeler(Rc::new(Nop));
             r.editor_menu(Rc::new(|_, _| Vec::new()));
             r.vault_listener(Rc::new(Nop));
+            r.toolbar(ToolbarSlot { id: "t".into(), render: Rc::new(|_, _, _| div().into_any_element()) });
         }
     }
 
@@ -359,18 +362,18 @@ mod tests {
         let mut h = PluginHost::new(None, vec![Box::new(KitchenSink(manifest("a", true))), Box::new(KitchenSink(manifest("b", false)))]);
         assert!(h.load_plugin("a"));
         assert!(!h.load_plugin("a"), "loading twice is a no-op");
-        assert_eq!(h.reg.count("a"), 13);
+        assert_eq!(h.reg.count("a"), 14);
         assert_eq!(h.reg.commands[0].1.id, "a:c");
         h.apply_enabled("b", true);
-        assert_eq!(h.reg.count("b"), 13);
+        assert_eq!(h.reg.count("b"), 14);
         let g = h.generation;
         h.apply_enabled("a", false);
         assert_eq!(h.reg.count("a"), 0, "unload must remove every registration");
-        assert_eq!(h.reg.count("b"), 13, "other plugins untouched");
+        assert_eq!(h.reg.count("b"), 14, "other plugins untouched");
         assert!(!h.is_loaded("a") && h.is_loaded("b") && !h.is_enabled("a"));
         assert!(h.generation > g);
         h.apply_setting("b", "k", Value::Bool(false)); // reloads b
-        assert_eq!((h.reg.count("b"), h.setting("b", "k")), (13, Value::Bool(false)));
+        assert_eq!((h.reg.count("b"), h.setting("b", "k")), (14, Value::Bool(false)));
     }
 
     #[test]
