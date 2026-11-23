@@ -4,5 +4,6 @@ pub mod file;
 pub mod index;
 pub mod links;
 pub mod markdown;
+pub mod search;
 
 pub use buffer::{Document, EditKind, Selection};

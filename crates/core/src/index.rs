@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use crate::links::{link_path, Resolver};
 use crate::markdown::callouts::{flatten, parse_quote};
 use crate::markdown::{parse_blocks, parse_inline, BlockKind, Inline, InlineKind};
+use crate::search::{self, Expr, FileHit, SearchDoc};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HeadingRef {
@@ -74,7 +75,11 @@ pub fn parse_note(path: &str, text: &str) -> NoteMeta {
     let mut m = NoteMeta { path: path.to_string(), ..Default::default() };
     for b in parse_blocks(text) {
         match &b.kind {
-            BlockKind::Frontmatter => m.frontmatter = Some(text[b.content.clone()].to_string()),
+            BlockKind::Frontmatter => {
+                let fm = &text[b.content.clone()];
+                m.tags.extend(frontmatter_tags(fm));
+                m.frontmatter = Some(fm.to_string());
+            }
             BlockKind::Code { .. } | BlockKind::MathBlock | BlockKind::Blank | BlockKind::Rule => {}
             kind => {
                 if let BlockKind::Heading { level } = kind {
@@ -129,6 +134,40 @@ pub fn parse_note(path: &str, text: &str) -> NoteMeta {
     m
 }
 
+/// Tags listed in YAML frontmatter (`tags:` or `tag:`), as Obsidian reads them:
+/// `tags: [a, b]`, `tags: a, b`, `tags: a b`, or a `- a` list on the following lines.
+pub fn frontmatter_tags(fm: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut in_list = false;
+    let clean = |t: &str| t.trim().trim_matches(['"', '\'']).trim_start_matches('#').to_string();
+    for line in fm.lines() {
+        if in_list {
+            if let Some(item) = line.trim_start().strip_prefix("- ") {
+                let t = clean(item);
+                if !t.is_empty() {
+                    out.push(t);
+                }
+                continue;
+            }
+            if line.trim().is_empty() {
+                continue;
+            }
+            in_list = false;
+        }
+        let Some((key, value)) = line.split_once(':') else { continue };
+        if !matches!(key.trim(), "tags" | "tag") || line.starts_with([' ', '\t']) {
+            continue;
+        }
+        let value = value.trim().trim_start_matches('[').trim_end_matches(']');
+        if value.is_empty() {
+            in_list = true;
+            continue;
+        }
+        out.extend(value.split([',', ' ']).map(clean).filter(|t| !t.is_empty()));
+    }
+    out
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Backlink {
     pub source: String,
@@ -162,6 +201,10 @@ pub struct VaultIndex {
     resolver: Resolver,
     notes: HashMap<String, NoteMeta>,
     backlinks: HashMap<String, Vec<Backlink>>,
+    /// Note texts for full-text search (kept folded, see `search::fold`).
+    docs: HashMap<String, SearchDoc>,
+    /// Bumped on every change, so views can cache what they derive from the index.
+    generation: u64,
 }
 
 impl VaultIndex {
@@ -191,7 +234,7 @@ impl VaultIndex {
         for f in &files {
             if is_note(f) {
                 if let Ok(text) = std::fs::read_to_string(root.join(f)) {
-                    idx.notes.insert(f.clone(), parse_note(f, &text));
+                    idx.put_note(f, &text);
                 }
             }
         }
@@ -207,7 +250,53 @@ impl VaultIndex {
         resolver.resolve(target, from)
     }
 
+    /// Stores a note's metadata and search text; true if its metadata changed.
+    fn put_note(&mut self, rel: &str, text: &str) -> bool {
+        let meta = parse_note(rel, text);
+        let changed = self.notes.get(rel) != Some(&meta);
+        self.docs.insert(rel.to_string(), SearchDoc::new(rel, text, meta.tags.clone()));
+        self.notes.insert(rel.to_string(), meta);
+        self.generation += 1;
+        changed
+    }
+
+    fn drop_note(&mut self, rel: &str) {
+        self.notes.remove(rel);
+        self.docs.remove(rel);
+        self.generation += 1;
+    }
+
+    /// Changes whenever anything in the index changes.
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// Full-text search over every note (see [`crate::search`]).
+    pub fn search(&self, q: &Expr) -> Vec<FileHit> {
+        let docs: Vec<&SearchDoc> = self.docs.values().collect();
+        search::search(q, &docs)
+    }
+
+    /// A note's text as last indexed (its saved content).
+    pub fn text(&self, rel: &str) -> Option<&str> {
+        self.docs.get(rel).map(|d| d.text.as_str())
+    }
+
+    /// Every tag in the vault (as first written, case-insensitively merged) with the number of
+    /// occurrences, sorted by name.
+    pub fn tags(&self) -> Vec<(String, usize)> {
+        let mut by_key: std::collections::BTreeMap<String, (String, usize)> = Default::default();
+        for n in self.notes.values() {
+            for t in &n.tags {
+                let e = by_key.entry(search::fold(t)).or_insert_with(|| (t.clone(), 0));
+                e.1 += 1;
+            }
+        }
+        by_key.into_values().collect()
+    }
+
     fn resolve_all(&mut self) {
+        self.generation += 1;
         let resolver = &self.resolver;
         self.backlinks.clear();
         for (path, n) in self.notes.iter_mut() {
@@ -256,7 +345,7 @@ impl VaultIndex {
         if new_file {
             self.resolver.add(rel);
         }
-        self.notes.insert(rel.to_string(), parse_note(rel, text));
+        self.put_note(rel, text);
         // a new file can change how other links resolve; otherwise only this note's links changed
         self.resolve_all();
     }
@@ -272,7 +361,7 @@ impl VaultIndex {
     pub fn remove_file(&mut self, rel: &str) {
         if self.files.remove(rel) {
             self.resolver.remove(rel);
-            self.notes.remove(rel);
+            self.drop_note(rel);
             self.resolve_all();
         }
     }
@@ -321,7 +410,7 @@ impl VaultIndex {
                 for f in gone {
                     self.files.remove(&f);
                     self.resolver.remove(&f);
-                    self.notes.remove(&f);
+                    self.drop_note(&f);
                     touched = true;
                 }
             }
@@ -338,12 +427,7 @@ impl VaultIndex {
         }
         if is_note(rel) {
             match std::fs::read_to_string(self.root.join(rel)) {
-                Ok(text) => {
-                    let meta = parse_note(rel, &text);
-                    let changed = self.notes.get(rel) != Some(&meta);
-                    self.notes.insert(rel.to_string(), meta);
-                    changed
-                }
+                Ok(text) => self.put_note(rel, &text),
                 Err(_) => false,
             }
         } else {
@@ -474,6 +558,24 @@ mod tests {
         let plan = idx.rename_plan(&[("Images/a.png".into(), "Images/b.png".into())]);
         let a = std::fs::read_to_string(root.join("A.md")).unwrap();
         assert_eq!(apply_edits(&a, &plan[0].edits), "![[b.png]] [[C]]");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn frontmatter_tags_and_search() {
+        assert_eq!(frontmatter_tags("tags: [uni, \"#esame\"]\ncssclasses: x"), vec!["uni", "esame"]);
+        assert_eq!(frontmatter_tags("tags:\n  - a/b\n  - c\naliases: x"), vec!["a/b", "c"]);
+        assert_eq!(frontmatter_tags("tag: a, b"), vec!["a", "b"]);
+        assert!(frontmatter_tags("cssclasses: NoBorder").is_empty());
+        let (root, mut idx) = vault(&[("A.md", "---\ntags: [corso]\n---\nGrafi #Corso e alberi"), ("B.md", "grafi")]);
+        assert_eq!(idx.tags(), vec![("corso".to_string(), 2)]);
+        let q = crate::search::parse_query("grafi tag:corso").unwrap();
+        assert_eq!(idx.search(&q).iter().map(|h| h.path.as_str()).collect::<Vec<_>>(), vec!["A.md"]);
+        let g = idx.generation();
+        std::fs::write(root.join("B.md"), "grafi #corso").unwrap();
+        idx.refresh("B.md");
+        assert!(idx.generation() > g);
+        assert_eq!(idx.search(&q).len(), 2, "search sees the new text");
         let _ = std::fs::remove_dir_all(root);
     }
 
