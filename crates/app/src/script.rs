@@ -6,6 +6,7 @@
 //!   wait <ms>                 key <keystroke> [n]     type <text>
 //!   click <x> <y> [count]     drag <x1> <y1> <x2> <y2>
 //!   scroll <dy>               state                   shot <path.png>     quit
+//! `shot` captures only this app's window, through `target/release/winshot` (see tools/winshot).
 
 use std::time::Duration;
 
@@ -240,7 +241,10 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                     }
                 }
                 "shot" => {
-                    let _ = std::process::Command::new("spectacle").args(["-a", "-b", "-n", "-o", rest.trim()]).status();
+                    // Only this app's own window, through KWin (tools/winshot): never the desktop.
+                    let tool = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("winshot")));
+                    let ok = tool.as_ref().and_then(|t| std::process::Command::new(t).arg(std::process::id().to_string()).arg(rest.trim()).status().ok()).is_some_and(|s| s.success());
+                    println!("SHOT {} {}", rest.trim(), if ok { "ok" } else { "failed (build winshot and run tools/winshot/install.sh)" });
                 }
                 "quit" => {
                     let _ = cx.update(|cx| cx.quit());
