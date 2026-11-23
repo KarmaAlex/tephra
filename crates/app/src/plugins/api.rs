@@ -276,6 +276,33 @@ impl WorkspaceHandle {
         let (rel, text) = (rel.to_string(), text.to_string());
         self.0.update(cx, |ws, cx| ws.create_with_text(&rel, &text, new_tab, window, cx)).map_err(|e| e.to_string())?
     }
+    /// A note's current text (an open editor's unsaved edits included).
+    pub fn note_text(&self, rel: &str, cx: &App) -> Option<String> {
+        self.0.upgrade()?.read(cx).note_text(rel, cx)
+    }
+    /// Replaces a note's text (through its editor when open: undoable). The note must exist.
+    pub fn set_note_text(&self, rel: &str, text: &str, cx: &mut App) -> Result<(), String> {
+        let (rel, text) = (rel.to_string(), text.to_string());
+        self.0.update(cx, |ws, cx| ws.set_note_text(&rel, &text, cx)).map_err(|e| e.to_string())?
+    }
+    /// Creates a note with `text` without opening it; returns its vault path.
+    pub fn create_file(&self, rel: &str, text: &str, cx: &mut App) -> Result<String, String> {
+        let (rel, text) = (rel.to_string(), text.to_string());
+        self.0.update(cx, |ws, cx| ws.create_file(&rel, &text, cx)).map_err(|e| e.to_string())?
+    }
+    /// Merges note `src` into `dst`: links to `src` then point at `dst`, `src` goes to the
+    /// trash (see `Workspace::merge_notes`). Returns the number of links updated.
+    pub fn merge_notes(&self, src: &str, dst: &str, wrap: &dyn Fn(&str) -> String, prepend: bool, window: &mut Window, cx: &mut App) -> Result<usize, String> {
+        let (src, dst) = (src.to_string(), dst.to_string());
+        self.0.update(cx, |ws, cx| ws.merge_notes(&src, &dst, wrap, prepend, window, cx)).map_err(|e| e.to_string())?
+    }
+    /// Link text for a vault file from note `from` (shortest unique path, as Obsidian writes).
+    pub fn link_to(&self, target: &str, from: &str, cx: &App) -> String {
+        match self.vault(cx) {
+            Some(v) => v.borrow().index.shortest_link(target, from),
+            None => target.trim_end_matches(".md").to_string(),
+        }
+    }
     /// Hides both sidebars (or brings them back): a distraction-free editor.
     pub fn toggle_focus_mode(&self, cx: &mut App) {
         let _ = self.0.update(cx, |ws, cx| ws.toggle_focus_mode(cx));

@@ -116,3 +116,28 @@ pub fn hotkey_label(h: &str) -> String {
         .collect::<Vec<_>>()
         .join("+")
 }
+
+/// A yes/no dialog; `on_ok` runs when confirmed.
+pub fn confirm(title: &str, body: &str, ok: &str, on_ok: Rc<dyn Fn(&mut Window, &mut App)>, window: &mut Window, cx: &mut App) {
+    use gpui_kit::component::button::{Button, ButtonVariants as _};
+    use gpui_kit::component::dialog::{DialogAction, DialogClose, DialogFooter};
+    let (title, body, ok) = (title.to_string(), body.to_string(), ok.to_string());
+    if std::env::var_os("OBSIDILIGHT_SCRIPT").is_some() {
+        println!("CONFIRM {title}: {body}");
+    }
+    window.open_dialog(cx, move |dialog, _, _| {
+        let on_ok = on_ok.clone();
+        dialog
+            .title(title.clone())
+            .child(body.clone())
+            .footer(
+                DialogFooter::new()
+                    .child(DialogClose::new().child(Button::new("cancel").label("Cancel").outline()))
+                    .child(DialogAction::new().child(Button::new("ok").label(ok.clone()).primary())),
+            )
+            .on_ok(move |_, window, cx| {
+                on_ok(window, cx);
+                true
+            })
+    });
+}

@@ -447,6 +447,17 @@ impl VaultIndex {
     /// the moved target from its note's new location; `#subpath` and `|alias` are kept.
     /// Notes are identified by their path *after* the move.
     pub fn rename_plan(&self, moves: &[(String, String)]) -> Vec<NoteEdit> {
+        self.link_plan(moves, false)
+    }
+
+    /// Link edits for merging note `src` into `dst` (note composer): every link to `src` is
+    /// made to point at `dst`, keeping headings, block ids and aliases. Edits are reported by
+    /// each note's current path (`src`'s own edits under `src`).
+    pub fn merge_plan(&self, src: &str, dst: &str) -> Vec<NoteEdit> {
+        self.link_plan(&[(src.to_string(), dst.to_string())], true)
+    }
+
+    fn link_plan(&self, moves: &[(String, String)], by_current_path: bool) -> Vec<NoteEdit> {
         let map = |p: &str| moves.iter().find(|(o, _)| o == p).map(|(_, n)| n.clone()).unwrap_or_else(|| p.to_string());
         let mut after = self.resolver.clone();
         for (o, n) in moves {
@@ -477,7 +488,7 @@ impl VaultIndex {
                 edits.push((l.path_range.clone(), text));
             }
             if !edits.is_empty() {
-                out.push(NoteEdit { note: new_path, edits });
+                out.push(NoteEdit { note: if by_current_path { path.clone() } else { new_path }, edits });
             }
         }
         out
@@ -597,5 +608,22 @@ mod tests {
         idx.refresh("Nuova.md");
         assert_eq!(idx.note("A.md").unwrap().links[0].resolved, None);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn merge_points_links_at_the_target() {
+        let dir = std::env::temp_dir().join(format!("ol-merge-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("x")).unwrap();
+        std::fs::write(dir.join("x/Src.md"), "# H\nsee [[#H]] and [[Src#H]]\n").unwrap();
+        std::fs::write(dir.join("Dst.md"), "dst [[Src|alias]]\n").unwrap();
+        std::fs::write(dir.join("Other.md"), "[[Src#^b1]] ![[Src]] [[Dst]]\n").unwrap();
+        let ix = VaultIndex::build(&dir);
+        let plan = ix.merge_plan("x/Src.md", "Dst.md");
+        let get = |n: &str| plan.iter().find(|e| e.note == n).map(|e| apply_edits(ix.text(n).unwrap(), &e.edits));
+        assert_eq!(get("x/Src.md").as_deref(), Some("# H\nsee [[#H]] and [[Dst#H]]\n"));
+        assert_eq!(get("Dst.md").as_deref(), Some("dst [[Dst|alias]]\n"));
+        assert_eq!(get("Other.md").as_deref(), Some("[[Dst#^b1]] ![[Dst]] [[Dst]]\n"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

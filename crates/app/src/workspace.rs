@@ -871,23 +871,7 @@ impl Workspace {
             }
         }
         // 4. rewrite links: through the editor if the note is open, else straight to disk
-        let mut links = 0;
-        let mut failures = Vec::new();
-        for edit in &plan {
-            links += edit.edits.len();
-            let path = root.join(&edit.note);
-            if let Some(e) = self.all_editors().iter().find(|e| e.read(cx).path == path) {
-                e.update(cx, |e, cx| e.apply_edits(&edit.edits, cx));
-                continue;
-            }
-            let res = obsidilight_core::file::load(&path).and_then(|l| {
-                let text = obsidilight_core::index::apply_edits(&l.text, &edit.edits);
-                obsidilight_core::file::save(&path, &text, Some(l.disk))
-            });
-            if !matches!(res, Ok(obsidilight_core::file::SaveOutcome::Saved(_) | obsidilight_core::file::SaveOutcome::Unchanged(_))) {
-                failures.push(edit.note.clone());
-            }
-        }
+        let (links, failures) = self.apply_note_edits(&plan, cx);
         // 5. re-index, tell plugins (bookmarks), keep the recent list pointing at the files
         let fresh = obsidilight_core::index::VaultIndex::build(&root);
         self.vault.borrow_mut().index = fresh;
@@ -914,6 +898,120 @@ impl Workspace {
         } else {
             Err(format!("moved, but links in {} note(s) could not be updated: {}", failures.len(), failures.join(", ")))
         }
+    }
+
+    /// Applies edits to notes: through the editor when the note is open (undoable, saved at
+    /// once), else on disk with the usual "never overwrite a newer file" check. Returns the
+    /// number of edits and the notes that could not be written.
+    fn apply_note_edits(&mut self, plan: &[obsidilight_core::index::NoteEdit], cx: &mut Context<Self>) -> (usize, Vec<String>) {
+        let root = self.vault.borrow().root.clone();
+        let mut n = 0;
+        let mut failures = Vec::new();
+        for edit in plan {
+            n += edit.edits.len();
+            let path = root.join(&edit.note);
+            if let Some(e) = self.all_editors().iter().find(|e| e.read(cx).path == path) {
+                e.update(cx, |e, cx| e.apply_edits(&edit.edits, cx));
+                continue;
+            }
+            let res = obsidilight_core::file::load(&path).and_then(|l| {
+                let text = obsidilight_core::index::apply_edits(&l.text, &edit.edits);
+                obsidilight_core::file::save(&path, &text, Some(l.disk))
+            });
+            if !matches!(res, Ok(obsidilight_core::file::SaveOutcome::Saved(_) | obsidilight_core::file::SaveOutcome::Unchanged(_))) {
+                failures.push(edit.note.clone());
+            }
+        }
+        (n, failures)
+    }
+
+    /// The current text of a note: the open editor's (unsaved edits included), else the disk's.
+    pub fn note_text(&self, rel: &str, cx: &App) -> Option<String> {
+        let path = self.vault.borrow().root.join(rel);
+        match self.all_editors().iter().find(|e| e.read(cx).path == path) {
+            Some(e) => Some(e.read(cx).doc.text()),
+            None => std::fs::read_to_string(path).ok(),
+        }
+    }
+
+    /// Replaces a note's whole text (through its editor if open). The note must exist.
+    pub fn set_note_text(&mut self, rel: &str, text: &str, cx: &mut Context<Self>) -> Result<(), String> {
+        let path = self.vault.borrow().root.join(rel);
+        if let Some(e) = self.all_editors().into_iter().find(|e| e.read(cx).path == path) {
+            let len = e.read(cx).doc.len();
+            e.update(cx, |e, cx| e.apply_edits(&[(0..len, text.to_string())], cx));
+            return if e.read(cx).doc.is_dirty() { Err(format!("\"{rel}\" could not be saved")) } else { Ok(()) };
+        }
+        let l = obsidilight_core::file::load(&path).map_err(|e| e.to_string())?;
+        match obsidilight_core::file::save(&path, text, Some(l.disk)) {
+            Ok(obsidilight_core::file::SaveOutcome::Saved(_) | obsidilight_core::file::SaveOutcome::Unchanged(_)) => {
+                self.vault.borrow_mut().index.refresh(rel);
+                Ok(())
+            }
+            Ok(_) => Err(format!("\"{rel}\" changed on disk meanwhile")),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    /// Creates a note with `text` without opening it; returns its vault path (`.md` added).
+    pub fn create_file(&mut self, rel: &str, text: &str, cx: &mut Context<Self>) -> Result<String, String> {
+        let mut rel = rel.trim().trim_matches('/').to_string();
+        if !is_note(&rel) {
+            rel.push_str(".md");
+        }
+        if rel.split('/').any(|c| c.is_empty() || c == ".." || c.starts_with('.')) {
+            return Err("invalid name".into());
+        }
+        let path = self.vault.borrow().root.join(&rel);
+        if let Some(d) = path.parent() {
+            std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
+        }
+        {
+            use std::io::Write as _;
+            let mut f = std::fs::OpenOptions::new().write(true).create_new(true).open(&path).map_err(|e| e.to_string())?;
+            f.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
+        }
+        self.vault.borrow_mut().index.refresh(&rel);
+        self.rebuild_tree(cx);
+        for t in self.all_editors() {
+            t.update(cx, |e, cx| e.invalidate(cx));
+        }
+        Ok(rel)
+    }
+
+    /// Merges note `src` into `dst` (note composer): the source text (its own links updated,
+    /// then passed through `wrap`, e.g. a template) is added at the end of `dst` (or the
+    /// start), every link to `src` is pointed at `dst`, and `src` goes to the trash. Returns the number of links updated.
+    pub fn merge_notes(&mut self, src: &str, dst: &str, wrap: &dyn Fn(&str) -> String, prepend: bool, window: &mut Window, cx: &mut Context<Self>) -> Result<usize, String> {
+        if src == dst {
+            return Err("a note cannot be merged into itself".into());
+        }
+        for e in &self.all_editors() {
+            e.update(cx, |e, cx| e.save(cx));
+        }
+        if self.all_editors().iter().any(|e| e.read(cx).doc.is_dirty()) {
+            return Err("a note has unsaved changes that could not be saved".into());
+        }
+        let plan = self.vault.borrow().index.merge_plan(src, dst);
+        // links inside the source move with its text: rewrite them in the text being merged
+        let (src_plan, rest): (Vec<_>, Vec<_>) = plan.into_iter().partition(|e| e.note == src);
+        let text = self.note_text(src, cx).ok_or_else(|| format!("cannot read \"{src}\""))?;
+        let content = wrap(&match src_plan.first() {
+            Some(e) => obsidilight_core::index::apply_edits(&text, &e.edits),
+            None => text,
+        });
+        let (links, failures) = self.apply_note_edits(&rest, cx);
+        if !failures.is_empty() {
+            return Err(format!("links in {} could not be updated; nothing was merged", failures.join(", ")));
+        }
+        let old = self.note_text(dst, cx).ok_or_else(|| format!("cannot read \"{dst}\""))?;
+        let joined = |a: &str, b: &str| if a.is_empty() { b.to_string() } else if b.is_empty() { a.to_string() } else { format!("{}\n\n{}", a.trim_end_matches(['\n', '\r']), b) };
+        let new = if prepend { joined(&content, &old) } else { joined(&old, &content) };
+        self.set_note_text(dst, &new, cx)?;
+        self.delete_path(src, window, cx)?;
+        let root = self.vault.borrow().root.clone();
+        self.open_path(root.join(dst), false, window, cx);
+        Ok(links + src_plan.first().map_or(0, |e| e.edits.len()))
     }
 
     /// Moves a file or folder to the system trash (Obsidian's default), closing its tabs.

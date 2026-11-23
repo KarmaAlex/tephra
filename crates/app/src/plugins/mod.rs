@@ -16,6 +16,7 @@ pub mod editing_toolbar;
 pub mod horizontal_blocks;
 pub mod latex_suite;
 pub mod links_panes;
+pub mod note_composer;
 pub mod outline_tags;
 pub mod pdf_export;
 pub mod picker;
@@ -67,6 +68,7 @@ pub fn bundled(vault_root: &Path) -> Vec<Box<dyn Plugin>> {
         Box::new(command_palette::CommandPalette::new()),
         Box::new(daily_notes::DailyNotes::new(vault_root)),
         Box::new(templates::Templates::new(vault_root)),
+        Box::new(note_composer::NoteComposer::new(vault_root)),
         Box::new(bookmarks::Bookmarks::new(vault_root)),
         Box::new(links_panes::Backlinks::new()),
         Box::new(links_panes::OutgoingLinks::new()),
