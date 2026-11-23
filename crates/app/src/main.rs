@@ -9,6 +9,7 @@ mod app_settings;
 mod atoms;
 mod bench;
 mod commands;
+mod css;
 mod editor;
 mod embeds;
 mod export;

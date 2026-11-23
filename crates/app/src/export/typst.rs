@@ -228,6 +228,40 @@ impl<'a> Emitter<'a> {
                     format!("#text(fill: rgb(120, 90, 200))[{label}];")
                 }
             }
+            InlineKind::Html => {
+                use obsidilight_core::markdown::inline::{html_attr, html_tag_name};
+                let open = &text[n.range.start..n.inner.start];
+                let style = html_attr(open, "style").unwrap_or_default();
+                let col = |v: Option<String>| v.and_then(|c| crate::css::parse_color(&c)).map(|h| {
+                    let c = gpui_kit::Rgba::from(h);
+                    format!("rgb({}, {}, {})", (c.r * 255.).round(), (c.g * 255.).round(), (c.b * 255.).round())
+                });
+                let mut body = inner(self);
+                body = match html_tag_name(open).as_str() {
+                    "u" | "ins" => format!("#underline[{body}];"),
+                    "sup" => format!("#super[{body}];"),
+                    "sub" => format!("#sub[{body}];"),
+                    "b" | "strong" => format!("#strong[{body}];"),
+                    "i" | "em" => format!("#emph[{body}];"),
+                    "s" | "del" | "strike" => format!("#strike[{body}];"),
+                    "mark" => format!("#highlight(fill: rgb(255, 232, 124))[{body}];"),
+                    _ => body,
+                };
+                let fg = col(crate::css::style_prop(&style, "color")).or_else(|| col(html_attr(open, "color")));
+                if let Some(c) = fg {
+                    body = format!("#text(fill: {c})[{body}];");
+                }
+                if let Some(c) = col(crate::css::style_prop(&style, "background").or_else(|| crate::css::style_prop(&style, "background-color"))) {
+                    body = format!("#highlight(fill: {c})[{body}];");
+                }
+                let align = if html_tag_name(open) == "center" { Some("center".to_string()) } else { html_attr(open, "align").or_else(|| crate::css::style_prop(&style, "text-align")) };
+                match align.as_deref().map(str::to_ascii_lowercase).as_deref() {
+                    Some("center") => format!("#align(center)[{body}];"),
+                    Some("right") => format!("#align(right)[{body}];"),
+                    Some("justify") => format!("#par(justify: true)[{body}];"),
+                    _ => body,
+                }
+            }
             InlineKind::Image => {
                 let url = n.link_target(text);
                 match (!url.contains("://")).then(|| (self.ctx.embed)(&url.replace("%20", " "))).flatten() {

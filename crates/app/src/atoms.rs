@@ -8,7 +8,7 @@ use gpui_kit::component::text::{markdown_ast, InlineElement, InlineRenderContext
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::*;
 
-use crate::editor::projection::{ImageAtom, MathAtom, IMAGE_NODE, MATH_NODE};
+use crate::editor::projection::{ImageAtom, MathAtom, SupSubAtom, IMAGE_NODE, MATH_NODE, SUPSUB_NODE};
 
 /// Widest an embedded image is drawn, in logical pixels.
 pub const MAX_IMAGE_WIDTH: f32 = 680.0;
@@ -19,7 +19,7 @@ thread_local! {
 }
 
 pub fn extensions() -> Arc<MarkdownExtensions> {
-    Arc::new(MarkdownExtensions::default().plugin(MathPlugin).plugin(ImagePlugin))
+    Arc::new(MarkdownExtensions::default().plugin(MathPlugin).plugin(ImagePlugin).plugin(SupSubPlugin))
 }
 
 struct MathPlugin;
@@ -75,5 +75,31 @@ impl MarkdownPlugin for ImagePlugin {
         let (w, h) = ((w * scale).round(), (h * scale).round());
         // decoded lazily by GPUI's image cache when first painted
         Some(InlineElement::new(img(path).w(px(w)).h(px(h)).object_fit(ObjectFit::Contain)).with_baseline(px(h)))
+    }
+}
+
+/// `<sup>` / `<sub>`: three-quarter size text, raised or lowered (GPUI text has no baseline
+/// shift, so it is an inline object whose baseline is placed to move it).
+struct SupSubPlugin;
+
+impl MarkdownPlugin for SupSubPlugin {
+    fn name(&self) -> &str {
+        SUPSUB_NODE
+    }
+    fn parse(&self, _: &markdown_ast::Node, _: &MarkdownParseContext<'_>) -> Option<MarkdownNode> {
+        None
+    }
+    fn render_inline(&self, node: &MarkdownNode, context: &InlineRenderContext, window: &mut Window, _: &mut App) -> Option<InlineElement> {
+        let a = node.data::<SupSubAtom>()?;
+        let style = context.text_style();
+        let fs = f32::from(context.font_size()) * 0.75;
+        let h = (fs * 1.3).round();
+        let run = TextRun { len: a.text.len(), font: style.font(), color: style.color, background_color: None, underline: None, strikethrough: None };
+        let w = window.text_system().shape_line(a.text.clone().into(), px(fs), &[run], None).width;
+        let el = div().w(w.ceil() + px(1.)).h(px(h)).text_size(px(fs)).line_height(px(h)).text_color(style.color).child(SharedString::from(a.text.clone()));
+        // the object's baseline: at its bottom, the small text sits a third of a line above the
+        // text's baseline; near its top, it hangs below
+        let baseline = if a.sup { h } else { (h * 0.45).round() };
+        Some(InlineElement::new(el).with_baseline(px(baseline)))
     }
 }

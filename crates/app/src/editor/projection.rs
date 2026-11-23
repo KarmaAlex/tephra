@@ -23,6 +23,84 @@ use obsidilight_core::Selection;
 pub const ATOM: &str = "\u{FFFC}";
 pub const MATH_NODE: &str = "ol-math";
 pub const IMAGE_NODE: &str = "ol-image";
+pub const SUPSUB_NODE: &str = "ol-supsub";
+
+/// `<sup>…</sup>` / `<sub>…</sub>` while not revealed: small text, raised or lowered.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SupSubAtom {
+    pub text: String,
+    pub sup: bool,
+}
+
+/// Block alignment from the editing toolbar's HTML (`<center>`, `<p align="right">`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlockAlign {
+    Center,
+    Right,
+    Justify,
+}
+
+/// Text of an inline span with HTML tags and emphasis markers removed (for atoms).
+fn plain(s: &str) -> String {
+    let mut out = String::new();
+    let mut in_tag = false;
+    for c in s.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' if in_tag => in_tag = false,
+            _ if in_tag => {}
+            '*' | '=' | '~' => {}
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// How an HTML element formats its content: (mark, text colour).
+fn html_format(open_tag: &str, mark: &TextMark, highlight: Hsla) -> (TextMark, Option<Hsla>) {
+    use obsidilight_core::markdown::inline::{html_attr, html_tag_name};
+    let m = mark.clone();
+    let style = html_attr(open_tag, "style").unwrap_or_default();
+    let mut fg = crate::css::style_prop(&style, "color").and_then(|c| crate::css::parse_color(&c));
+    let bg = crate::css::style_prop(&style, "background").or_else(|| crate::css::style_prop(&style, "background-color")).and_then(|c| crate::css::parse_color(&c));
+    let mut m = match html_tag_name(open_tag).as_str() {
+        "u" | "ins" => m.underline(),
+        "b" | "strong" => m.bold(),
+        "i" | "em" => m.italic(),
+        "s" | "del" | "strike" => m.strikethrough(),
+        "mark" => m.highlight(highlight),
+        "font" => {
+            fg = fg.or_else(|| html_attr(open_tag, "color").and_then(|c| crate::css::parse_color(&c)));
+            m
+        }
+        _ => m,
+    };
+    if let Some(bg) = bg {
+        m = m.highlight(bg);
+    }
+    (m, fg)
+}
+
+/// The alignment of a paragraph that is entirely one aligned HTML element.
+fn block_align(text: &str, range: &Range<usize>, inl: &[Inline]) -> Option<BlockAlign> {
+    use obsidilight_core::markdown::inline::{html_attr, html_tag_name};
+    let t = text[range.clone()].trim_end();
+    let [n] = inl else { return None };
+    if n.kind != InlineKind::Html || n.range.start != range.start || n.range.end != range.start + t.len() {
+        return None;
+    }
+    let open = &text[n.range.start..n.inner.start];
+    let align = match html_tag_name(open).as_str() {
+        "center" => "center".to_string(),
+        _ => html_attr(open, "align").or_else(|| html_attr(open, "style").and_then(|s| crate::css::style_prop(&s, "text-align")))?.to_ascii_lowercase(),
+    };
+    match align.as_str() {
+        "center" => Some(BlockAlign::Center),
+        "right" => Some(BlockAlign::Right),
+        "justify" => Some(BlockAlign::Justify),
+        _ => None,
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MathAtom {
@@ -170,6 +248,8 @@ pub struct ProjBlock {
     pub keys: Vec<u64>,
     /// Identity for caching the block's measured height: source text, reveal state, part.
     pub hash: u64,
+    /// Text alignment (a paragraph wrapped in `<center>` / `<p align=…>`).
+    pub align: Option<BlockAlign>,
 }
 
 #[derive(Default)]
@@ -180,6 +260,8 @@ pub struct Projection {
     index: HashMap<u64, usize>,
     /// Leaf ranges to paint in the muted colour (revealed markers, frontmatter).
     pub muted: HashMap<u64, Vec<Range<usize>>>,
+    /// Leaf ranges in a colour of their own (`<font color>`, `<span style="color:…">`).
+    pub colors: HashMap<u64, Vec<(Range<usize>, Hsla)>>,
     pub version: u64,
     pub sel: Selection,
     pub mode: ViewMode,
@@ -270,6 +352,9 @@ struct LeafBuilder<'a> {
     run_marks: Vec<(Range<usize>, TextMark)>,
     map: LeafMap,
     muted: Vec<Range<usize>>,
+    /// Text colour in effect (inside `<font color>`), and the coloured leaf ranges.
+    fg: Option<Hsla>,
+    colors: Vec<(Range<usize>, Hsla)>,
     /// Source ranges hidden at the text level (quote prefixes), sorted; `.1` = revealed.
     prefixes: Vec<(Range<usize>, bool)>,
     /// Inside a table cell: `\|` in math is a literal pipe (Obsidian's table escaping).
@@ -293,6 +378,8 @@ impl<'a> LeafBuilder<'a> {
             run_marks: Vec::new(),
             map: LeafMap { segs: Vec::new(), src, len: 0 },
             muted: Vec::new(),
+            fg: None,
+            colors: Vec::new(),
             prefixes: Vec::new(),
             table_cell: false,
             pad_empty_lines: false,
@@ -413,6 +500,8 @@ impl<'a> LeafBuilder<'a> {
         let l = self.map.len;
         if muted {
             self.muted.push(l..l + s.len());
+        } else if let Some(c) = self.fg {
+            self.colors.push((l..l + s.len(), c));
         }
         self.push_seg(SegKind::Text, l..l + s.len(), src);
         self.map.len += s.len();
@@ -442,6 +531,9 @@ impl<'a> LeafBuilder<'a> {
         self.flush();
         self.para.push(InlineNode::custom(node.text(ATOM)));
         let l = self.map.len;
+        if let Some(c) = self.fg {
+            self.colors.push((l..l + ATOM.len(), c));
+        }
         self.push_seg(SegKind::Atom, l..l + ATOM.len(), src);
         self.map.len += ATOM.len();
     }
@@ -492,6 +584,24 @@ impl<'a> LeafBuilder<'a> {
                     self.inlines(&n.children, n.inner.clone(), &m);
                 }
                 self.marker(close, &m, reveal);
+            }
+            InlineKind::Html => {
+                let open_tag = self.text[open.clone()].to_string();
+                let name = obsidilight_core::markdown::inline::html_tag_name(&open_tag);
+                if !reveal && (name == "sup" || name == "sub") {
+                    let t = plain(&self.text[n.inner.clone()]);
+                    self.atom(n.range.clone(), MarkdownNode::new(SUPSUB_NODE, SupSubAtom { text: t, sup: name == "sup" }));
+                    return;
+                }
+                let (m, fg) = html_format(&open_tag, mark, self.pal.highlight);
+                self.marker(open, mark, reveal);
+                let was = self.fg;
+                if fg.is_some() {
+                    self.fg = fg;
+                }
+                self.inlines(&n.children, n.inner.clone(), &m);
+                self.fg = was;
+                self.marker(close, mark, reveal);
             }
             InlineKind::Escape => {
                 self.marker(open, mark, reveal);
@@ -558,6 +668,9 @@ impl<'a> LeafBuilder<'a> {
         self.flush();
         if !self.muted.is_empty() {
             proj.muted.insert(key, std::mem::take(&mut self.muted));
+        }
+        if !self.colors.is_empty() {
+            proj.colors.insert(key, std::mem::take(&mut self.colors));
         }
         proj.index.insert(key, proj.leaves.len());
         proj.leaves.push((key, self.map));
@@ -837,6 +950,7 @@ pub fn project(inp: &ProjectionInput) -> Projection {
         let new_leaf = |src: Range<usize>| LeafBuilder::new(text, src, sel.clone(), inp.palette, inp.resolve, inp.link_label);
         let mut nodes: Vec<(ProjNode, Vec<u64>)> = Vec::new();
         let mut indent = 0.0;
+        let mut align = None;
         match &b.kind {
             BlockKind::Table if !rev && parse_table(text, b.range.clone()).is_some() => {
                 let t = parse_table(text, b.range.clone()).expect("checked");
@@ -874,6 +988,7 @@ pub fn project(inp: &ProjectionInput) -> Projection {
                     lb.text(b.range.clone(), &TextMark::default(), true);
                 } else {
                     let inl = parse_inline(text, b.range.clone());
+                    align = block_align(text, &b.range, &inl);
                     lb.inlines(&inl, b.range.clone(), &TextMark::default());
                 }
                 nodes.push((ProjNode::Block(BlockNode::Paragraph(lb.finish(k, &mut proj))), vec![k]));
@@ -1039,7 +1154,7 @@ pub fn project(inp: &ProjectionInput) -> Projection {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
             (&text[b.range.clone()], rev, part, &sel_signature(&sel, &b.range)).hash(&mut h);
-            proj.blocks.push(ProjBlock { node, indent, keys, hash: h.finish() });
+            proj.blocks.push(ProjBlock { node, indent, keys, hash: h.finish(), align });
         }
     }
     proj
@@ -1123,6 +1238,27 @@ mod tests {
         for off in t.find("- [ ]").unwrap()..t.find("\n- [x]").unwrap() {
             assert!(p.locate(off).is_some(), "offset {off}");
         }
+    }
+
+    #[test]
+    fn toolbar_html_is_rendered_until_revealed() {
+        let t = "a <u>b</u> <font color=\"#ff0000\">c</font> x<sup>2</sup>\n\n<center>mid</center>\n";
+        let p = proj(t, t.len());
+        let (k, _) = &p.leaves[0];
+        assert_eq!(leaf_text(&p, *k), format!("a b c x{ATOM}"), "tags hidden, sup is an atom");
+        let colors = &p.colors[k];
+        assert_eq!(colors.len(), 1);
+        assert_eq!(colors[0].0, 4..5, "only the font's text is coloured");
+        assert_eq!(gpui_kit::Rgba::from(colors[0].1).r, 1.0);
+        assert_eq!(p.blocks.iter().filter_map(|b| b.align).collect::<Vec<_>>(), vec![BlockAlign::Center]);
+        // caret in an element: its tags show (muted); the others stay rendered
+        let p = proj(t, 3);
+        assert_eq!(leaf_text(&p, p.leaves[0].0), format!("a <u>b</u> c x{ATOM}"));
+        let p = proj(t, t.find("2<").unwrap());
+        assert_eq!(leaf_text(&p, p.leaves[0].0), "a b c x<sup>2</sup>");
+        // a paragraph only partly inside <center> is not centred
+        let p = proj("<center>a</center> b\n", 99);
+        assert!(p.blocks.iter().all(|b| b.align.is_none()));
     }
 
     #[test]

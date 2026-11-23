@@ -1124,8 +1124,13 @@ impl Render for Editor {
                     let _ = weak.update(cx, |e, cx| e.open_link(&url, new_tab, cx));
                 }
             });
+        // one call per leaf: own colours first, then muted markers (later ranges win)
+        let mut fg: HashMap<u64, Vec<(Range<usize>, Hsla)>> = proj.colors.clone();
         for (k, ranges) in &proj.muted {
-            rcx = rcx.with_foreground_ranges(*k, ranges.iter().map(|r| (r.clone(), muted)).collect());
+            fg.entry(*k).or_default().extend(ranges.iter().map(|r| (r.clone(), muted)));
+        }
+        for (k, ranges) in fg {
+            rcx = rcx.with_foreground_ranges(k, ranges);
         }
         let decorations: HashMap<u64, Vec<(Range<usize>, Hsla)>> =
             proj.selection_ranges(&sel_range).into_iter().map(|(k, v)| (k, v.into_iter().map(|r| (r, sel_color)).collect())).collect();
@@ -1184,6 +1189,12 @@ impl Render for Editor {
             let b = &proj.blocks[ix];
             let el = render::render_node(&b.node, ix, &host, &rcx, window, cx);
             let el = if b.indent > 0.0 { div().pl(px(b.indent)).child(el).into_any_element() } else { el };
+            let el = match b.align {
+                // the block itself moves (not the glyphs), so caret and selection geometry follow
+                Some(projection::BlockAlign::Center) => div().w_full().flex().justify_center().child(div().max_w_full().text_center().child(el)).into_any_element(),
+                Some(projection::BlockAlign::Right) => div().w_full().flex().justify_end().child(div().max_w_full().text_right().child(el)).into_any_element(),
+                _ => el, // justify: GPUI has no justified text; left as written
+            };
             children.push(measured::Measured::new(b.hash, self.heights.clone(), el).into_any_element());
         }
         if hi < n {

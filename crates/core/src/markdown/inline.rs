@@ -29,6 +29,78 @@ pub enum InlineKind {
     Tag,
     /// `^block-id` at the end of a line: inner is empty (hidden unless revealed).
     BlockId,
+    /// Inline HTML the editing toolbar writes (`<u>…</u>`, `<font color=…>`, `<sup>`…): the
+    /// opening tag is `range.start..inner.start`, the closing tag `inner.end..range.end`.
+    Html,
+}
+
+/// HTML elements rendered inline (formatting, colours, alignment); others stay text.
+pub const HTML_TAGS: &[&str] = &["u", "ins", "sup", "sub", "font", "span", "mark", "b", "strong", "i", "em", "s", "del", "strike", "center", "p", "div"];
+
+/// Tag name of an opening tag (`<font color="red">` → `font`), lowercased.
+pub fn html_tag_name(open: &str) -> String {
+    open.trim_start_matches('<').split(|c: char| c.is_whitespace() || c == '>' || c == '/').next().unwrap_or("").to_ascii_lowercase()
+}
+
+/// Value of attribute `name` in an opening tag (quoted or bare).
+pub fn html_attr(open: &str, name: &str) -> Option<String> {
+    let lower = open.to_ascii_lowercase();
+    let mut from = 0;
+    while let Some(i) = lower[from..].find(name) {
+        let at = from + i;
+        from = at + name.len();
+        let before_ok = lower[..at].ends_with(|c: char| c.is_whitespace());
+        let rest = lower[from..].trim_start();
+        if !before_ok || !rest.starts_with('=') {
+            continue;
+        }
+        let vstart = open.len() - rest.len() + 1;
+        let v = open[vstart..].trim_start();
+        let val = match v.chars().next() {
+            Some(q @ ('"' | '\'')) => v[1..].split(q).next().unwrap_or(""),
+            _ => v.split(|c: char| c.is_whitespace() || c == '>').next().unwrap_or(""),
+        };
+        return Some(val.to_string());
+    }
+    None
+}
+
+/// Paired HTML elements in `s` (relative offsets), skipping text inside `atoms`.
+fn html_spans(s: &str, base: usize, atoms: &[Inline]) -> Vec<Inline> {
+    let inside_atom = |i: usize| atoms.iter().any(|a| a.range.start - base <= i && i < a.range.end - base);
+    // every tag: (start, end, name, closing)
+    let mut tags: Vec<(usize, usize, String, bool)> = Vec::new();
+    let mut i = 0;
+    while let Some(j) = s[i..].find('<') {
+        let at = i + j;
+        i = at + 1;
+        if inside_atom(at) {
+            continue;
+        }
+        let Some(close) = s[at..].find('>').map(|k| at + k + 1) else { break };
+        let tag = &s[at..close];
+        if tag.contains('\n') {
+            continue;
+        }
+        let closing = tag.starts_with("</");
+        let name = html_tag_name(tag.trim_start_matches("</"));
+        if HTML_TAGS.contains(&name.as_str()) && !tag.ends_with("/>") {
+            tags.push((at, close, name, closing));
+            i = close;
+        }
+    }
+    let mut out = Vec::new();
+    let mut open: Vec<usize> = Vec::new();
+    for (ti, (start, end, name, closing)) in tags.iter().enumerate() {
+        if !closing {
+            open.push(ti);
+        } else if let Some(pos) = open.iter().rposition(|&o| tags[o].2 == *name) {
+            let o = open[pos];
+            open.truncate(pos);
+            out.push(Inline::leaf(InlineKind::Html, base + tags[o].0..base + end, base + tags[o].1..base + start));
+        }
+    }
+    out
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -182,8 +254,10 @@ pub fn parse_inline(text: &str, range: Range<usize>) -> Vec<Inline> {
         i += char_at(s, i).map(char::len_utf8).unwrap_or(1);
     }
     let spans = emphasis(s, base, &atoms);
+    let html = html_spans(s, base, &atoms);
     let mut all = atoms;
     all.extend(spans);
+    all.extend(html);
     nest(all)
 }
 
@@ -347,6 +421,22 @@ mod tests {
         assert_eq!(p("==hl== ~~st~~"), [(Highlight, "==hl==", "hl"), (Strike, "~~st~~", "st")]);
         assert_eq!(p("***both***"), [(Emph, "***both***", "**both**"), (Strong, "**both**", "both")]);
         assert_eq!(p("**a *b* c**"), [(Strong, "**a *b* c**", "a *b* c"), (Emph, "*b*", "b")]);
+    }
+
+    #[test]
+    fn html_formatting_spans() {
+        assert_eq!(p("a <u>word</u> b"), [(Html, "<u>word</u>", "word")]);
+        assert_eq!(p("<font color=\"#ff0000\">**red**</font>"), [(Html, "<font color=\"#ff0000\">**red**</font>", "**red**"), (Strong, "**red**", "red")]);
+        assert_eq!(p("<sup><sub>x</sub></sup>"), [(Html, "<sup><sub>x</sub></sup>", "<sub>x</sub>"), (Html, "<sub>x</sub>", "x")]);
+        // unknown tags, unclosed tags, comparisons and tags inside code stay text
+        assert_eq!(p("<b>open"), []);
+        assert_eq!(p("a < b > c"), []);
+        assert_eq!(p("<blink>x</blink>"), []);
+        assert_eq!(p("`<u>x</u>`"), [(Code, "`<u>x</u>`", "<u>x</u>")]);
+        assert_eq!(html_attr("<p align=\"center\">", "align").as_deref(), Some("center"));
+        assert_eq!(html_attr("<span style='background:#ff0'>", "style").as_deref(), Some("background:#ff0"));
+        assert_eq!(html_attr("<font color=red>", "color").as_deref(), Some("red"));
+        assert_eq!(html_tag_name("<FONT color=red>"), "font");
     }
 
     #[test]
