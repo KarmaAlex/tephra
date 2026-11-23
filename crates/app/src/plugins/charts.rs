@@ -243,7 +243,7 @@ pub fn layout(s: &Spec, w: f32, h: f32, fg: Rgba, grid: Rgba) -> Vec<Prim> {
 pub fn to_typst(prims: &[Prim], w: f32, h: f32) -> String {
     let c = |c: &Rgba| format!("rgb({}, {}, {}, {}%)", c.0, c.1, c.2, (c.3 * 100.0).round());
     let esc = |t: &str| t.replace('\\', "\\\\").replace('"', "\\\"");
-    let mut s = format!("#align(center, box(width: {w:.1}pt, height: {h:.1}pt, {{\n");
+    let mut s = format!("box(width: {w:.1}pt, height: {h:.1}pt, {{\n");
     for p in prims {
         match p {
             Prim::Rect { x, y, w, h, fill, stroke } => {
@@ -270,7 +270,7 @@ pub fn to_typst(prims: &[Prim], w: f32, h: f32) -> String {
             }
         }
     }
-    s += "}))";
+    s += "})";
     s
 }
 
@@ -371,7 +371,10 @@ impl CodeBlockRenderer for ChartBlock {
         // A4 text width with 10 mm margins ≈ 538 pt
         let w = 538.0 * spec.width;
         let h = w / 2.0;
-        Some(to_typst(&layout(&spec, w, h, Rgba(80, 80, 80, 1.0), Rgba(210, 210, 210, 1.0)), w, h))
+        // drawn for a 538 pt column, then scaled to the real one (landscape, margins, columns) and
+        // to the export's downscale
+        let chart = to_typst(&layout(&spec, w, h, Rgba(80, 80, 80, 1.0), Rgba(210, 210, 210, 1.0)), w, h);
+        Some(format!("#align(center, layout(size => scale(size.width / 538pt * scale_ * 100%, origin: top + left, reflow: true, {chart})))"))
     }
 }
 
@@ -432,7 +435,7 @@ mod tests {
         let height = |i: usize| if let Prim::Rect { h, .. } = bars[i] { *h } else { 0.0 };
         assert!(height(1) > height(0));
         let t = to_typst(&p, 400.0, 200.0);
-        assert!(t.starts_with("#align(center, box(width: 400.0pt") && t.contains("rect(") && t.contains("\"a\""));
+        assert!(t.starts_with("box(width: 400.0pt") && t.contains("rect(") && t.contains("\"a\""));
         let l = parse("type: line\nlabels: [a, b, c]\nseries:\n  - title: S\n    data: [1, 2, 3]\nfill: true\nbestFit: true\n").unwrap();
         let p = layout(&l, 400.0, 200.0, Rgba(0, 0, 0, 1.0), Rgba(200, 200, 200, 1.0));
         assert!(p.iter().any(|x| matches!(x, Prim::Polygon { .. })), "fill");

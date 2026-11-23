@@ -140,7 +140,8 @@ impl<'a> Emitter<'a> {
         let w = image::image_dimensions(&p).ok().map(|(w, _)| w as f32 * 0.75);
         let name = self.file(p);
         match w {
-            Some(w) if w < 520.0 => format!("#box(image({}, width: {w:.0}pt));", str_arg(&name)),
+            // `scale_`: the export's downscale (set in the prelude)
+            Some(w) if w < 520.0 => format!("#box(image({}, width: {w:.0}pt * scale_));", str_arg(&name)),
             _ => format!("#box(image({}, width: 100%));", str_arg(&name)),
         }
     }

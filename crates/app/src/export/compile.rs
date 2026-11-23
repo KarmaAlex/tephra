@@ -24,6 +24,9 @@ pub struct Job {
     pub source: String,
     pub math: Vec<(String, bool)>,
     pub files: Vec<(String, PathBuf)>,
+    /// Font families to try, in order: text and code (the editor's first).
+    pub sans: Vec<String>,
+    pub mono: Vec<String>,
 }
 
 pub struct Output {
@@ -99,6 +102,8 @@ pub fn run_isolated(job: Job) -> Result<Output, String> {
             "source": job.source,
             "math": job.math,
             "files": job.files.iter().map(|(n, p)| (n.clone(), p.to_string_lossy().to_string())).collect::<Vec<_>>(),
+            "sans": job.sans,
+            "mono": job.mono,
         });
         std::fs::write(dir.join("job.json"), spec.to_string()).map_err(|e| e.to_string())?;
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
@@ -131,6 +136,8 @@ pub fn worker(dir: &std::path::Path) {
         source: v["source"].as_str().unwrap_or("").to_string(),
         math: v["math"].as_array().into_iter().flatten().filter_map(|m| Some((m[0].as_str()?.to_string(), m[1].as_bool()?))).collect(),
         files: v["files"].as_array().into_iter().flatten().filter_map(|f| Some((f[0].as_str()?.to_string(), PathBuf::from(f[1].as_str()?)))).collect(),
+        sans: v["sans"].as_array().into_iter().flatten().filter_map(|x| x.as_str().map(String::from)).collect(),
+        mono: v["mono"].as_array().into_iter().flatten().filter_map(|x| x.as_str().map(String::from)).collect(),
     });
     let Some(job) = job else { return write_result(serde_json::json!({ "error": "unreadable export job" })) };
     match run(job) {
@@ -190,14 +197,18 @@ pub fn run(job: Job) -> Result<Output, String> {
         }
     }
     // fonts: the first installed of each list (Typst's embedded fonts as the last resort)
-    let pick = |names: &[&str]| -> String {
+    let pick = |names: &[String]| -> String {
         let book = fonts().book();
-        let found: Vec<String> = names.iter().filter(|n| book.contains_family(&n.to_lowercase())).map(|n| format!("\"{n}\"")).collect();
+        let mut found: Vec<String> = Vec::new();
+        for n in names {
+            let q = format!("\"{n}\"");
+            if book.contains_family(&n.to_lowercase()) && !found.contains(&q) {
+                found.push(q);
+            }
+        }
         format!("({},)", found.join(", "))
     };
-    source = source
-        .replace("@@SANS@@", &pick(&["Inter", "Noto Sans", "DejaVu Sans", "Liberation Sans", "Libertinus Serif"]))
-        .replace("@@MONO@@", &pick(&["JetBrains Mono", "JetBrainsMono NF", "DejaVu Sans Mono", "DejaVu Sans Mono", "Liberation Mono"]));
+    source = source.replace("@@SANS@@", &pick(&job.sans)).replace("@@MONO@@", &pick(&job.mono));
     let math_ms = t0.elapsed().as_secs_f64() * 1000.0;
     let main = file_id("main.typ");
     let world = DocWorld { main, source: Source::new(main, source), files, library: LazyHash::new(Library::default()) };

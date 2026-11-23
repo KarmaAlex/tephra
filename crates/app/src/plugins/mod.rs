@@ -293,6 +293,19 @@ impl PluginHost {
         cx.refresh_windows();
     }
 
+    /// Changes several settings at once (one save, one reload).
+    pub fn set_settings(cx: &mut App, id: &str, values: Vec<(&str, Value)>) {
+        let host = cx.global_mut::<PluginHost>();
+        for (k, v) in values {
+            host.settings.entry(id.to_string()).or_default().insert(k.to_string(), v);
+        }
+        host.persist_settings(id);
+        if host.unload_plugin(id) {
+            host.load_plugin(id);
+        }
+        cx.refresh_windows();
+    }
+
     /// Changes one setting, saves it, and reloads the plugin so it takes effect.
     pub fn set_setting(cx: &mut App, id: &str, key: &str, value: Value) {
         cx.global_mut::<PluginHost>().apply_setting(id, key, value);

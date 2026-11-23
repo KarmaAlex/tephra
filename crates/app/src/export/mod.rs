@@ -40,8 +40,9 @@ mod fixture {
                 no_border: false,
             });
             let body = e.blocks(&text, 0);
-            let source = format!("{}\n{body}\n", crate::plugins::pdf_export::prelude(rel, &crate::plugins::pdf_export::Page { paper: "A4".into(), margin_mm: 10.0, title: true, header: true, footer: true, font_pt: 11.0 }));
-            match run(Job { source, math: e.math.into_inner(), files: e.files.into_inner() }) {
+            let source = format!("{}\n{body}\n", crate::plugins::pdf_export::prelude(rel, &crate::plugins::pdf_export::Page::simple(10.0)));
+            let fonts = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+            match run(Job { source, math: e.math.into_inner(), files: e.files.into_inner(), sans: fonts(&["IBM Plex Sans", "Noto Sans"]), mono: fonts(&["DejaVu Sans Mono"]) }) {
                 Ok(o) => {
                     ok += 1;
                     pages += o.pages.len();
