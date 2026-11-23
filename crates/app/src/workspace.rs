@@ -5,7 +5,6 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::mpsc;
 use std::time::Duration;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
@@ -181,7 +180,7 @@ pub struct Workspace {
     preview: Option<WsPreview>,
     /// Document version of each editor last propagated to its peers (live sync).
     synced: HashMap<EntityId, u64>,
-    _watcher: Option<notify::RecommendedWatcher>,
+    _watcher: Option<Rc<crate::watcher::VaultWatcher>>,
     _subs: Vec<Subscription>,
 }
 
@@ -1416,49 +1415,12 @@ impl Workspace {
 
     // ---- watcher --------------------------------------------------------------------
 
-    fn watch(&self, root: &Path, cx: &mut Context<Self>) -> Option<notify::RecommendedWatcher> {
-        use notify::Watcher as _;
-        let (tx, rx) = mpsc::channel::<PathBuf>();
-        let mut w = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-            if let Ok(ev) = res {
-                use notify::event::{EventKind, ModifyKind};
-                // Only real changes. Access events (open/read/close) and metadata changes must be
-                // ignored: re-indexing reads files and listing folders opens them, so reacting to
-                // those would re-trigger itself forever (this caused ~1 s UI stalls every second).
-                let relevant = match ev.kind {
-                    EventKind::Create(_) | EventKind::Remove(_) => true,
-                    EventKind::Modify(ModifyKind::Metadata(_)) => false,
-                    EventKind::Modify(_) => true,
-                    EventKind::Access(_) | EventKind::Other | EventKind::Any => false,
-                };
-                if !relevant {
-                    return;
-                }
-                if std::env::var_os("OBSIDILIGHT_TIMING").is_some() {
-                    eprintln!("EVENT {:?} {:?}", ev.kind, ev.paths.first().and_then(|p| p.file_name()));
-                }
-                for p in ev.paths {
-                    let _ = tx.send(p);
-                }
-            }
-        })
-        .ok()?;
-        w.watch(root, notify::RecursiveMode::Recursive).ok()?;
-        let root = root.to_path_buf();
+    fn watch(&self, root: &Path, cx: &mut Context<Self>) -> Option<Rc<crate::watcher::VaultWatcher>> {
+        let w = Rc::new(crate::watcher::VaultWatcher::new(root).ok()?);
+        let queue = w.clone();
         cx.spawn(async move |this, cx| loop {
             cx.background_executor().timer(Duration::from_millis(250)).await;
-            let mut changed: Vec<String> = Vec::new();
-            while let Ok(p) = rx.try_recv() {
-                let Ok(rel) = p.strip_prefix(&root) else { continue };
-                let rel = rel.to_string_lossy().replace('\\', "/");
-                // our own temp files and dot-folders (.obsidian, .obsidilight, .stfolder…)
-                if rel.is_empty() || rel.split('/').any(|c| c.starts_with('.')) || rel.contains(".obsidilight-tmp-") {
-                    continue;
-                }
-                if !changed.contains(&rel) {
-                    changed.push(rel);
-                }
-            }
+            let changed = queue.drain();
             if changed.is_empty() {
                 continue;
             }
@@ -1713,13 +1675,17 @@ impl Workspace {
             .child(match current {
                 Some(Tab::Note(e)) => div().flex_1().min_h_0().child(e).into_any_element(),
                 Some(Tab::View(v)) => div().flex_1().min_h_0().child(v.view).into_any_element(),
+                // The message wraps to the pane's width and is clipped to it: as one unwrappable
+                // line centred in a narrow pane it spilled over both sidebars.
                 None => div()
                     .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .overflow_hidden()
                     .flex()
                     .items_center()
-                    .justify_center()
-                    .text_color(theme.muted_foreground)
-                    .child("No file open — pick one on the left, or Ctrl+N for a new note")
+                    .px_4()
+                    .child(div().w_full().text_center().text_color(theme.muted_foreground).child("No file open — pick one on the left, or Ctrl+N for a new note"))
                     .into_any_element(),
             })
             .into_any_element()

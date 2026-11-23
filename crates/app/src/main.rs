@@ -24,6 +24,7 @@ mod script;
 mod settings_ui;
 mod theme;
 mod ui;
+mod watcher;
 mod workspace;
 
 use std::path::PathBuf;
