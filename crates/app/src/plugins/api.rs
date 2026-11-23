@@ -335,6 +335,9 @@ pub trait VaultListener {
     fn renamed(&self, _old: &str, _new: &str, _moves: &[(String, String)], _cx: &mut App) {}
     /// A file or folder was deleted (moved to the trash).
     fn deleted(&self, _path: &str, _cx: &mut App) {}
+    /// A note's text changed: saved from the app (`external` false) or changed on disk by
+    /// something else (Syncthing, another editor). `old` = the text before, when known.
+    fn modified(&self, _path: &str, _old: Option<&str>, _new: &str, _external: bool, _cx: &mut App) {}
 }
 
 pub type Action = Rc<dyn Fn(&mut ActionCtx)>;

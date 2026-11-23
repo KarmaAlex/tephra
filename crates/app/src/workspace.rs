@@ -728,7 +728,12 @@ impl Workspace {
         match ev {
             EditorEvent::Saved(p) => {
                 let rel = self.rel(p);
+                let old = self.vault.borrow().index.text(&rel).map(String::from);
                 self.vault.borrow_mut().index.refresh(&rel);
+                let new = editor.read(cx).doc.text();
+                for l in Self::listeners(cx) {
+                    l.modified(&rel, old.as_deref(), &new, false, cx);
+                }
                 // the same note open in another pane: show what was just saved
                 for other in self.all_editors() {
                     if other != *editor && other.read(cx).path == *p {
@@ -898,6 +903,10 @@ impl Workspace {
         } else {
             Err(format!("moved, but links in {} note(s) could not be updated: {}", failures.len(), failures.join(", ")))
         }
+    }
+
+    fn listeners(cx: &App) -> Vec<Rc<dyn crate::plugins::VaultListener>> {
+        cx.try_global::<PluginHost>().map(|h| h.reg.vault_listeners.iter().map(|(_, l)| l.clone()).collect()).unwrap_or_default()
     }
 
     /// Applies edits to notes: through the editor when the note is open (undoable, saved at
@@ -1218,7 +1227,19 @@ impl Workspace {
         let t = std::time::Instant::now();
         let log = std::env::var_os("OBSIDILIGHT_TIMING").is_some();
         let before = self.vault.borrow().index.files().count();
+        let old: Vec<(String, Option<String>)> = rels.iter().filter(|r| is_note(r)).map(|r| (r.clone(), self.vault.borrow().index.text(r).map(String::from))).collect();
         self.vault.borrow_mut().index.refresh_batch(rels);
+        let listeners = Self::listeners(cx);
+        if !listeners.is_empty() {
+            for (rel, before) in &old {
+                let now = self.vault.borrow().index.text(rel).map(String::from);
+                if let Some(now) = now.filter(|n| Some(n) != before.as_ref()) {
+                    for l in &listeners {
+                        l.modified(rel, before.as_deref(), &now, true, cx);
+                    }
+                }
+            }
+        }
         let root = self.vault.borrow().root.clone();
         for e in &self.all_editors() {
             let p = e.read(cx).path.clone();
