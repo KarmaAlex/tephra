@@ -7,6 +7,7 @@
 pub mod academic_notes;
 pub mod api;
 pub mod bookmarks;
+pub mod charts;
 pub mod command_palette;
 pub mod copy_block_link;
 pub mod desmos;
@@ -69,6 +70,7 @@ pub fn bundled(vault_root: &Path) -> Vec<Box<dyn Plugin>> {
         Box::new(academic_notes::AcademicNotes::new(vault_root)),
         Box::new(copy_block_link::CopyBlockLink::new()),
         Box::new(editing_toolbar::EditingToolbar::new(vault_root)),
+        Box::new(charts::Charts::new()),
         Box::new(word_count::WordCount::new()),
         Box::new(desmos::Desmos::new()),
         Box::new(horizontal_blocks::HorizontalBlocks::new(vault_root)),
