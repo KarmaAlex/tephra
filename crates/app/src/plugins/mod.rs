@@ -14,6 +14,7 @@ pub mod daily_notes;
 pub mod desmos;
 pub mod editing_toolbar;
 pub mod file_recovery;
+pub mod graph;
 pub mod horizontal_blocks;
 pub mod latex_suite;
 pub mod links_panes;
@@ -73,6 +74,7 @@ pub fn bundled(vault_root: &Path) -> Vec<Box<dyn Plugin>> {
         Box::new(note_composer::NoteComposer::new(vault_root)),
         Box::new(file_recovery::FileRecovery::new(vault_root)),
         Box::new(page_preview::PagePreview::new()),
+        Box::new(graph::Graph::new(vault_root)),
         Box::new(bookmarks::Bookmarks::new(vault_root)),
         Box::new(links_panes::Backlinks::new()),
         Box::new(links_panes::OutgoingLinks::new()),

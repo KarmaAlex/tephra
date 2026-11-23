@@ -258,6 +258,27 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                         println!("PANES {}", out.join(" | "));
                     });
                 }
+                "graph-click" | "graph-move" => {
+                    // graph-click <node id> [ctrl]: click where the graph view draws that node
+                    // graph-move <node id> [ctrl]: hover it
+                    let (id, ctrl) = match rest.strip_suffix(" ctrl") {
+                        Some(r) => (r.to_string(), true),
+                        None => (rest.to_string(), false),
+                    };
+                    let view = crate::plugins::graph::LAST.with(|l| l.borrow().clone()).and_then(|w| w.upgrade());
+                    let Some(p) = view.and_then(|v| v.update(cx, |g, _| g.screen_pos(&id))) else {
+                        println!("GRAPH-CLICK {id}: not shown");
+                        continue;
+                    };
+                    let modifiers = Modifiers { control: ctrl, ..Default::default() };
+                    let _ = handle.update(cx, |_, w, cx| {
+                        w.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position: p, modifiers, ..Default::default() }), cx);
+                        if cmd == "graph-click" {
+                            w.dispatch_event(PlatformInput::MouseDown(MouseDownEvent { button: MouseButton::Left, position: p, click_count: 1, modifiers, ..Default::default() }), cx);
+                            w.dispatch_event(PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position: p, click_count: 1, modifiers, ..Default::default() }), cx);
+                        }
+                    });
+                }
                 "ws-texts" => {
                     // ws-texts: the active note's text in every pane (layout order), `d` = unsaved
                     let _ = ws.update(cx, |ws, cx| {
