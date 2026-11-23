@@ -11,11 +11,25 @@ use crate::plugins::{PluginHost, SettingKind};
 
 pub fn open(window: &mut Window, cx: &mut App) {
     window.open_dialog(cx, |dialog, _, cx| {
-        dialog.title("Settings").w(crate::ui::p(cx, 880.)).child(div().h(crate::ui::r(580.)).child(Settings::new("obsidilight-settings").pages(pages(cx))))
+        dialog.title("Settings").w(crate::ui::p(cx, 880.)).child(div().h(crate::ui::r(580.)).child(Settings::new("obsidilight-settings").pages(pages(cx).into_iter().map(|(_, p)| p))))
     });
 }
 
-fn pages(cx: &App) -> Vec<SettingPage> {
+/// Opens Settings at the page titled `title` (a plugin's name), or the first page.
+pub fn open_at(title: &str, window: &mut Window, cx: &mut App) {
+    use gpui_kit::component::setting::SelectIndex;
+    let page_ix = pages(cx).iter().position(|(t, _)| t == title).unwrap_or(0);
+    // a fresh id: the settings' state (and so the page shown) starts anew
+    static OPENED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = OPENED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    window.open_dialog(cx, move |dialog, _, cx| {
+        let settings = Settings::new(SharedString::from(format!("obsidilight-settings-{n}"))).pages(pages(cx).into_iter().map(|(_, p)| p)).default_selected_index(SelectIndex { page_ix, group_ix: None });
+        dialog.title("Settings").w(crate::ui::p(cx, 880.)).child(div().h(crate::ui::r(580.)).child(settings))
+    });
+}
+
+/// The pages with their titles.
+fn pages(cx: &App) -> Vec<(String, SettingPage)> {
     let Some(host) = cx.try_global::<PluginHost>() else { return Vec::new() };
     let manifests = host.manifests();
     let toggles: Vec<SettingItem> = manifests
@@ -37,10 +51,10 @@ fn pages(cx: &App) -> Vec<SettingPage> {
         })
         .collect();
     let mut pages = vec![
-        SettingPage::new("Editor").group(SettingGroup::new().items(editor)),
-        appearance_page(cx),
-        SettingPage::new("Plugins").description("Bundled plugins. Turning one off removes everything it added; no restart needed.").group(SettingGroup::new().items(toggles)),
-        crate::hotkeys::settings_page(cx),
+        ("Editor".to_string(), SettingPage::new("Editor").group(SettingGroup::new().items(editor))),
+        ("Appearance".to_string(), appearance_page(cx)),
+        ("Plugins".to_string(), SettingPage::new("Plugins").description("Bundled plugins. Turning one off removes everything it added; no restart needed.").group(SettingGroup::new().items(toggles))),
+        ("Hotkeys".to_string(), crate::hotkeys::settings_page(cx)),
     ];
     for m in manifests.iter().filter(|m| host.is_enabled(m.id)) {
         let id = m.id;
@@ -83,7 +97,7 @@ fn pages(cx: &App) -> Vec<SettingPage> {
             items.push(SettingItem::render(move |_, window, cx| render(window, cx)).keywords([tab.title.clone()]));
         }
         if !items.is_empty() {
-            pages.push(SettingPage::new(m.name).description(m.description).group(SettingGroup::new().items(items)));
+            pages.push((m.name.to_string(), SettingPage::new(m.name).description(m.description).group(SettingGroup::new().items(items))));
         }
     }
     pages

@@ -323,6 +323,22 @@ impl PluginHost {
         cx.refresh_windows();
     }
 
+    /// Saves values a plugin reads while it runs (e.g. the colour picked last), without
+    /// reloading it.
+    pub fn store_settings(cx: &mut App, id: &str, values: Vec<(&str, Value)>) {
+        let host = cx.global_mut::<PluginHost>();
+        for (k, v) in values {
+            host.settings.entry(id.to_string()).or_default().insert(k.to_string(), v);
+        }
+        host.persist_settings(id);
+        cx.refresh_windows();
+    }
+
+    /// A setting's default (from the plugin's manifest).
+    pub fn setting_default(&self, id: &str, key: &str) -> Value {
+        self.plugins.iter().map(|p| p.manifest()).find(|m| m.id == id).and_then(|m| m.settings.iter().find(|s| s.key == key)).map(|s| s.default.clone()).unwrap_or(Value::Null)
+    }
+
     /// Changes one setting, saves it, and reloads the plugin so it takes effect.
     pub fn set_setting(cx: &mut App, id: &str, key: &str, value: Value) {
         cx.global_mut::<PluginHost>().apply_setting(id, key, value);

@@ -7,6 +7,11 @@
 //!   click <x> <y> [count]     drag <x1> <y1> <x2> <y2>
 //!   scroll <dy>               state                   shot <path.png>     quit
 //!   resize <w> <h>
+//!   bounds <key>              where a probed element is drawn (see [`probe`])
+//!   clickk <key> [dx] [dy]     click a probed element's centre (plus an offset)
+//!   dragk <from-key> <to-key> [dy] [ms] [shot.png]   drag from one probed element's centre to
+//!                             another's (dy: offset from the target's centre); then hold the
+//!                             button `ms` before releasing, and/or take a screenshot
 //! `shot` captures only this app's window, through `target/release/winshot` (see tools/winshot).
 
 use std::time::Duration;
@@ -14,6 +19,30 @@ use std::time::Duration;
 use gpui_kit::*;
 
 use crate::editor::Editor;
+
+/// Where elements marked with [`probe`] were last drawn; installed only while a script runs.
+#[derive(Default)]
+pub struct Probes(pub std::collections::HashMap<String, Bounds<Pixels>>);
+impl Global for Probes {}
+
+/// Records the bounds of its parent (which must be `relative`) under `key`, for scripts that
+/// click or drag things whose position depends on layout. Nothing outside scripted runs.
+pub fn probe(key: impl FnOnce() -> String, cx: &App) -> Option<AnyElement> {
+    if !cx.has_global::<Probes>() {
+        return None;
+    }
+    let key = key();
+    Some(
+        canvas(move |b, _, cx| {
+            cx.global_mut::<Probes>().0.insert(key, b);
+        }, |_, _, _, _| {})
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+        .into_any_element(),
+    )
+}
 
 fn keystroke(s: &str) -> Option<Keystroke> {
     Keystroke::parse(Box::leak(s.to_string().into_boxed_str())).ok()
@@ -52,6 +81,7 @@ fn tab_name(t: &crate::workspace::Tab, root: &std::path::Path, cx: &App) -> Stri
 pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>, window: &mut Window, cx: &mut App) {
     let Ok(script) = std::env::var("OBSIDILIGHT_SCRIPT").map(std::fs::read_to_string) else { return };
     let Ok(script) = script else { return };
+    cx.set_global(Probes::default());
     let handle = window.window_handle();
     let weak = editor.downgrade();
     cx.spawn(async move |cx| {
@@ -156,6 +186,71 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                         let _ = handle.update(cx, |_, w, cx| {
                             w.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position: p, pressed_button: Some(MouseButton::Left), ..Default::default() }), cx);
                         });
+                    }
+                    let _ = handle.update(cx, |_, w, cx| {
+                        w.dispatch_event(PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position: b, click_count: 1, ..Default::default() }), cx);
+                    });
+                }
+                "bounds" => {
+                    let b = cx.update(|cx| cx.global::<Probes>().0.get(rest.trim()).copied());
+                    match b {
+                        Some(b) => println!("BOUNDS {} {:.0} {:.0} {:.0} {:.0}", rest.trim(), f32::from(b.origin.x), f32::from(b.origin.y), f32::from(b.size.width), f32::from(b.size.height)),
+                        None => println!("BOUNDS {} none", rest.trim()),
+                    }
+                }
+                "clickk" => {
+                    let mut parts = rest.split_whitespace();
+                    let k = parts.next().unwrap_or("");
+                    let dx = parts.next().and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0);
+                    let dy = parts.next().and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0);
+                    let Some(b) = cx.update(|cx| cx.global::<Probes>().0.get(k).copied()) else {
+                        println!("CLICKK {k}: not on screen");
+                        continue;
+                    };
+                    let p = point(b.center().x + px(dx), b.center().y + px(dy));
+                    let _ = handle.update(cx, |_, w, cx| {
+                        w.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position: p, ..Default::default() }), cx);
+                        w.dispatch_event(PlatformInput::MouseDown(MouseDownEvent { button: MouseButton::Left, position: p, click_count: 1, ..Default::default() }), cx);
+                        w.dispatch_event(PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position: p, click_count: 1, ..Default::default() }), cx);
+                    });
+                }
+                "dragk" => {
+                    let mut parts = rest.split_whitespace();
+                    let (from, to) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
+                    let dy = parts.next().and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0);
+                    let (fb, tb) = cx.update(|cx| {
+                        let p = &cx.global::<Probes>().0;
+                        (p.get(from).copied(), p.get(to).copied())
+                    });
+                    let (Some(fb), Some(tb)) = (fb, tb) else {
+                        println!("DRAGK {from} -> {to}: not on screen");
+                        continue;
+                    };
+                    let (a, b) = (fb.center(), point(tb.center().x, tb.center().y + px(dy)));
+                    let _ = handle.update(cx, |_, w, cx| {
+                        w.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position: a, ..Default::default() }), cx);
+                        w.dispatch_event(PlatformInput::MouseDown(MouseDownEvent { button: MouseButton::Left, position: a, click_count: 1, ..Default::default() }), cx);
+                    });
+                    for i in 1..=10 {
+                        let t = i as f32 / 10.0;
+                        let p = point(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
+                        cx.background_executor().timer(Duration::from_millis(25)).await;
+                        let _ = handle.update(cx, |_, w, cx| {
+                            w.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position: p, pressed_button: Some(MouseButton::Left), ..Default::default() }), cx);
+                        });
+                    }
+                    cx.background_executor().timer(Duration::from_millis(60)).await;
+                    let mut last = parts.next();
+                    if let Some(ms) = last.and_then(|v| v.parse::<u64>().ok()) {
+                        // hold still (things that happen while resting on a spot), maybe then a shot
+                        cx.background_executor().timer(Duration::from_millis(ms)).await;
+                        last = parts.next();
+                    }
+                    if let Some(path) = last {
+                        cx.background_executor().timer(Duration::from_millis(250)).await;
+                        let tool = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("winshot")));
+                        let ok = tool.as_ref().and_then(|t| std::process::Command::new(t).arg(std::process::id().to_string()).arg(path).status().ok()).is_some_and(|s| s.success());
+                        println!("SHOT {path} {}", if ok { "ok" } else { "failed" });
                     }
                     let _ = handle.update(cx, |_, w, cx| {
                         w.dispatch_event(PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position: b, click_count: 1, ..Default::default() }), cx);

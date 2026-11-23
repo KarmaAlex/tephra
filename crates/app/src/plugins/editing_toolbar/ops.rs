@@ -247,6 +247,77 @@ pub fn clear_formatting(t: &str, sel: Range<usize>) -> Change {
     Change { range: r.clone(), text: s, sel: Selection::new(r.start, r.start + len) }
 }
 
+/// Text colour or highlight colour, written as the Editing Toolbar plugin writes them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ColorKind {
+    /// `<font color="#d83931">…</font>`
+    Font,
+    /// `<span style="background:#cdf4698c">…</span>`
+    Background,
+}
+
+impl ColorKind {
+    pub fn open(self, c: &str) -> String {
+        match self {
+            Self::Font => format!("<font color=\"{c}\">"),
+            Self::Background => format!("<span style=\"background:{c}\">"),
+        }
+    }
+    pub fn close(self) -> &'static str {
+        match self {
+            Self::Font => "</font>",
+            Self::Background => "</span>",
+        }
+    }
+    /// The opening tag, colour captured; `end` anchors it at the end of the text.
+    fn open_re(self, end: bool) -> regex::Regex {
+        let p = match self {
+            Self::Font => r#"<font color="([^"]*)">"#,
+            Self::Background => r#"<span style="background(?:-color)?:\s*([^";]*);?\s*">"#,
+        };
+        regex::Regex::new(&if end { format!("{p}$") } else { format!("^{p}") }).expect("regex")
+    }
+}
+
+/// Colours the selection. `Some(c)`: wraps it in `kind`'s tag with colour `c`, or changes the
+/// colour when it is already wrapped (the tags inside the selection or just around it); with
+/// `toggle`, a selection already in `c` loses its colour instead (the button's second click).
+/// `None` removes the colour. With no selection the tags go in around the caret.
+pub fn set_color(t: &str, sel: Range<usize>, kind: ColorKind, color: Option<&str>, toggle: bool) -> Option<Change> {
+    let close = kind.close();
+    let s = &t[sel.clone()];
+    // (outer range, inner range, current colour)
+    let wrapped = if let Some(m) = kind.open_re(false).captures(s).filter(|_| s.ends_with(close)) {
+        let open_len = m[0].len();
+        (open_len + close.len() <= s.len()).then(|| (sel.clone(), sel.start + open_len..sel.end - close.len(), m[1].to_string()))
+    } else {
+        None
+    };
+    let wrapped = wrapped.or_else(|| {
+        let m = kind.open_re(true).captures(&t[..sel.start])?;
+        t[sel.end..].starts_with(close).then(|| (sel.start - m[0].len()..sel.end + close.len(), sel.clone(), m[1].to_string()))
+    });
+    match (wrapped, color) {
+        (Some((outer, inner, cur)), c) => {
+            let body = &t[inner.clone()];
+            match c {
+                Some(c) if !(toggle && cur.trim().eq_ignore_ascii_case(c)) => {
+                    let open = kind.open(c);
+                    let start = outer.start + open.len();
+                    Some(Change { range: outer, text: format!("{open}{body}{close}"), sel: Selection::new(start, start + body.len()) })
+                }
+                _ => Some(Change { range: outer.clone(), text: body.to_string(), sel: Selection::new(outer.start, outer.start + body.len()) }),
+            }
+        }
+        (None, None) => None,
+        (None, Some(c)) => {
+            let open = kind.open(c);
+            let start = sel.start + open.len();
+            Some(Change { range: sel, text: format!("{open}{s}{close}"), sel: Selection::new(start, start + s.len()) })
+        }
+    }
+}
+
 /// Line tools of the toolbar's "Text tools" menu.
 pub fn lines_tool(t: &str, sel: Range<usize>, tool: &str) -> Option<Change> {
     let r = lines_range(t, &sel);
@@ -364,5 +435,41 @@ mod tests {
         assert_eq!(apply(l, &lines_tool(l, 0..l.len(), "dedupe-lines").unwrap()), "- x\n- y");
         assert_eq!(apply(l, &lines_tool(l, 0..l.len(), "list-to-table").unwrap()), "| Item |\n| --- |\n| x |\n| y |\n| x |");
         assert_eq!(plain_text("**a** [[N|n]] [t](u)"), "a n t");
+    }
+
+    #[test]
+    fn colours_wrap_change_and_remove() {
+        use ColorKind::*;
+        let t = "a word here";
+        let set = |t: &str, sel: Range<usize>, k, c: Option<&str>, toggle| set_color(t, sel, k, c, toggle).map(|c| (apply(t, &c), c.sel));
+        // wrap, the selection stays on the word
+        let (t1, s1) = set(t, 2..6, Font, Some("#d83931"), false).unwrap();
+        assert_eq!(t1, "a <font color=\"#d83931\">word</font> here");
+        assert_eq!(&t1[s1.range()], "word");
+        // another colour replaces it (selection inside, or covering the tags)
+        let (t2, s2) = set(&t1, s1.range(), Font, Some("#245BDB"), false).unwrap();
+        assert_eq!(t2, "a <font color=\"#245BDB\">word</font> here");
+        let all = 2..t2.len() - 5;
+        assert_eq!(set(&t2, all, Font, Some("#ff0000"), false).unwrap().0, "a <font color=\"#ff0000\">word</font> here");
+        // the button again with the same colour removes it; picking it again keeps it
+        assert_eq!(set(&t2, s2.range(), Font, Some("#245bdb"), true).unwrap().0, t);
+        assert_eq!(set(&t2, s2.range(), Font, Some("#245BDB"), false).unwrap().0, t2);
+        // remove
+        let (t3, s3) = set(&t2, s2.range(), Font, None, false).unwrap();
+        assert_eq!((t3.as_str(), &t3[s3.range()]), (t, "word"));
+        assert_eq!(set(t, 2..6, Font, None, false), None, "nothing to remove");
+        // background, also as Obsidian's plugin and others write it
+        let (b1, bs) = set(t, 2..6, Background, Some("#CDF4698C"), false).unwrap();
+        assert_eq!(b1, "a <span style=\"background:#CDF4698C\">word</span> here");
+        assert_eq!(set(&b1, bs.range(), Background, Some("#A0CCF68C"), false).unwrap().0, "a <span style=\"background:#A0CCF68C\">word</span> here");
+        let other = "a <span style=\"background-color: #ff0;\">word</span> here";
+        let w = other.find("word").unwrap();
+        assert_eq!(set(other, w..w + 4, Background, None, false).unwrap().0, t);
+        // a font tag isn't a background and vice versa: nesting both works
+        let both = set(&t1, s1.range(), Background, Some("#ff0"), false).unwrap().0;
+        assert_eq!(both, "a <font color=\"#d83931\"><span style=\"background:#ff0\">word</span></font> here");
+        // no selection: an empty pair, caret inside
+        let (e, es) = set("ab", 1..1, Font, Some("#000"), false).unwrap();
+        assert_eq!((e.as_str(), es.range()), ("a<font color=\"#000\"></font>b", 20..20));
     }
 }

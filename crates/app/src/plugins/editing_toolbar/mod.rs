@@ -1,32 +1,45 @@
 //! Editing toolbar (replaces the community plugin "Editing Toolbar"): a Word-like formatting
-//! bar above the editor. Its layout is the one saved by the Obsidian plugin
+//! bar above the editor. Its layout starts as the one saved by the Obsidian plugin
 //! (`.obsidian/plugins/editing-toolbar/data.json`, `menuCommands`; read, never written), with
 //! the same command ids, so buttons, submenus and dropdowns come out as you arranged them.
+//! You change it in Settings → Editing toolbar (M8); that copy is saved in
+//! `.obsidilight/plugins/editing-toolbar.json`.
 //! Every action is also a command (palette, hotkeys: Ctrl+B / Ctrl+I / Ctrl+K as in Obsidian).
+//! The colour buttons have a picker next to them; the colour you pick is applied and becomes
+//! the button's colour.
 
+pub mod layout;
+mod layout_ui;
 pub mod ops;
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::Path;
 use std::rc::Rc;
 
 use gpui_kit::assets::IconName;
-use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
-use gpui_kit::component::{h_flex, ActiveTheme as _};
+use gpui_kit::component::color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState};
+use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenuItem};
+use gpui_kit::component::{h_flex, ActiveTheme as _, Sizable as _};
 use gpui_kit::*;
 use obsidilight_core::EditKind;
 use serde_json::{Map, Value};
 
-use self::ops::{Change, List};
+use self::layout::Item;
+use self::ops::{Change, ColorKind, List};
 use super::api::*;
+use super::PluginHost;
+
+pub const ID: &str = "editing-toolbar";
 
 /// What an action does.
 #[derive(Clone)]
 enum Op {
     Wrap(&'static str, &'static str),
-    /// Wrap with HTML whose opening tag depends on settings (colours).
-    WrapWith(String, &'static str),
+    /// Colour the selection with the button's current colour (again: remove it).
+    Color(ColorKind),
+    RemoveColor(ColorKind),
     Heading(usize),
     List(List),
     Checklist,
@@ -47,8 +60,9 @@ enum Op {
     FocusMode(bool),
 }
 
-/// (id without the `editing-toolbar:` prefix, name, default hotkey, op). Ids are the plugin's.
-fn table(font: &str, bg: &str) -> Vec<(&'static str, &'static str, Option<&'static str>, Op)> {
+/// (id without the `editing-toolbar:` prefix, name, default hotkey, op). Ids are the plugin's
+/// (the two "remove colour" commands are ours).
+fn table() -> Vec<(&'static str, &'static str, Option<&'static str>, Op)> {
     vec![
         ("editor-undo", "Undo", None, Op::Editor("undo")),
         ("editor-redo", "Redo", None, Op::Editor("redo")),
@@ -105,11 +119,182 @@ fn table(font: &str, bg: &str) -> Vec<(&'static str, &'static str, Option<&'stat
         ("left", "Align left", None, Op::Wrap("<p align=\"left\">", "</p>")),
         ("center", "Centre", None, Op::Wrap("<center>", "</center>")),
         ("right", "Align right", None, Op::Wrap("<p align=\"right\">", "</p>")),
-        ("change-font-color", "Font colour", None, Op::WrapWith(format!("<font color=\"{font}\">"), "</font>")),
-        ("change-background-color", "Background colour", None, Op::WrapWith(format!("<span style=\"background:{bg}\">"), "</span>")),
+        ("change-font-color", "Font colour", None, Op::Color(ColorKind::Font)),
+        ("change-background-color", "Background colour", None, Op::Color(ColorKind::Background)),
+        ("remove-font-color", "Remove font colour", None, Op::RemoveColor(ColorKind::Font)),
+        ("remove-background-color", "Remove background colour", None, Op::RemoveColor(ColorKind::Background)),
         ("fullscreen-focus", "Fullscreen focus mode", None, Op::FocusMode(true)),
         ("workplace-fullscreen-focus", "Focus mode", None, Op::FocusMode(false)),
     ]
+}
+
+/// Where the layout editor lists a command.
+fn category(id: &str) -> &'static str {
+    match id {
+        "editor-undo" | "editor-redo" | "editor-copy" | "editor-cut" | "editor-paste" | "editor:swap-line-down" | "editor:swap-line-up" => "Edit",
+        "toggle-bold" | "toggle-italics" | "toggle-strikethrough" | "underline" | "toggle-highlight" | "superscript" | "subscript" | "editor:toggle-code" | "toggle-inline-math" | "format-eraser" => "Text",
+        "change-font-color" | "change-background-color" | "remove-font-color" | "remove-background-color" | "justify" | "left" | "center" | "right" => "Colour and alignment",
+        id if id.starts_with("header") => "Headings",
+        "toggle-numbered-list" | "toggle-bullet-list" | "editor:toggle-checklist-status" | "editor:cycle-list-checklist" | "indent-list" | "undent-list" => "Lists",
+        "editor:toggle-blockquote" | "insert-callout" | "codeblock" | "editor:insert-mathblock" | "editor:insert-table" | "hrline" => "Blocks",
+        "editor:insert-wikilink" | "editor:insert-embed" | "insert-link" | "editor:attach-file" => "Links and files",
+        "fullscreen-focus" | "workplace-fullscreen-focus" => "View",
+        _ => "Text tools",
+    }
+}
+
+const CATEGORIES: &[&str] = &["Text", "Colour and alignment", "Headings", "Lists", "Blocks", "Links and files", "Edit", "Text tools", "View"];
+
+type Ops = HashMap<&'static str, (&'static str, Op)>;
+
+fn ops_map() -> Ops {
+    table().into_iter().map(|(id, name, _, op)| (id, (name, op))).collect()
+}
+
+/// The setting holding the colour a colour button applies.
+fn color_key(k: ColorKind) -> &'static str {
+    match k {
+        ColorKind::Font => "cMenuFontColor",
+        ColorKind::Background => "cMenuBackgroundColor",
+    }
+}
+
+fn recent_key(k: ColorKind) -> &'static str {
+    match k {
+        ColorKind::Font => "recentFontColors",
+        ColorKind::Background => "recentBackgroundColors",
+    }
+}
+
+fn custom_key(k: ColorKind) -> &'static str {
+    match k {
+        ColorKind::Font => "customFontColors",
+        ColorKind::Background => "customBackgroundColors",
+    }
+}
+
+/// The colour the button applies now: the last one picked, at first your Editing Toolbar's.
+fn current_color(cx: &App, k: ColorKind) -> String {
+    let d = match k {
+        ColorKind::Font => "#ff0000",
+        ColorKind::Background => "#d3f8b6",
+    };
+    cx.try_global::<PluginHost>().and_then(|h| h.setting(ID, color_key(k)).as_str().map(String::from)).filter(|c| !c.trim().is_empty()).unwrap_or(d.into())
+}
+
+fn strings(v: &Value) -> Vec<String> {
+    v.as_array().into_iter().flatten().filter_map(|x| x.as_str().map(String::from)).collect()
+}
+
+/// `#rrggbb`, or `#rrggbbaa` when not opaque (as the Editing Toolbar writes colours).
+pub fn hex(c: Hsla) -> String {
+    let r = Rgba::from(c);
+    let b = |x: f32| (x.clamp(0., 1.) * 255.).round() as u8;
+    if r.a >= 0.998 {
+        format!("#{:02x}{:02x}{:02x}", b(r.r), b(r.g), b(r.b))
+    } else {
+        format!("#{:02x}{:02x}{:02x}{:02x}", b(r.r), b(r.g), b(r.b), b(r.a))
+    }
+}
+
+/// A colour was picked: it colours the selection and becomes the button's colour (saved, with
+/// the recent colours the picker offers first).
+fn pick_color(k: ColorKind, c: String, window: &mut Window, cx: &mut App) {
+    let mut recent = cx.try_global::<PluginHost>().map(|h| strings(&h.setting(ID, recent_key(k)))).unwrap_or_default();
+    recent.retain(|x| !x.eq_ignore_ascii_case(&c));
+    recent.insert(0, c.clone());
+    recent.truncate(7);
+    PluginHost::store_settings(cx, ID, vec![(color_key(k), Value::from(c.clone())), (recent_key(k), Value::from(recent))]);
+    let editor = WorkspaceHandle::current(cx).and_then(|w| w.active_editor(cx));
+    let mut a = ActionCtx { window, cx, editor };
+    apply_change(&mut a, &|t, s| ops::set_color(t, s, k, Some(&c), false));
+    focus_editor(&mut a);
+}
+
+/// The colour pickers next to the colour buttons (one per kind, kept for the window's life).
+struct Pickers {
+    font: Entity<ColorPickerState>,
+    bg: Entity<ColorPickerState>,
+    _subs: Vec<Subscription>,
+}
+impl Global for Pickers {}
+
+fn make_picker(k: ColorKind, window: &mut Window, cx: &mut App, subs: &mut Vec<Subscription>) -> Entity<ColorPickerState> {
+    let init = crate::css::parse_color(&current_color(cx, k));
+    let state = cx.new(|cx| {
+        let s = ColorPickerState::new(window, cx);
+        match init {
+            Some(c) => s.default_value(c),
+            None => s,
+        }
+    });
+    // Palette clicks and Enter in the hex field close the picker and apply at once; the HSLA
+    // sliders change the colour continuously, so that colour is applied once the picker closes.
+    let pending: Rc<Cell<Option<Hsla>>> = Rc::default();
+    let p = pending.clone();
+    subs.push(window.subscribe(&state, cx, move |state, ev: &ColorPickerEvent, window, cx| {
+        let ColorPickerEvent::Change(Some(c)) = ev else { return };
+        if state.read(cx).is_open() {
+            p.set(Some(*c));
+        } else {
+            p.set(None);
+            pick_color(k, hex(*c), window, cx);
+        }
+    }));
+    subs.push(window.observe(&state, cx, move |state, window, cx| {
+        if !state.read(cx).is_open() {
+            if let Some(c) = pending.take() {
+                pick_color(k, hex(c), window, cx);
+            }
+        }
+    }));
+    state
+}
+
+fn picker(k: ColorKind, window: &mut Window, cx: &mut App) -> Entity<ColorPickerState> {
+    if cx.try_global::<Pickers>().is_none() {
+        let mut subs = Vec::new();
+        let font = make_picker(ColorKind::Font, window, cx, &mut subs);
+        let bg = make_picker(ColorKind::Background, window, cx, &mut subs);
+        cx.set_global(Pickers { font, bg, _subs: subs });
+    }
+    let p = cx.global::<Pickers>();
+    let state = match k {
+        ColorKind::Font => p.font.clone(),
+        ColorKind::Background => p.bg.clone(),
+    };
+    // the colour may have changed elsewhere (Settings): show it as the picker's current one
+    let cur = crate::css::parse_color(&current_color(cx, k));
+    let (open, value) = {
+        let s = state.read(cx);
+        (s.is_open(), s.value())
+    };
+    if let Some(cur) = cur {
+        if !open && value.map(hex) != Some(hex(cur)) {
+            state.update(cx, |s, cx| s.set_value(cur, window, cx));
+        }
+    }
+    state
+}
+
+/// The picker's first row: your Editing Toolbar colours, then the ones you picked lately.
+fn featured(k: ColorKind, cx: &App) -> Vec<Hsla> {
+    let Some(h) = cx.try_global::<PluginHost>() else { return Vec::new() };
+    let mut out: Vec<Hsla> = Vec::new();
+    for c in strings(&h.setting(ID, custom_key(k))).into_iter().chain(strings(&h.setting(ID, recent_key(k)))) {
+        if let Some(c) = crate::css::parse_color(&c) {
+            if !out.iter().any(|x| hex(*x) == hex(c)) {
+                out.push(c);
+            }
+        }
+    }
+    out.truncate(12);
+    out
+}
+
+/// Opens Settings at this plugin's page, where the layout is edited.
+pub fn open_customise(window: &mut Window, cx: &mut App) {
+    crate::settings_ui::open_at("Editing toolbar", window, cx);
 }
 
 /// A saved name without markup and symbols ("Change font color[html]" → "Change font color").
@@ -210,34 +395,6 @@ fn icon_for(id: &str) -> IconName {
     }
 }
 
-/// An entry of the saved layout.
-#[derive(Clone, Debug)]
-pub struct Entry {
-    pub id: String,
-    pub name: String,
-    pub children: Vec<Entry>,
-}
-
-/// The layout from the plugin's `menuCommands` (only commands we have; dividers kept in menus).
-pub fn layout(menu: &Value, known: &dyn Fn(&str) -> bool) -> Vec<Entry> {
-    fn rec(v: &Value, known: &dyn Fn(&str) -> bool) -> Vec<Entry> {
-        v.as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|it| {
-                let id = it["id"].as_str()?.to_string();
-                let name = it["name"].as_str().unwrap_or("").to_string();
-                if let Some(sub) = it.get("SubmenuCommands") {
-                    let children = rec(sub, known);
-                    return children.iter().any(|c| !c.id.starts_with("editingToolbar-Divider")).then_some(Entry { id, name, children });
-                }
-                (id.starts_with("editingToolbar-Divider") || known(id.trim_start_matches("editing-toolbar:"))).then_some(Entry { id, name, children: Vec::new() })
-            })
-            .collect()
-    }
-    rec(menu, known)
-}
-
 fn apply_change(a: &mut ActionCtx, f: &dyn Fn(&str, Range<usize>) -> Option<Change>) {
     let Some(ed) = a.editor.clone() else { return };
     ed.update(a.cx, |e, cx| {
@@ -253,7 +410,11 @@ fn apply_change(a: &mut ActionCtx, f: &dyn Fn(&str, Range<usize>) -> Option<Chan
 fn run_op(op: &Op, a: &mut ActionCtx) {
     match op {
         Op::Wrap(o, c) => apply_change(a, &|t, s| Some(ops::toggle_wrap(t, s, o, c))),
-        Op::WrapWith(o, c) => apply_change(a, &|t, s| Some(ops::toggle_wrap(t, s, o, c))),
+        Op::Color(k) => {
+            let c = current_color(a.cx, *k);
+            apply_change(a, &|t, s| ops::set_color(t, s, *k, Some(&c), true))
+        }
+        Op::RemoveColor(k) => apply_change(a, &|t, s| ops::set_color(t, s, *k, None, false)),
         Op::Heading(n) => apply_change(a, &|t, s| Some(ops::heading(t, s, *n))),
         Op::List(k) => apply_change(a, &|t, s| Some(ops::toggle_list(t, s, *k))),
         Op::Checklist => apply_change(a, &|t, s| Some(ops::toggle_checklist(t, s))),
@@ -319,10 +480,118 @@ fn run_op(op: &Op, a: &mut ActionCtx) {
         }
     }
     // the bar's buttons may take the focus: give it back to the text
+    focus_editor(a);
+}
+
+fn focus_editor(a: &mut ActionCtx) {
     if let Some(ed) = a.editor.clone() {
         let f = ed.read(a.cx).focus.clone();
         a.window.focus(&f, a.cx);
     }
+}
+
+/// Runs a toolbar command on the active editor.
+fn runner(ops: &Rc<Ops>, id: &str, ws: &WorkspaceHandle) -> Rc<dyn Fn(&mut Window, &mut App)> {
+    let op = ops.get(id.trim_start_matches("editing-toolbar:")).map(|(_, o)| o.clone());
+    let ws = ws.clone();
+    Rc::new(move |window, cx| {
+        let Some(op) = op.clone() else { return };
+        let editor = ws.active_editor(cx);
+        let mut a = ActionCtx { window, cx, editor };
+        run_op(&op, &mut a);
+    })
+}
+
+/// A button's tooltip and icon.
+fn describe(e: &Item, ops: &Ops) -> (String, IconName) {
+    let name_of = |id: &str| ops.get(id).map(|(n, _)| n.to_string());
+    match &e.children {
+        None => (name_of(e.command_id()).unwrap_or_else(|| clean_name(&e.name)), icon_for(&e.id)),
+        Some(kids) => {
+            let ids: Vec<String> = kids.iter().map(|c| c.command_id().to_string()).collect();
+            // a submenu we have no icon for shows its first command's
+            let icon = match kids.iter().find(|c| !c.is_divider()) {
+                Some(first) if icon_for(&e.id) == IconName::Pencil => icon_for(&first.id),
+                _ => icon_for(&e.id),
+            };
+            (submenu_title(&e.name, &ids), icon)
+        }
+    }
+}
+
+/// The bar. `live`: buttons act on the active editor and the colour buttons get their
+/// pickers; otherwise (the preview in Settings) it is only drawn.
+fn bar(entries: &[Item], ops: &Rc<Ops>, ws: &WorkspaceHandle, live: bool, window: &mut Window, cx: &mut App) -> Div {
+    let theme = cx.theme().clone();
+    let prefix = if live { "et" } else { "etp" };
+    let buttons: Vec<AnyElement> = entries
+        .iter()
+        .enumerate()
+        .map(|(i, e)| {
+            if e.is_divider() {
+                return div().w(px(1.)).h(crate::ui::r(18.)).mx_1().bg(theme.border).into_any_element();
+            }
+            let (tip, icon) = describe(e, ops);
+            let b = crate::ui::icon_button((prefix, i), icon).tooltip(tip);
+            if !live {
+                return b.into_any_element();
+            }
+            match &e.children {
+                None => {
+                    let f = runner(ops, &e.id, ws);
+                    let b = b.on_click(move |_, window, cx| f(window, cx));
+                    let kind = match e.command_id() {
+                        "change-font-color" => Some(ColorKind::Font),
+                        "change-background-color" => Some(ColorKind::Background),
+                        _ => None,
+                    };
+                    match kind {
+                        None => b.into_any_element(),
+                        Some(k) => {
+                            // the button applies its colour (shown as a bar under the icon);
+                            // the arrow picks another
+                            let color = crate::css::parse_color(&current_color(cx, k)).unwrap_or(theme.foreground);
+                            let state = picker(k, window, cx);
+                            h_flex()
+                                .child(div().relative().child(b).child(div().absolute().bottom(px(3.)).left(crate::ui::r(8.)).w(crate::ui::r(12.)).h(px(3.)).rounded(px(1.)).bg(color)))
+                                .child(
+                                    div()
+                                        .relative()
+                                        .child(ColorPicker::new(&state).icon(IconName::ChevronDown).xsmall().featured_colors(featured(k, cx)))
+                                        .children(crate::script::probe(|| format!("tb-picker:{}", color_key(k)), cx)),
+                                )
+                                .into_any_element()
+                        }
+                    }
+                }
+                Some(kids) => {
+                    let kids: Vec<(String, String, Option<Rc<dyn Fn(&mut Window, &mut App)>>)> =
+                        kids.iter().map(|c| (c.id.clone(), c.name.clone(), (!c.is_divider()).then(|| runner(ops, &c.id, ws)))).collect();
+                    let ops = ops.clone();
+                    b.dropdown_menu(move |mut menu, _, _| {
+                        for (id, name, f) in &kids {
+                            match f {
+                                None => menu = menu.separator().label(name.clone()),
+                                Some(f) => {
+                                    let f = f.clone();
+                                    let label = ops.get(id.trim_start_matches("editing-toolbar:")).map(|(n, _)| n.to_string()).unwrap_or_else(|| name.clone());
+                                    menu = menu.item(PopupMenuItem::new(label).icon(icon_for(id)).on_click(move |_, window, cx| f(window, cx)));
+                                }
+                            }
+                        }
+                        menu
+                    })
+                    .into_any_element()
+                }
+            }
+        })
+        .collect();
+    h_flex().flex_wrap().items_center().gap_0p5().children(buttons)
+}
+
+/// Your layout: the app's own copy once you changed it, else the Editing Toolbar's.
+fn saved_layout(settings: &Map<String, Value>) -> Vec<Item> {
+    layout::parse(settings.get("menuCommands").unwrap_or(&Value::Null))
 }
 
 pub struct EditingToolbar {
@@ -337,18 +606,23 @@ impl EditingToolbar {
             .and_then(|v| v.as_object().cloned())
             .unwrap_or_default();
         let s = |k: &str, d: &str| Value::from(saved.get(k).and_then(Value::as_str).unwrap_or(d));
+        let customs = |p: &str| Value::from((1..=5).filter_map(|i| saved.get(&format!("{p}{i}")).and_then(Value::as_str).map(String::from)).collect::<Vec<_>>());
         Self {
             manifest: PluginManifest {
-                id: "editing-toolbar",
+                id: ID,
                 name: "Editing toolbar",
-                version: "0.1.0",
-                description: "A formatting toolbar above the editor, laid out as in your Editing Toolbar settings; every button is also a command.",
+                version: "0.2.0",
+                description: "A formatting toolbar above the editor, laid out as in your Editing Toolbar settings until you change it here; every button is also a command.",
                 enabled_by_default: true,
                 settings: vec![
                     SettingSpec { key: "showToolbar", label: "Show the toolbar", description: "Off: the commands stay (palette, hotkeys) without the bar.", kind: SettingKind::Toggle, default: Value::Bool(saved.get("enableTopToolbar").and_then(Value::as_bool).unwrap_or(true)) },
-                    SettingSpec { key: "cMenuFontColor", label: "Font colour", description: "Used by the font colour button.", kind: SettingKind::Text, default: s("cMenuFontColor", "#ff0000") },
-                    SettingSpec { key: "cMenuBackgroundColor", label: "Background colour", description: "Used by the background colour button.", kind: SettingKind::Text, default: s("cMenuBackgroundColor", "#d3f8b6") },
+                    SettingSpec { key: "cMenuFontColor", label: "Font colour", description: "What the font colour button applies. The arrow next to the button picks another, which then becomes this colour.", kind: SettingKind::Text, default: s("cMenuFontColor", "#ff0000") },
+                    SettingSpec { key: "cMenuBackgroundColor", label: "Background colour", description: "What the background colour button applies; the arrow next to it picks another.", kind: SettingKind::Text, default: s("cMenuBackgroundColor", "#d3f8b6") },
                     SettingSpec { key: "menuCommands", label: "Layout", description: "", kind: SettingKind::Hidden, default: saved.get("menuCommands").cloned().unwrap_or(Value::Array(Vec::new())) },
+                    SettingSpec { key: "customFontColors", label: "Your font colours", description: "", kind: SettingKind::Hidden, default: customs("custom_fc") },
+                    SettingSpec { key: "customBackgroundColors", label: "Your background colours", description: "", kind: SettingKind::Hidden, default: customs("custom_bg") },
+                    SettingSpec { key: "recentFontColors", label: "", description: "", kind: SettingKind::Hidden, default: Value::Array(Vec::new()) },
+                    SettingSpec { key: "recentBackgroundColors", label: "", description: "", kind: SettingKind::Hidden, default: Value::Array(Vec::new()) },
                 ],
                 code_languages: &[],
             },
@@ -356,86 +630,41 @@ impl EditingToolbar {
     }
 }
 
+/// With no layout at all: the basics.
+const BASICS: &[&str] = &["toggle-bold", "toggle-italics", "toggle-strikethrough", "toggle-highlight", "header2-text", "header3-text", "toggle-bullet-list", "toggle-numbered-list", "editor:toggle-checklist-status", "insert-link", "toggle-inline-math"];
+
 impl Plugin for EditingToolbar {
     fn manifest(&self) -> &PluginManifest {
         &self.manifest
     }
     fn on_load(&mut self, settings: &Map<String, Value>, reg: &mut Registrar) {
-        let get = |k: &str, d: &str| settings.get(k).and_then(Value::as_str).unwrap_or(d).to_string();
-        let ops: HashMap<&'static str, (&'static str, Op)> = table(&get("cMenuFontColor", "#ff0000"), &get("cMenuBackgroundColor", "#d3f8b6")).into_iter().map(|(id, name, hot, op)| {
-            let op2 = op.clone();
-            reg.command(Command { id: id.into(), name: name.into(), hotkey: hot.map(String::from), run: Rc::new(move |a: &mut ActionCtx| run_op(&op2, a)) });
-            (id, (name, op))
-        }).collect();
+        for (id, name, hot, op) in table() {
+            reg.command(Command { id: id.into(), name: name.into(), hotkey: hot.map(String::from), run: Rc::new(move |a: &mut ActionCtx| run_op(&op, a)) });
+        }
+        reg.command(Command { id: "customize".into(), name: "Customise toolbar".into(), hotkey: None, run: Rc::new(|a: &mut ActionCtx| open_customise(a.window, a.cx)) });
+        reg.settings_tab(SettingsTab { id: "layout".into(), title: "Toolbar layout".into(), render: Rc::new(layout_ui::render) });
         if !settings.get("showToolbar").and_then(Value::as_bool).unwrap_or(true) {
             return;
         }
-        let mut entries = layout(settings.get("menuCommands").unwrap_or(&Value::Null), &|id| ops.contains_key(id));
+        let ops = Rc::new(ops_map());
+        let mut entries = layout::shown(&saved_layout(settings), &|id| ops.contains_key(id));
         if entries.is_empty() {
-            // no saved layout: the basics
-            entries = ["toggle-bold", "toggle-italics", "toggle-strikethrough", "toggle-highlight", "header2-text", "header3-text", "toggle-bullet-list", "toggle-numbered-list", "editor:toggle-checklist-status", "insert-link", "toggle-inline-math"]
-                .iter()
-                .map(|id| Entry { id: id.to_string(), name: ops[id].0.to_string(), children: Vec::new() })
-                .collect();
+            entries = BASICS.iter().map(|id| Item::command(id, ops[id].0)).collect();
         }
-        let ops = Rc::new(ops);
         let entries = Rc::new(entries);
         reg.toolbar(ToolbarSlot {
             id: "toolbar".into(),
-            render: Rc::new(move |v: &ViewCtx, _window, cx| {
-                let theme = cx.theme();
-                let run = |id: &str| -> Rc<dyn Fn(&mut Window, &mut App)> {
-                    let op = ops.get(id.trim_start_matches("editing-toolbar:")).map(|(_, o)| o.clone());
-                    let ws = v.workspace.clone();
-                    Rc::new(move |window, cx| {
-                        let Some(op) = op.clone() else { return };
-                        let editor = ws.active_editor(cx);
-                        let mut a = ActionCtx { window, cx, editor };
-                        run_op(&op, &mut a);
-                    })
-                };
-                let buttons = entries.iter().enumerate().map(|(i, e)| {
-                    // our own names: the plugin's saved ones carry markup ("==Highlight==",
-                    // "<p aligin=…>", "Insert link []()")
-                    let name_of = |id: &str| ops.get(id.trim_start_matches("editing-toolbar:")).map(|(n, _)| n.to_string());
-                    let tip = if e.children.is_empty() {
-                        name_of(&e.id).unwrap_or_else(|| clean_name(&e.name))
-                    } else {
-                        submenu_title(&e.name, &e.children.iter().map(|c| c.id.trim_start_matches("editing-toolbar:").to_string()).collect::<Vec<_>>())
-                    };
-                    // a submenu we have no icon for shows its first command's
-                    let icon = match e.children.iter().find(|c| !c.id.starts_with("editingToolbar-Divider")) {
-                        Some(first) if icon_for(&e.id) == IconName::Pencil => icon_for(&first.id),
-                        _ => icon_for(&e.id),
-                    };
-                    let b = crate::ui::icon_button(("et", i), icon).tooltip(tip);
-                    if e.children.is_empty() {
-                        let f = run(&e.id);
-                        b.on_click(move |_, window, cx| f(window, cx)).into_any_element()
-                    } else {
-                        let kids: Vec<(String, String, Option<Rc<dyn Fn(&mut Window, &mut App)>>)> = e
-                            .children
-                            .iter()
-                            .map(|c| (c.id.clone(), c.name.clone(), (!c.id.starts_with("editingToolbar-Divider")).then(|| run(&c.id))))
-                            .collect();
-                        let ops = ops.clone();
-                        b.dropdown_menu(move |mut menu, _, _| {
-                            for (id, name, f) in &kids {
-                                match f {
-                                    None => menu = menu.separator().label(name.clone()),
-                                    Some(f) => {
-                                        let f = f.clone();
-                                        let label = ops.get(id.trim_start_matches("editing-toolbar:")).map(|(n, _)| n.to_string()).unwrap_or_else(|| name.clone());
-                                        menu = menu.item(PopupMenuItem::new(label).icon(icon_for(id)).on_click(move |_, window, cx| f(window, cx)));
-                                    }
-                                }
-                            }
-                            menu
-                        })
-                        .into_any_element()
-                    }
-                });
-                h_flex().flex_wrap().gap_0p5().px_2().py_0p5().border_b_1().border_color(theme.border).bg(theme.background).children(buttons).into_any_element()
+            render: Rc::new(move |v: &ViewCtx, window, cx| {
+                let theme = cx.theme().clone();
+                bar(&entries, &ops, &v.workspace, true, window, cx)
+                    .id("editing-toolbar")
+                    .px_2()
+                    .py_0p5()
+                    .border_b_1()
+                    .border_color(theme.border)
+                    .bg(theme.background)
+                    .context_menu(|menu, _, _| menu.item(PopupMenuItem::new("Customise toolbar…").icon(IconName::Settings).on_click(|_, window, cx| open_customise(window, cx))))
+                    .into_any_element()
             }),
         });
     }
@@ -454,28 +683,21 @@ mod tests {
         assert_eq!(super::submenu_title("Text Tools", &["get-plain-text".into()]), "Text Tools");
     }
 
-    use super::layout;
-    use serde_json::json;
+    #[test]
+    fn hex_round_trips_through_css() {
+        for c in ["#d83931", "#cdf4698c", "#000000", "#ffffff"] {
+            assert_eq!(super::hex(crate::css::parse_color(c).unwrap()), c);
+        }
+    }
 
     #[test]
-    fn layout_keeps_known_commands_submenus_and_dividers() {
-        let menu = json!([
-            {"id": "editing-toolbar:toggle-bold", "name": "Bold"},
-            {"id": "editing-toolbar:toggle-format-brush", "name": "Format Brush"},
-            {"id": "SubmenuCommands-header", "name": "submenu", "SubmenuCommands": [
-                {"id": "editing-toolbar:header1-text", "name": "Header 1"}
-            ]},
-            {"id": "SubmenuCommands-x", "name": "Tools", "SubmenuCommands": [
-                {"id": "editingToolbar-Divider-Line", "name": "Line Operations"},
-                {"id": "editing-toolbar:merge-lines", "name": "Merge"},
-                {"id": "editing-toolbar:smart-symbols", "name": "Unsupported"}
-            ]},
-            {"id": "SubmenuCommands-y", "name": "Only unsupported", "SubmenuCommands": [{"id": "editing-toolbar:add-wrap", "name": "Wrap"}]}
-        ]);
-        let known = |id: &str| ["toggle-bold", "header1-text", "merge-lines"].contains(&id);
-        let l = layout(&menu, &known);
-        let ids: Vec<&str> = l.iter().map(|e| e.id.as_str()).collect();
-        assert_eq!(ids, vec!["editing-toolbar:toggle-bold", "SubmenuCommands-header", "SubmenuCommands-x"]);
-        assert_eq!(l[2].children.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), vec!["editingToolbar-Divider-Line", "editing-toolbar:merge-lines"]);
+    fn every_command_has_a_category_and_the_basics_exist() {
+        let ops = super::ops_map();
+        for (id, _) in ops.iter() {
+            assert!(super::CATEGORIES.contains(&super::category(id)), "{id}");
+        }
+        for id in super::BASICS {
+            assert!(ops.contains_key(id), "{id}");
+        }
     }
 }
