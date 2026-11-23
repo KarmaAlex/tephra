@@ -156,6 +156,8 @@ pub struct Editor {
     suggest_key: (u64, usize),
     /// The note's `cssclasses`, by document version.
     classes: (u64, Rc<Vec<String>>),
+    /// Not a note (`.css`, `.json`…): shown and edited as plain text, no Markdown.
+    pub plain: bool,
     pub perf: Perf,
 }
 
@@ -212,9 +214,11 @@ impl Editor {
             suggest_dismissed: None,
             suggest_key: (u64::MAX, 0),
             classes: (u64::MAX, Rc::default()),
+            plain: false,
             perf: Perf::default(),
         };
         this.proj.version = u64::MAX;
+        this.plain = !obsidilight_core::index::is_note(&this.path.to_string_lossy());
         this
     }
 
@@ -380,6 +384,10 @@ impl Editor {
         let plugin_gen = cx.try_global::<PluginHost>().map_or(0, |h| h.generation) ^ (crate::theme::generation(cx) << 32) ^ (u64::from(cx.theme().is_dark()) << 63);
         if self.proj.version != self.doc.version() || self.proj.sel != self.doc.selection() || self.proj.mode != self.mode || self.plugin_gen != plugin_gen {
             self.plugin_gen = plugin_gen;
+            if self.plain {
+                self.proj = projection::project_plain(&self.doc.text(), self.doc.selection(), self.doc.version());
+                return &self.proj;
+            }
             let classes = self.css_classes();
             let highlight = crate::theme::text_style(cx, &classes).2;
             let t = Instant::now();
@@ -887,7 +895,7 @@ impl Editor {
         self.suggest_key = key;
         let keep = self.suggest.as_ref().map_or(0, |s| s.selected);
         self.suggest = None;
-        if !sel.is_empty() || self.mode == ViewMode::Reading {
+        if !sel.is_empty() || self.mode == ViewMode::Reading || self.plain {
             return;
         }
         let line = self.doc.line_of(sel.head);
@@ -966,7 +974,7 @@ impl Editor {
             })
             .collect();
         let popup = div()
-            .w(px(380.))
+            .w(crate::ui::r(380.))
             .p_1()
             .flex()
             .flex_col()
@@ -987,7 +995,7 @@ impl Editor {
     fn decorations(&mut self, blocks: Range<usize>, cx: &mut Context<Self>) -> Vec<(u64, Range<usize>, Hsla)> {
         use std::hash::{Hash, Hasher};
         let decorators: Vec<Rc<dyn crate::plugins::TextDecorator>> = cx.try_global::<PluginHost>().map(|h| h.reg.decorators.iter().map(|(_, d)| d.clone()).collect()).unwrap_or_default();
-        if decorators.is_empty() || self.mode == ViewMode::Reading {
+        if decorators.is_empty() || self.mode == ViewMode::Reading || self.plain {
             return Vec::new();
         }
         if self.deco_cache.len() > 4000 {
@@ -1042,7 +1050,10 @@ impl Editor {
         out
     }
 
-    fn hooks(cx: &App) -> Vec<Rc<dyn EditorHook>> {
+    fn hooks(&self, cx: &App) -> Vec<Rc<dyn EditorHook>> {
+        if self.plain {
+            return Vec::new(); // Markdown behaviour (snippets, pairs in math) is for notes
+        }
         cx.try_global::<PluginHost>().map(|h| h.reg.editor_hooks.iter().map(|(_, h)| h.clone()).collect()).unwrap_or_default()
     }
 
@@ -1055,7 +1066,7 @@ impl Editor {
         if !self.editable() {
             return false;
         }
-        for h in Self::hooks(cx) {
+        for h in self.hooks(cx) {
             let mut live = Live { e: self, cx };
             if h.on_key(&mut EditorApi::new(&mut live), key) {
                 return true;
@@ -1069,7 +1080,7 @@ impl Editor {
         if !self.editable() {
             return false;
         }
-        for h in Self::hooks(cx) {
+        for h in self.hooks(cx) {
             let mut live = Live { e: self, cx };
             if h.on_char(&mut EditorApi::new(&mut live), ch) {
                 return true;
@@ -1100,7 +1111,15 @@ impl Render for Editor {
         // Links open on Ctrl+click only; a plain click places the caret (handled by on_mouse_down).
         // Without a handler gpui-kit would open every link on a plain click.
         let weak = cx.entity().downgrade();
-        let (style, body_size, _) = crate::theme::text_style(cx, &classes);
+        let (mut style, body_size, _) = crate::theme::text_style(cx, &classes);
+        if self.plain {
+            // plain text, not a code block: no box, no padding
+            let mut r = StyleRefinement::default();
+            r.background = Some(gpui_kit::transparent_black().into());
+            r.padding = EdgesRefinement { top: Some(px(0.).into()), right: Some(px(0.).into()), bottom: Some(px(0.).into()), left: Some(px(0.).into()) };
+            r.border_widths = EdgesRefinement { top: Some(px(0.).into()), right: Some(px(0.).into()), bottom: Some(px(0.).into()), left: Some(px(0.).into()) };
+            style = style.with_code_block(r);
+        }
         let mut rcx = RenderContext::from_app(cx)
             .with_style(style)
             .with_markdown_extensions(extensions)
@@ -1133,7 +1152,9 @@ impl Render for Editor {
         let h = |ix: usize| heights.get(&proj.blocks[ix].hash).copied().unwrap_or(EST);
         let all_known = proj.blocks.iter().all(|b| heights.contains_key(&b.hash));
         let mut ys = Vec::with_capacity(n + 1);
-        let mut y = 24.0; // content top padding (py_6)
+        let scale = crate::theme::ui_scale(cx);
+        let pad = 24.0 * scale; // content top padding (py_6: 1.5 rem)
+        let mut y = pad;
         for ix in 0..n {
             ys.push(y);
             y += h(ix);
@@ -1141,7 +1162,7 @@ impl Render for Editor {
         ys.push(y);
         // the scroll offset may still be unclamped (a big wheel delta): clamp to the content,
         // which ends half a screen after the last block (scroll past end)
-        let top = top.min((y + 24.0 + view_h * 0.5 - view_h).max(0.0));
+        let top = top.min((y + pad + view_h * 0.5 - view_h).max(0.0));
         let (lo, hi) = if view_h <= 0.0 || (!all_known && !self.measured_once) {
             (0, n) // first frame: lay everything out once to learn the heights
         } else {
@@ -1165,18 +1186,18 @@ impl Render for Editor {
         };
         let host = render::Host { editor: Some(cx.entity().downgrade()), folds: &self.folds, md: &md, numbers: Some(&numbers), classes: &classes };
         // this pane's text width (last frame): images wider than it shrink to fit
-        let width = f32::from(self.scroll.bounds().size.width) - 64.0;
+        let width = f32::from(self.scroll.bounds().size.width) - 64.0 * scale;
         if width > 0.0 {
             crate::atoms::CONTENT_WIDTH.with(|c| c.set(width));
         }
         let mut children: Vec<AnyElement> = Vec::with_capacity(hi - lo + 2);
         if lo > 0 {
-            children.push(div().h(px(ys[lo] - 24.0)).into_any_element());
+            children.push(div().h(px(ys[lo] - pad)).into_any_element());
         }
         for ix in lo..hi {
             let b = &proj.blocks[ix];
             let el = render::render_node(&b.node, ix, &host, &rcx, window, cx);
-            let el = if b.indent > 0.0 { div().pl(px(b.indent)).child(el).into_any_element() } else { el };
+            let el = if b.indent > 0.0 { div().pl(crate::ui::r(b.indent)).child(el).into_any_element() } else { el };
             let el = match b.align {
                 // the block itself moves (not the glyphs), so caret and selection geometry follow
                 Some(projection::BlockAlign::Center) => div().w_full().flex().justify_center().child(div().max_w_full().text_center().child(el)).into_any_element(),
@@ -1191,7 +1212,7 @@ impl Render for Editor {
         // scroll past the end (like Obsidian): room below the last line to type and paste
         children.push(div().h(px((view_h * 0.5).max(0.0))).into_any_element());
         let squiggles = self.decorations(lo..hi, cx);
-        let content = div().w_full().max_w(px(760.)).mx_auto().px_8().py_6().flex().flex_col().children(children);
+        let content = div().w_full().max_w(crate::ui::r(760.)).mx_auto().px_8().py_6().flex().flex_col().children(children);
         let suggest_popup = self.render_suggest(cx);
         let hover_popup = self.render_hover(&md, window, cx);
         let editor = cx.entity();

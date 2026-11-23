@@ -396,7 +396,7 @@ mod tests {
             r.vault_listener(Rc::new(Nop));
             r.toolbar(ToolbarSlot { id: "t".into(), render: Rc::new(|_, _, _| div().into_any_element()) });
             r.hover_policy(Rc::new(Nop));
-            r.tab_view(TabViewType { id: "tv".into(), title: "TV".into(), create: Rc::new(|_, _, cx| (gpui_kit::AnyView::from(gpui_kit::AppContext::new(cx, |_| Empty)), cx.focus_handle())) });
+            r.tab_view(TabViewType { id: "tv".into(), title: "TV".into(), title_from_arg: false, create: Rc::new(|_, _, cx| (gpui_kit::AnyView::from(gpui_kit::AppContext::new(cx, |_| Empty)), cx.focus_handle())) });
         }
     }
 

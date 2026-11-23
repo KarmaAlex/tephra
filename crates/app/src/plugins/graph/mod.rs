@@ -15,7 +15,7 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::{h_flex, ActiveTheme as _, Selectable as _, Sizable as _};
+use gpui_kit::component::{h_flex, ActiveTheme as _, Sizable as _};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use obsidilight_core::index::{is_note, VaultIndex};
@@ -410,6 +410,10 @@ impl GraphView {
             self.sim.fixed[i] = None;
             self.sim.set_alpha_target(0.0);
             if !moved {
+                if let Some(ws) = WorkspaceHandle::current(cx) {
+                    ws.preview_link(None, ev.position, cx);
+                }
+                self.hover = None;
                 self.open_node(i, ev.modifiers.secondary(cx), window, cx);
             }
         }
@@ -437,7 +441,8 @@ impl GraphView {
         let p = if self.local { "local" } else { "" };
         let key = move |s: &str| if p.is_empty() { s.to_string() } else { format!("{p}{}{}", s[..1].to_uppercase(), &s[1..]) };
         let toggle = |id: &'static str, label: &'static str, on: bool, setting: String, invert: bool| {
-            Button::new(id).label(label).xsmall().ghost().selected(on).on_click(move |_, _, cx| {
+            // on: filled with the accent (a ghost button's "selected" tint barely shows in dark)
+            Button::new(id).label(label).xsmall().when(on, |b| b.primary()).when(!on, |b| b.ghost()).on_click(move |_, _, cx| {
                 let v = if invert { on } else { !on };
                 super::PluginHost::set_setting(cx, "graph", &setting, Value::Bool(v));
             })
@@ -547,6 +552,7 @@ impl Render for GraphView {
             LAST.with(|l| *l.borrow_mut() = Some(this.clone()));
         }
         let paint_ms = self.paint_ms.clone();
+        let label_scale = crate::theme::ui_scale(cx);
         let painter = canvas(
             move |bounds, _, cx| {
                 let _ = this.update(cx, |g, _| g.bounds = bounds);
@@ -596,7 +602,7 @@ impl Render for GraphView {
                         window.paint_quad(fill(b, c).corner_radii(px(r)));
                     }
                     // labels under their nodes
-                    let fs = px(12.);
+                    let fs = px(12. * label_scale);
                     for (i, text) in &labels {
                         let (p, r) = (pos[*i], radii[*i]);
                         if !inside(p, r + 60.0) {
@@ -607,7 +613,7 @@ impl Render for GraphView {
                         let run = TextRun { len: text.len(), font: font.clone(), color, background_color: None, underline: None, strikethrough: None };
                         let line = window.text_system().shape_line(text.clone(), fs, &[run], None);
                         let origin = point(px(p.x) - line.width / 2.0, px(p.y + r + 2.0));
-                        let _ = line.paint(origin, px(14.), TextAlign::Left, None, window, cx);
+                        let _ = line.paint(origin, px(14. * label_scale), TextAlign::Left, None, window, cx);
                     }
                 });
                 paint_ms.set(paint_ms.get().max(started.elapsed().as_secs_f64() * 1000.0));
@@ -696,6 +702,7 @@ impl Plugin for Graph {
         reg.tab_view(TabViewType {
             id: "graph".into(),
             title: "Graph view".into(),
+            title_from_arg: false,
             create: Rc::new(|_, _, cx| {
                 let v = cx.new(|cx| GraphView::new(false, cx));
                 let f = v.read(cx).focus.clone();

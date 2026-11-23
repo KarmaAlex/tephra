@@ -333,8 +333,8 @@ impl WorkspaceHandle {
         let _ = self.0.update(cx, |ws, cx| ws.preview_link(target, at, cx));
     }
     /// Hides both sidebars (or brings them back): a distraction-free editor.
-    pub fn toggle_focus_mode(&self, cx: &mut App) {
-        let _ = self.0.update(cx, |ws, cx| ws.toggle_focus_mode(cx));
+    pub fn toggle_focus_mode(&self, fullscreen: bool, window: &mut Window, cx: &mut App) {
+        let _ = self.0.update(cx, |ws, cx| ws.toggle_focus_mode(fullscreen, window, cx));
     }
     /// Shows a sidebar view (full id `<plugin>:<view>`), opening its sidebar; `arg` is handed
     /// to the view's next render (e.g. a search query).
@@ -439,6 +439,8 @@ pub struct TabViewType {
     /// Namespaced automatically as `<plugin id>:<id>`.
     pub id: String,
     pub title: String,
+    /// The tab is titled with the file name in its argument (a vault path), not `title`.
+    pub title_from_arg: bool,
     pub create: Rc<dyn Fn(Option<String>, &mut Window, &mut App) -> (AnyView, FocusHandle)>,
 }
 

@@ -11,7 +11,7 @@ use crate::plugins::{PluginHost, SettingKind};
 
 pub fn open(window: &mut Window, cx: &mut App) {
     window.open_dialog(cx, |dialog, _, cx| {
-        dialog.title("Settings").w(px(880.)).child(div().h(px(580.)).child(Settings::new("obsidilight-settings").pages(pages(cx))))
+        dialog.title("Settings").w(crate::ui::p(cx, 880.)).child(div().h(crate::ui::r(580.)).child(Settings::new("obsidilight-settings").pages(pages(cx))))
     });
 }
 
@@ -111,6 +111,20 @@ fn appearance_page(cx: &App) -> SettingPage {
             ),
         )
         .description("Light or dark colours, or follow the system."),
+        SettingItem::new(
+            "Interface scale",
+            SettingField::dropdown(
+                [75, 80, 90, 100, 110, 125, 150, 175, 200].iter().map(|p| (SharedString::from(format!("{}", *p as f32 / 100.0)), SharedString::from(format!("{p}%")))).collect(),
+                |cx: &App| SharedString::from(format!("{}", (crate::theme::ui_scale(cx) * 100.0).round() / 100.0)),
+                |v: SharedString, cx: &mut App| {
+                    if let Ok(f) = v.parse::<f64>() {
+                        crate::app_settings::AppSettings::set(cx, "uiScale", Value::from(f));
+                        crate::theme::apply(None, cx);
+                    }
+                },
+            ),
+        )
+        .description("Size of everything: text, icons, panels, images. 100% matches Obsidian's default sizes."),
         SettingItem::new(
             "Theme",
             SettingField::dropdown(

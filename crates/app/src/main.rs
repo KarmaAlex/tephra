@@ -15,6 +15,7 @@ mod embeds;
 mod export;
 mod fuzzy;
 mod hotkeys;
+mod image_view;
 mod icons;
 mod math;
 mod moment;
@@ -22,6 +23,7 @@ mod plugins;
 mod script;
 mod settings_ui;
 mod theme;
+mod ui;
 mod workspace;
 
 use std::path::PathBuf;
@@ -53,6 +55,7 @@ fn main() {
         app_settings::AppSettings::init(cx, &root);
         plugins::PluginHost::init(cx, &root);
         hotkeys::install(cx);
+        cx.set_global(embeds::VaultRoot(root.clone()));
         theme::init(cx, &root);
         theme::apply(None, cx);
         let opts = WindowOptions {

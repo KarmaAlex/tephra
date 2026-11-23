@@ -45,6 +45,8 @@ pub fn register_core(cx: &mut App) {
         ("split-down", "Split down", None, ws_cmd(|ws, w, cx| ws.split(Axis::Vertical, w, cx))),
         ("focus-next-pane", "Focus next pane", Some("ctrl-alt-right"), ws_cmd(|ws, w, cx| ws.focus_next_pane(w, cx))),
         ("close-pane", "Close current pane", None, ws_cmd(|ws, w, cx| ws.close_pane(w, cx))),
+        ("focus-mode", "Toggle focus mode", None, ws_cmd(|ws, w, cx| ws.toggle_focus_mode(false, w, cx))),
+        ("fullscreen-focus-mode", "Toggle fullscreen focus mode", Some("f11"), ws_cmd(|ws, w, cx| ws.toggle_focus_mode(true, w, cx))),
         ("open-settings", "Open settings", Some("ctrl-,"), Rc::new(|a: &mut ActionCtx| crate::settings_ui::open(a.window, a.cx))),
         ("save", "Save current file", Some("ctrl-s"), editor_cmd(|e, cx| e.save(cx))),
         ("toggle-reading", "Toggle reading view", Some("ctrl-e"), editor_cmd(|e, cx| e.toggle_mode(ViewMode::Reading, cx))),
@@ -55,5 +57,18 @@ pub fn register_core(cx: &mut App) {
         for (id, name, hotkey, run) in cmds {
             r.command(Command { id: id.into(), name: name.into(), hotkey: hotkey.map(String::from), run });
         }
+        // images open in a tab of their own (registered as "app:image")
+        r.tab_view(crate::plugins::TabViewType {
+            id: "image".into(),
+            title: "Image".into(),
+            title_from_arg: true,
+            create: Rc::new(|arg, _, cx| {
+                let root = cx.try_global::<crate::embeds::VaultRoot>().map(|r| r.0.clone()).unwrap_or_default();
+                let path = root.join(arg.unwrap_or_default());
+                let v = cx.new(|cx| crate::image_view::ImageView::new(path, cx));
+                let f = v.read(cx).focus_handle(cx);
+                (v.into(), f)
+            }),
+        });
     });
 }

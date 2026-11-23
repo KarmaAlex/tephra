@@ -154,8 +154,8 @@ fn render_algorithm(meta: &str, body: &[String], line_numbers: bool, md: &Markdo
                 .flex()
                 .items_start()
                 .gap_2()
-                .when(numbered, |d| d.child(div().w(px(22.)).flex_none().text_right().text_sm().text_color(muted).child((i + 1).to_string())))
-                .child(div().pl(px(18. * l.depth as f32)).flex_1().min_w_0().child(content))
+                .when(numbered, |d| d.child(div().w(crate::ui::r(22.)).flex_none().text_right().text_sm().text_color(muted).child((i + 1).to_string())))
+                .child(div().pl(crate::ui::r(18. * l.depth as f32)).flex_1().min_w_0().child(content))
                 .into_any_element()
         })
         .collect();
@@ -320,7 +320,7 @@ impl CodeBlockRenderer for Toc {
             let path = path.clone();
             div()
                 .id(("toc-row", i))
-                .pl(px(16. * (level - 2) as f32))
+                .pl(crate::ui::r(16. * (level - 2) as f32))
                 .py_0p5()
                 .text_sm()
                 .text_color(theme.link)
@@ -426,7 +426,7 @@ impl Plugin for AcademicNotes {
                         let editor = editor.clone();
                         div()
                             .id(("toc", i))
-                            .pl(px(12. * d.saturating_sub(1) as f32))
+                            .pl(crate::ui::r(12. * d.saturating_sub(1) as f32))
                             .py_0p5()
                             .text_sm()
                             .cursor_pointer()

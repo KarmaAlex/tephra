@@ -58,13 +58,13 @@ pub fn open(placeholder: &'static str, items: Items, pick: Pick, window: &mut Wi
                     .w_full()
                     .gap_2()
                     .text_sm()
-                    .child(div().flex_none().max_w(px(380.)).truncate().child(highlighted(it2.label.clone(), &it2.hl, mark)))
+                    .child(div().flex_none().max_w(crate::ui::r(380.)).truncate().child(highlighted(it2.label.clone(), &it2.hl, mark)))
                     .child(div().flex_1().min_w_0().truncate().text_xs().text_color(muted).child(it2.detail.clone()))
                     .child(div().flex_none().text_xs().text_color(muted).child(it2.hint.clone()))
             })
         });
         let (p1, p2, st2) = (pick.clone(), pick.clone(), st.clone());
-        dialog.w(px(640.)).margin_top(px(80.)).close_button(false).child(
+        dialog.w(crate::ui::p(cx, 640.)).margin_top(px(80.)).close_button(false).child(
             div()
                 // Esc closes at once (the list's own Cancel would first clear the query)
                 .capture_action(|_: &gpui_kit::base::actions::Cancel, window, cx| {
@@ -86,7 +86,7 @@ pub fn open(placeholder: &'static str, items: Items, pick: Pick, window: &mut Wi
                         .filterable(false)
                         .bordered(false)
                         .placeholder(placeholder)
-                        .max_h(px(420.))
+                        .max_h(crate::ui::r(420.))
                         .items(rows)
                         .on_confirm(move |ix, window, cx| {
                             window.close_dialog(cx);

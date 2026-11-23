@@ -453,7 +453,11 @@ pub fn apply(window: Option<&Window>, cx: &mut App) {
     let accent_hover = c("--interactive-accent-hover");
     let on_accent = c("--text-on-accent");
     let tab_active = c("--tab-background-active");
+    let scale = ui_scale(cx);
     Theme::update(cx, |th| {
+        // the rem size: every rem-based size (text, buttons, our layout) follows the UI scale
+        th.font_size = px(16.0 * scale);
+        th.mono_font_size = px(13.0 * scale);
         let k = &mut th.colors;
         let set = |slot: &mut Hsla, v: Option<Hsla>| {
             if let Some(v) = v {
@@ -495,6 +499,10 @@ pub fn apply(window: Option<&Window>, cx: &mut App) {
         set(&mut k.secondary, bg2);
         set(&mut k.secondary_foreground, fg);
         set(&mut k.switch, faint);
+        // the slider's track and its handle's hover ring in one colour (a band of the old
+        // track colour showed as a gap between handle and ring)
+        set(&mut k.slider_bar, accent);
+        set(&mut k.slider_thumb, Some(gpui_kit::white()));
     });
     cx.refresh_windows();
 }
@@ -508,7 +516,7 @@ thread_local! {
 /// quotes, tables. `body` = the body font size in px.
 pub fn text_style(cx: &App, classes: &[String]) -> (TextViewStyle, f32, Hsla) {
     use gpui_kit::component::ActiveTheme as _;
-    let key = (generation(cx), cx.theme().is_dark(), classes.to_vec());
+    let key = (generation(cx) ^ ((ui_scale(cx) * 1000.0) as u64) << 40, cx.theme().is_dark(), classes.to_vec());
     if let Some(hit) = STYLES.with(|c| c.borrow().get(&key).cloned()) {
         return hit;
     }
@@ -528,7 +536,8 @@ fn compute_text_style(cx: &App, classes: &[String]) -> (TextViewStyle, f32, Hsla
     let base = TextViewStyle::from_theme(&gpui_kit::base::Theme::global(cx));
     let dark = cx.theme().is_dark();
     let Some(t) = cx.try_global::<ThemeCss>() else { return (base, 16.0, cx.theme().yellow.opacity(0.35)) };
-    let body = t.length("--font-text-size", dark, classes, 16.0).unwrap_or(16.0).clamp(8.0, 40.0);
+    let scale = ui_scale(cx);
+    let body = t.length("--font-text-size", dark, classes, 16.0).unwrap_or(16.0).clamp(8.0, 40.0) * scale;
     let c = |n: &str| t.color(n, dark, classes);
     let mut s = base;
     if let Some(v) = c("--text-normal") {
@@ -604,6 +613,11 @@ pub fn hr(cx: &App, classes: &[String]) -> (Hsla, f32) {
     let color = t.and_then(|t| t.color("--hr-color", dark, classes)).unwrap_or(cx.theme().border);
     let w = t.and_then(|t| t.length("--hr-thickness", dark, classes, 16.0)).unwrap_or(2.0);
     (color, w)
+}
+
+/// The UI scale (Settings → Appearance), 1.0 = Obsidian's sizes at 100% zoom.
+pub fn ui_scale(cx: &App) -> f32 {
+    crate::app_settings::AppSettings::value(cx, "uiScale").and_then(|v| v.as_f64()).map(|v| v as f32).filter(|v| (0.5..=3.0).contains(v)).unwrap_or(1.0)
 }
 
 pub fn generation(cx: &App) -> u64 {

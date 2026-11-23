@@ -102,6 +102,11 @@ impl Vault {
     }
 }
 
+/// The open vault's folder, for code that runs while the workspace is busy (a tab view being
+/// created from inside the workspace's own update).
+pub struct VaultRoot(pub PathBuf);
+impl gpui_kit::Global for VaultRoot {}
+
 pub fn is_image(p: &Path) -> bool {
     p.extension().map(|e| e.to_string_lossy().to_lowercase()).is_some_and(|e| matches!(e.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg"))
 }

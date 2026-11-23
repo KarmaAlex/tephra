@@ -120,7 +120,9 @@ impl Tab {
         match self {
             Tab::Note(e) => {
                 let e = e.read(cx);
-                (e.path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default().into(), e.doc.is_dirty())
+                // notes by name; other files by their full file name (`style.css`)
+                let name = if e.plain { e.path.file_name() } else { e.path.file_stem() };
+                (name.map(|s| s.to_string_lossy().to_string()).unwrap_or_default().into(), e.doc.is_dirty())
             }
             Tab::View(v) => (v.title.clone(), false),
         }
@@ -161,7 +163,8 @@ pub struct Workspace {
     menu_target: Rc<RefCell<Option<(String, bool)>>>,
     sidebar: bool,
     /// Sidebars as they were before focus mode (Some = in focus mode).
-    focus_mode: Option<(bool, bool)>,
+    /// Focus mode: (left, right sidebar as they were, fullscreen was switched on by it).
+    focus_mode: Option<(bool, bool, bool)>,
     /// Left sidebar view: None = Files, else a plugin view id (`search:search`).
     left_view: Option<String>,
     /// Right sidebar (plugin views) shown, and which view (None = the first).
@@ -339,7 +342,7 @@ impl Workspace {
         let has_views = cx.try_global::<PluginHost>().is_some_and(|h| h.reg.sidebar_views.iter().any(|(_, v)| v.side == Side::Right));
         let weak = cx.entity().downgrade();
         v_flex()
-            .w(px(40.))
+            .w(crate::ui::r(crate::ui::RIBBON))
             .h_full()
             .flex_none()
             .items_center()
@@ -348,27 +351,27 @@ impl Workspace {
             .border_r_1()
             .border_color(theme.border)
             .bg(theme.sidebar)
-            .child(Button::new("ribbon-files").ghost().small().icon(gpui_kit::assets::IconName::PanelLeft).tooltip("Left sidebar (Ctrl+Shift+B)").on_click(cx.listener(|ws, _, _, cx| {
+            .child(crate::ui::icon_button("ribbon-files", gpui_kit::assets::IconName::PanelLeft).tooltip("Left sidebar (Ctrl+Shift+B)").on_click(cx.listener(|ws, _, _, cx| {
                 ws.sidebar = !ws.sidebar;
                 ws.save_layout();
                 cx.notify();
             })))
             .children(items.into_iter().enumerate().map(|(i, it)| {
                 let weak = weak.clone();
-                Button::new(("ribbon", i)).ghost().small().icon(it.icon).tooltip(it.tooltip.clone()).on_click(move |_, window, cx| {
+                crate::ui::icon_button(("ribbon", i), it.icon).tooltip(it.tooltip.clone()).on_click(move |_, window, cx| {
                     let editor = weak.upgrade().and_then(|ws| ws.read(cx).active_editor());
                     run_action(&it.run, editor, window, cx);
                 })
             }))
             .child(div().flex_1())
             .when(has_views, |d| {
-                d.child(Button::new("ribbon-right").ghost().small().icon(gpui_kit::assets::IconName::PanelRight).tooltip("Right sidebar").on_click(cx.listener(|ws, _, _, cx| {
+                d.child(crate::ui::icon_button("ribbon-right", gpui_kit::assets::IconName::PanelRight).tooltip("Right sidebar").on_click(cx.listener(|ws, _, _, cx| {
                     ws.right_sidebar = !ws.right_sidebar;
                     ws.save_layout();
                     cx.notify();
                 })))
             })
-            .child(Button::new("ribbon-settings").ghost().small().icon(gpui_kit::assets::IconName::Settings).tooltip("Settings (Ctrl+,)").on_click(|_, window, cx| crate::settings_ui::open(window, cx)))
+            .child(crate::ui::icon_button("ribbon-settings", gpui_kit::assets::IconName::Settings).tooltip("Settings (Ctrl+,)").on_click(|_, window, cx| crate::settings_ui::open(window, cx)))
     }
 
     /// Plugin views on one side.
@@ -395,7 +398,7 @@ impl Workspace {
         let body = self.render_view(&views[ix], window, cx);
         Some(
             v_flex()
-                .w(px(300.))
+                .w(crate::ui::r(crate::ui::SIDEBAR))
                 .h_full()
                 .flex_none()
                 .border_l_1()
@@ -403,7 +406,7 @@ impl Workspace {
                 .bg(theme.sidebar)
                 .child(h_flex().gap_1().px_2().py_1().border_b_1().border_color(theme.border).children(views.iter().enumerate().map(|(i, v)| {
                     let id = v.id.clone();
-                    Button::new(("right-view", i)).ghost().xsmall().selected(i == ix).icon(v.icon).tooltip(v.title.clone()).on_click(cx.listener(move |ws, _, _, cx| {
+                    crate::ui::icon_button(("right-view", i), v.icon).selected(i == ix).tooltip(v.title.clone()).on_click(cx.listener(move |ws, _, _, cx| {
                         ws.right_view = Some(id.clone());
                         ws.save_layout();
                         cx.notify();
@@ -453,21 +456,34 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Focus mode: both sidebars hidden; toggling again restores them as they were.
-    pub(crate) fn toggle_focus_mode(&mut self, cx: &mut Context<Self>) {
+    /// Focus mode: only the note you're on (no ribbon, sidebars, tab bars, other panes or
+    /// status bar; the editing toolbar stays so you can leave). `fullscreen` also puts the
+    /// window in full screen. Toggling again restores everything as it was.
+    pub(crate) fn toggle_focus_mode(&mut self, fullscreen: bool, window: &mut Window, cx: &mut Context<Self>) {
         match self.focus_mode.take() {
-            Some((l, r)) => {
+            Some((l, r, fs)) => {
                 self.sidebar = l;
                 self.right_sidebar = r;
+                if fs && window.is_fullscreen() {
+                    window.toggle_fullscreen();
+                }
             }
             None => {
-                self.focus_mode = Some((self.sidebar, self.right_sidebar));
+                let fs = fullscreen && !window.is_fullscreen();
+                if fs {
+                    window.toggle_fullscreen();
+                }
+                self.focus_mode = Some((self.sidebar, self.right_sidebar, fs));
                 self.sidebar = false;
                 self.right_sidebar = false;
             }
         }
+        if std::env::var_os("OBSIDILIGHT_SCRIPT").is_some() {
+            println!("FOCUS {} fullscreen={}", self.focus_mode.is_some(), self.focus_mode.is_some_and(|f| f.2));
+        }
         cx.notify();
     }
+
 
     pub(crate) fn reveal_active(&mut self, cx: &mut Context<Self>) {
         self.sidebar = true;
@@ -561,8 +577,14 @@ impl Workspace {
     }
 
     fn select_active_in_tree(&mut self, cx: &mut Context<Self>) {
-        let Some(e) = self.active_editor() else { return };
-        let rel = self.rel(&e.read(cx).path);
+        let rel = match self.tabs.get(self.active) {
+            Some(Tab::Note(e)) => self.rel(&e.read(cx).path),
+            Some(Tab::View(v)) if v.kind == crate::image_view::VIEW => match &v.arg {
+                Some(a) => a.clone(),
+                None => return,
+            },
+            _ => return,
+        };
         // expand its folders (remembered, so a rebuild keeps them open), scroll to it, select it
         let mut dir = rel.as_str();
         while let Some((d, _)) = dir.rsplit_once('/') {
@@ -582,6 +604,7 @@ impl Workspace {
 
     /// Opens a note: focuses its tab if already open, else replaces the active tab (or adds one).
     pub fn open_path(&mut self, path: PathBuf, new_tab: bool, window: &mut Window, cx: &mut Context<Self>) -> Entity<Editor> {
+        self.close_preview();
         if let Some(ix) = self.tabs.iter().position(|t| t.editor().is_some_and(|e| e.read(cx).path == path)) {
             self.activate(ix, window, cx);
             if let Some(e) = self.tabs[ix].editor() {
@@ -618,10 +641,40 @@ impl Workspace {
         editor
     }
 
+    /// Opens any vault file: images in an image tab, everything else in an editor (Markdown
+    /// for notes, plain text for other files). Returns the editor, if one was opened.
+    pub fn open_file(&mut self, path: PathBuf, new_tab: bool, window: &mut Window, cx: &mut Context<Self>) -> Option<Entity<Editor>> {
+        if !crate::embeds::is_image(&path) {
+            return Some(self.open_path(path, new_tab, window, cx));
+        }
+        let rel = self.rel(&path);
+        let arg = Some(rel);
+        if let Some(ix) = self.tabs.iter().position(|t| matches!(t, Tab::View(v) if v.kind == crate::image_view::VIEW && v.arg == arg)) {
+            self.activate(ix, window, cx);
+            return None;
+        }
+        // like a note: replace the active tab unless a new one was asked for
+        let replace = !new_tab && !self.tabs.is_empty();
+        let old = replace.then(|| self.tabs[self.active].clone());
+        if let Some(t) = &old {
+            t.save(cx);
+        }
+        let at = self.active;
+        self.open_view(crate::image_view::VIEW, arg, window, cx);
+        if replace {
+            let new = self.tabs.pop().expect("open_view added a tab");
+            self.active = at;
+            self.tabs[at] = new;
+        }
+        self.select_active_in_tree(cx);
+        cx.notify();
+        None
+    }
+
     /// Opens a vault file by vault path, placing the caret.
     pub fn open_rel(&mut self, rel: &str, at: OpenAt, new_tab: bool, window: &mut Window, cx: &mut Context<Self>) {
         let path = self.vault.borrow().root.join(rel);
-        let ed = self.open_path(path, new_tab, window, cx);
+        let Some(ed) = self.open_file(path, new_tab, window, cx) else { return };
         match at {
             OpenAt::Keep => {}
             OpenAt::Offset(off) => ed.update(cx, |e, cx| {
@@ -669,13 +722,18 @@ impl Workspace {
 
     /// Opens a plugin's tab view in the focused pane (or focuses it, if already there).
     pub fn open_view(&mut self, id: &str, arg: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_preview();
         if let Some(ix) = self.tabs.iter().position(|t| matches!(t, Tab::View(v) if v.kind == id && v.arg == arg)) {
             self.activate(ix, window, cx);
             return;
         }
         let Some(t) = cx.try_global::<PluginHost>().and_then(|h| h.reg.tab_views.iter().find(|(_, t)| t.id == id).map(|(_, t)| t.clone())) else { return };
         let (view, focus) = (t.create)(arg.clone(), window, cx);
-        self.tabs.push(Tab::View(ViewTab { kind: id.to_string(), arg, title: t.title.clone().into(), view, focus: focus.clone() }));
+        let title = match (&arg, t.title_from_arg) {
+            (Some(a), true) => a.rsplit('/').next().unwrap_or(a).to_string(),
+            _ => t.title.clone(),
+        };
+        self.tabs.push(Tab::View(ViewTab { kind: id.to_string(), arg, title: title.into(), view, focus: focus.clone() }));
         self.active = self.tabs.len() - 1;
         window.focus(&focus, cx);
         cx.notify();
@@ -762,6 +820,7 @@ impl Workspace {
     }
 
     pub(crate) fn activate(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_preview();
         if ix < self.tabs.len() {
             self.active = ix;
             let f = self.tabs[ix].focus(cx);
@@ -830,6 +889,12 @@ impl Workspace {
             });
         })
         .detach();
+    }
+
+    /// Opening something ends any hover preview (its row or node may be gone now).
+    fn close_preview(&mut self) {
+        self.preview = None;
+        self.preview_pending = None;
     }
 
     fn render_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -905,7 +970,14 @@ impl Workspace {
                         }
                     },
                 };
-                let ed = if path == from { editor.clone() } else { self.open_path(path, *new_tab, window, cx) };
+                let ed = if path == from {
+                    editor.clone()
+                } else {
+                    match self.open_file(path, *new_tab, window, cx) {
+                        Some(e) => e,
+                        None => return, // an image
+                    }
+                };
                 if let Some(sub) = sub.filter(|s| !s.is_empty()) {
                     ed.update(cx, |e, cx| e.go_to_subpath(&sub, cx));
                 }
@@ -1016,6 +1088,28 @@ impl Workspace {
                 e.update(cx, |e, cx| e.set_path(np, cx));
             }
         }
+        // image tabs follow their files
+        let root2 = root.clone();
+        let retarget = |t: &mut Tab, cx: &mut Context<Self>| {
+            let Tab::View(v) = t else { return };
+            if v.kind != crate::image_view::VIEW {
+                return;
+            }
+            let Some((_, n)) = v.arg.as_ref().and_then(|a| moves.iter().find(|(o, _)| o == a)) else { return };
+            let view = cx.new(|cx| crate::image_view::ImageView::new(root2.join(n), cx));
+            v.focus = view.read(cx).focus_handle(cx);
+            v.view = view.into();
+            v.title = n.rsplit('/').next().unwrap_or(n).to_string().into();
+            v.arg = Some(n.clone());
+        };
+        let mut tabs = std::mem::take(&mut self.tabs);
+        tabs.iter_mut().for_each(|t| retarget(t, cx));
+        self.tabs = tabs;
+        let mut parked = std::mem::take(&mut self.parked);
+        for (ts, _) in parked.values_mut() {
+            ts.iter_mut().for_each(|t| retarget(t, cx));
+        }
+        self.parked = parked;
         // 4. rewrite links: through the editor if the note is open, else straight to disk
         let (links, failures) = self.apply_note_edits(&plan, cx);
         // 5. re-index, tell plugins (bookmarks), keep the recent list pointing at the files
@@ -1185,6 +1279,15 @@ impl Workspace {
             if let Some(e) = self.tabs[i].editor() {
                 e.update(cx, |e, _| e.disable_saving());
             }
+            self.close_tab(i, window, cx);
+        }
+        // image tabs of what is going away close
+        let gone = |t: &Tab| matches!(t, Tab::View(v) if v.kind == crate::image_view::VIEW && v.arg.as_ref().is_some_and(|a| a == rel || a.starts_with(&format!("{rel}/"))));
+        for (tabs, active) in self.parked.values_mut() {
+            tabs.retain(|t| !gone(t));
+            *active = (*active).min(tabs.len().saturating_sub(1));
+        }
+        while let Some(i) = self.tabs.iter().position(gone) {
             self.close_tab(i, window, cx);
         }
         trash::delete(&abs).map_err(|e| e.to_string())?;
@@ -1413,14 +1516,14 @@ impl Workspace {
         let views = Self::views(cx, Side::Left);
         let current = self.left_view.as_ref().and_then(|id| views.iter().position(|v| &v.id == id));
         let theme = cx.theme().clone();
-        let mut tabs = vec![Button::new("left-files").ghost().xsmall().selected(current.is_none()).icon(IconName::Folder).tooltip("Files").on_click(cx.listener(|ws, _, _, cx| {
+        let mut tabs = vec![crate::ui::icon_button("left-files", IconName::Folder).selected(current.is_none()).tooltip("Files").on_click(cx.listener(|ws, _, _, cx| {
             ws.left_view = None;
             ws.save_layout();
             cx.notify();
         }))];
         for (i, v) in views.iter().enumerate() {
             let id = v.id.clone();
-            tabs.push(Button::new(("left-view", i)).ghost().xsmall().selected(current == Some(i)).icon(v.icon).tooltip(v.title.clone()).on_click(cx.listener(move |ws, _, _, cx| {
+            tabs.push(crate::ui::icon_button(("left-view", i), v.icon).selected(current == Some(i)).tooltip(v.title.clone()).on_click(cx.listener(move |ws, _, _, cx| {
                 ws.left_view = Some(id.clone());
                 ws.save_layout();
                 cx.notify();
@@ -1438,7 +1541,7 @@ impl Workspace {
                     .into_any_element()
             }
         };
-        v_flex().w(px(280.)).h_full().flex_none().border_r_1().border_color(theme.border).bg(theme.sidebar).child(header).child(div().flex_1().min_h_0().child(body)).into_any_element()
+        v_flex().w(crate::ui::r(crate::ui::SIDEBAR)).h_full().flex_none().border_r_1().border_color(theme.border).bg(theme.sidebar).child(header).child(div().flex_1().min_h_0().child(body)).into_any_element()
     }
 
     fn render_sidebar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1449,7 +1552,7 @@ impl Workspace {
         v_flex()
             .size_full()
             .child(h_flex().px_3().py_2().justify_between().child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("Files")).child(
-                Button::new("new-note").ghost().xsmall().icon(IconName::Plus).tooltip("New note (Ctrl+N)").on_click(cx.listener(|ws, _, w, cx| ws.new_note_in("", w, cx))),
+                crate::ui::icon_button("new-note", IconName::Plus).tooltip("New note (Ctrl+N)").on_click(cx.listener(|ws, _, w, cx| ws.new_note_in("", w, cx))),
             ))
             .child({
                 let root_target = self.menu_target.clone();
@@ -1479,7 +1582,7 @@ impl Workspace {
                         let path = root.join(&id);
                         let row = h_flex()
                             .gap_1p5()
-                            .text_sm()
+                            .text_size(crate::ui::r(13.))
                             .text_color(if conflict { warn } else { fg })
                             .child(Icon::new(icon).small())
                             .child(item.label.clone())
@@ -1493,15 +1596,17 @@ impl Workspace {
                         };
                         ListItem::new(ix)
                             .w_full()
+                            .h(crate::ui::r(25.))
+                            .py_0()
                             .px_2()
-                            .pl(px(14.) * entry.depth() + px(8.))
+                            .pl(crate::ui::r(17. * entry.depth() as f32 + 8.))
                             .child(row)
                             .when(!folder, |li| {
                                 li.on_click(move |ev, window, cx| {
                                     let new_tab = ev.modifiers().secondary(cx);
                                     let p = path.clone();
                                     let _ = weak.update(cx, |ws, cx| {
-                                        ws.open_path(p, new_tab, window, cx);
+                                        ws.open_file(p, new_tab, window, cx);
                                     });
                                 })
                             })
@@ -1575,11 +1680,11 @@ impl Workspace {
             .capture_any_mouse_down(cx.listener(move |ws, _, w, cx| ws.focus_pane(id, w, cx)))
             .when(split && focused, |d| d.border_t_2().border_color(theme.primary.opacity(0.6)))
             .when(split && !focused, |d| d.border_t_2().border_color(theme.border))
-            .when(!names.is_empty(), |d| {
+            .when(!names.is_empty() && self.focus_mode.is_none(), |d| {
                 d.child(
                     TabBar::new(("tabs", id))
                         .suffix(
-                            Button::new(SharedString::from(format!("split-{id}"))).ghost().xsmall().icon(IconName::PanelRight).tooltip("Split right").on_click(cx.listener(move |ws, ev: &ClickEvent, w, cx| {
+                            crate::ui::icon_button(SharedString::from(format!("split-{id}")), IconName::PanelRight).tooltip("Split right").on_click(cx.listener(move |ws, ev: &ClickEvent, w, cx| {
                                 ws.focus_pane(id, w, cx);
                                 // Shift+click splits down
                                 ws.split(if ev.modifiers().shift { Axis::Vertical } else { Axis::Horizontal }, w, cx)
@@ -1600,7 +1705,7 @@ impl Workspace {
                         })),
                 )
             })
-            .when(focused && editor.is_some(), |d| {
+            .when(focused && editor.as_ref().is_some_and(|e| !e.read(cx).plain), |d| {
                 let slots: Vec<_> = cx.try_global::<PluginHost>().map(|h| h.reg.toolbars.iter().map(|(_, t)| t.clone()).collect()).unwrap_or_default();
                 let ctx = ViewCtx { editor: editor.clone(), workspace: WorkspaceHandle(cx.entity().downgrade()), vault: self.vault.clone(), active_note: editor.as_ref().map(|e| self.rel(&e.read(cx).path)), arg: None };
                 d.children(slots.iter().map(|t| (t.render)(&ctx, _window, cx)))
@@ -1631,12 +1736,14 @@ impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         self.prune_view_tabs(cx);
-        let layout = self.layout.clone();
+        // focus mode shows the focused pane alone
+        let layout = if self.focus_mode.is_some() { Layout::Pane(self.pane) } else { self.layout.clone() };
         let panes = self.render_layout(&layout, window, cx);
         let sidebar = self.sidebar.then(|| self.render_left(window, cx));
-        let ribbon = self.render_ribbon(cx).into_any_element();
+        let focus = self.focus_mode.is_some();
+        let ribbon = (!focus).then(|| self.render_ribbon(cx).into_any_element());
         let right = self.render_right_sidebar(window, cx);
-        let status = self.render_status_bar(cx);
+        let status = if focus { None } else { self.render_status_bar(cx) };
         let preview = self.render_preview(window, cx);
         div()
             .id("workspace")
@@ -1646,6 +1753,14 @@ impl Render for Workspace {
             .flex()
             .bg(theme.background)
             .text_color(theme.foreground)
+            // Ctrl pressed or released over a link: replay the mouse position so the hover
+            // handlers (editor, sidebars, graph) see the new keys and show or hide previews
+            .on_modifiers_changed(|ev: &ModifiersChangedEvent, window, cx| {
+                let (position, modifiers) = (window.mouse_position(), ev.modifiers);
+                window.defer(cx, move |window, cx| {
+                    window.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position, pressed_button: None, modifiers }), cx);
+                });
+            })
             .on_action(cx.listener(|ws, _: &CloseTab, w, cx| {
                 let a = ws.active;
                 ws.close_tab(a, w, cx)
@@ -1685,7 +1800,7 @@ impl Render for Workspace {
                 let target = ws.menu_target.borrow_mut().take();
                 if let Some((p, false)) = target {
                     let path = ws.vault.borrow().root.join(p);
-                    ws.open_path(path, true, w, cx);
+                    ws.open_file(path, true, w, cx);
                 }
             }))
             .on_action(cx.listener(|ws, _: &NewFolder, w, cx| {
@@ -1709,7 +1824,7 @@ impl Render for Workspace {
                     ws.delete_dialog(p, folder, w, cx)
                 }
             }))
-            .child(ribbon)
+            .children(ribbon)
             .children(sidebar)
             .child(v_flex().flex_1().min_w_0().h_full().child(div().flex_1().min_h_0().flex().child(panes)).children(status))
             .children(right)

@@ -199,7 +199,7 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                     let _ = handle.update(cx, |_, w, cx| {
                         let _ = ws.update(cx, |ws, cx| {
                             let p = ws.vault.borrow().root.join(&rel);
-                            ws.open_path(p, new_tab, w, cx);
+                            ws.open_file(p, new_tab, w, cx);
                         });
                     });
                 }
@@ -301,6 +301,25 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                         }
                     });
                 }
+                "mods" => {
+                    // mods ctrl | mods none: modifier keys pressed or released on their own
+                    let modifiers = Modifiers { control: rest.trim() == "ctrl", ..Default::default() };
+                    let _ = handle.update(cx, |_, w, cx| {
+                        w.dispatch_event(PlatformInput::ModifiersChanged(ModifiersChangedEvent { modifiers, ..Default::default() }), cx);
+                    });
+                }
+                "proj" => {
+                    // proj: the text of the active editor's first rendered leaf (what shows)
+                    let active = ws.update(cx, |ws, _| ws.active_editor()).ok().flatten();
+                    if let Some(e) = active {
+                        let _ = e.update(cx, |e, cx| {
+                            let plain = e.plain;
+                            let p = e.projection(cx);
+                            let shown = p.blocks.first().map(|b| matches!(b.node, crate::editor::projection::ProjNode::Block(gpui_kit::base::text::editor_host::BlockNode::CodeBlock(_)))).unwrap_or(false);
+                            println!("PROJ plain={plain} code_leaf={shown} blocks={}", p.blocks.len());
+                        });
+                    }
+                }
                 "ws-texts" => {
                     // ws-texts: the active note's text in every pane (layout order), `d` = unsaved
                     let _ = ws.update(cx, |ws, cx| {
@@ -321,6 +340,13 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                         let root = ws.vault.borrow().root.clone();
                         let tabs: Vec<String> = ws.tabs.iter().map(|t| tab_name(t, &root, cx)).collect();
                         println!("TABS active={} {:?}", ws.active, tabs);
+                    });
+                }
+                "ws-focus" => {
+                    // ws-focus [fullscreen]: toggle focus mode, optionally also full screen
+                    let fullscreen = rest.trim() == "fullscreen";
+                    let _ = handle.update(cx, |_, w, cx| {
+                        let _ = ws.update(cx, |ws, cx| ws.toggle_focus_mode(fullscreen, w, cx));
                     });
                 }
                 "state" => {

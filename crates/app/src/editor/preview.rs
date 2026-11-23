@@ -77,8 +77,8 @@ pub fn card(md: &super::render::MarkdownRenderer, snippet: &str, numbers: std::c
     let body = md.render(snippet, window, cx);
     let card = div()
         .id("link-preview")
-        .w(px(520.))
-        .max_h(px(380.))
+        .w(crate::ui::r(520.))
+        .max_h(crate::ui::r(380.))
         .overflow_y_scroll()
         .px_4()
         .py_3()

@@ -289,10 +289,10 @@ impl Render for RecoveryView {
             .child(div().text_sm().text_color(theme.muted_foreground).child(format!("{} · {} snapshot(s), kept on this computer", self.rel, self.snaps.len())))
             .child(
                 h_flex()
-                    .h(px(440.))
+                    .h(crate::ui::r(440.))
                     .gap_3()
                     .items_start()
-                    .child(div().id("snapshots").w(px(210.)).h_full().flex_none().overflow_y_scroll().children(rows))
+                    .child(div().id("snapshots").w(crate::ui::r(210.)).h_full().flex_none().overflow_y_scroll().children(rows))
                     .child(
                         div()
                             .id("snapshot-text")
@@ -341,7 +341,7 @@ pub fn open_history(store: &Store, rel: &str, window: &mut Window, cx: &mut App)
         v.select(0);
         v
     });
-    window.open_dialog(cx, move |dialog, _, _| dialog.title("File recovery").w(px(860.)).child(view.clone()));
+    window.open_dialog(cx, move |dialog, _, cx| dialog.title("File recovery").w(crate::ui::p(cx, 860.)).child(view.clone()));
 }
 
 impl Plugin for FileRecovery {

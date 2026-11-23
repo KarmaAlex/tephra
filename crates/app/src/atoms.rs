@@ -68,8 +68,10 @@ impl MarkdownPlugin for ImagePlugin {
         let Some(path) = a.path.clone() else {
             return Some(InlineElement::new(div().text_color(cx.theme().danger).child(SharedString::from(format!("![[{}]] — not found", a.name)))));
         };
-        let (w, h) = a.size.map(|(w, h)| (w as f32, h as f32)).unwrap_or((320.0, 200.0));
-        let max = CONTENT_WIDTH.with(|c| c.get()).clamp(120.0, MAX_IMAGE_WIDTH);
+        // images grow with the UI scale, as with Obsidian's zoom, up to the pane's width
+        let scale = crate::theme::ui_scale(cx);
+        let (w, h) = a.size.map(|(w, h)| (w as f32 * scale, h as f32 * scale)).unwrap_or((320.0 * scale, 200.0 * scale));
+        let max = CONTENT_WIDTH.with(|c| c.get()).clamp(120.0, MAX_IMAGE_WIDTH * scale);
         let scale = (max / w).min(1.0);
         // whole pixels: gpui-kit rejects an object whose baseline exceeds its measured height
         let (w, h) = ((w * scale).round(), (h * scale).round());

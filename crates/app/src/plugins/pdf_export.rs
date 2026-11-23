@@ -112,7 +112,7 @@ pub fn build(rel: &str, text: &str, page: &Page, cx: &App) -> Option<Job> {
         labelers.iter().find_map(|l| l.label(&ctx, sub))
     };
     let style = |kind: &str, meta: &str| {
-        let s = crate::editor::render::callout_style(kind, meta, cx);
+        let s = crate::editor::render::callout_style_for(kind, meta, false, cx); // paper is white
         Style { look: s.look, color: hsla_rgb(s.color), label: s.label }
     };
     let code = |lang: &str, code: &str, md: &dyn Fn(&str) -> String| host.reg.code_block_renderer(lang).and_then(|r| r.export_typst(code, md));

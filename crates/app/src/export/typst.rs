@@ -90,6 +90,16 @@ fn rgb((r, g, b): (u8, u8, u8)) -> String {
     format!("rgb({r}, {g}, {b})")
 }
 
+/// White or near-black, whichever reads better on a filled badge of colour `c`.
+fn on_color((r, g, b): (u8, u8, u8)) -> &'static str {
+    let lin = |v: u8| {
+        let v = v as f32 / 255.0;
+        if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+    };
+    let l = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+    if 1.05 / (l + 0.05) >= (l + 0.05) / 0.0603 { "white" } else { "rgb(26, 26, 26)" }
+}
+
 fn capitalize(s: &str) -> String {
     let mut c = s.chars();
     c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
@@ -406,8 +416,9 @@ impl<'a> Emitter<'a> {
                 format!("#block(width: 100%, inset: 8pt, radius: 4pt, fill: {col}.lighten(90%), stroke: (left: 2pt + {col}))[#text(fill: {col}, weight: \"bold\")[{head}]\n\n{body_t}{end}]")
             }
             CalloutLook::Badge => format!(
-                "#block(width: 100%, inset: 8pt, radius: 4pt, fill: {col}.lighten(94%), stroke: 1pt + {col})[#box(fill: {col}, inset: (x: 4pt, y: 2pt), radius: 2pt, text(fill: white, weight: \"bold\")[{}]) {title}\n\n{body_t}{end}]",
-                lit(&label)
+                "#block(width: 100%, inset: 8pt, radius: 4pt, fill: {col}.lighten(94%), stroke: 1pt + {col})[#box(fill: {col}, inset: (x: 4pt, y: 2pt), radius: 2pt, text(fill: {on}, weight: \"bold\")[{}]) {title}\n\n{body_t}{end}]",
+                lit(&label),
+                on = on_color(style.color)
             ),
             CalloutLook::Soft => format!(
                 "#block(width: 100%, inset: (left: 8pt, y: 2pt), stroke: (left: 1.5pt + {col}.lighten(30%)))[#emph[#text(fill: {col}, weight: \"bold\")[{}]] #emph[{title}]\n\n{body_t}{end}]",

@@ -50,13 +50,27 @@ pub fn obsidian_style(kind: &str, dark: bool) -> CalloutStyle {
 
 /// The style in effect: the first plugin claiming the type, else Obsidian's.
 pub fn callout_style(kind: &str, meta: &str, cx: &App) -> CalloutStyle {
-    let dark = cx.theme().is_dark();
+    callout_style_for(kind, meta, cx.theme().is_dark(), cx)
+}
+
+/// The style in the light or dark colours, whatever the app shows (PDFs are always light).
+pub fn callout_style_for(kind: &str, meta: &str, dark: bool, cx: &App) -> CalloutStyle {
     let mut s = cx.try_global::<PluginHost>().and_then(|h| h.reg.callout_style(kind, meta, dark)).unwrap_or_else(|| obsidian_style(kind, dark));
     // a snippet's `.callout[data-callout="kind"] { --callout-color }` wins, as it would in CSS
     if let Some(c) = cx.try_global::<crate::theme::ThemeCss>().and_then(|t| t.callout_color(kind, dark)) {
         s.color = c;
     }
     s
+}
+
+/// Text colour readable on a filled `bg`: near-black on light colours (the dark palettes'
+/// pastel badges), white on dark ones (WCAG relative luminance).
+pub fn on_color(bg: Hsla) -> Hsla {
+    let c = gpui_kit::Rgba::from(bg);
+    let lin = |v: f32| if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) };
+    let l = 0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b);
+    // contrast with white vs with #1a1a1a (luminance ~0.010): pick the larger
+    if 1.05 / (l + 0.05) >= (l + 0.05) / 0.0603 { gpui_kit::white() } else { gpui_kit::rgb(0x1a1a1a).into() }
 }
 
 /// Renders Markdown read-only (for plugins: e.g. the columns of a layout block), with links and
@@ -153,7 +167,7 @@ impl MarkdownRenderer {
             .enumerate()
             .map(|(ix, b)| {
                 let el = render_node(&b.node, ix, &h, &rcx, window, cx);
-                if b.indent > 0.0 { div().pl(px(b.indent)).child(el).into_any_element() } else { el }
+                if b.indent > 0.0 { div().pl(crate::ui::r(b.indent)).child(el).into_any_element() } else { el }
             })
             .collect();
         div().flex().flex_col().min_w_0().children(children).into_any_element()
@@ -347,7 +361,7 @@ fn render_callout(c: &CalloutView, ix: usize, host: &Host, rcx: &RenderContext, 
         CalloutLook::Badge | CalloutLook::Rules => {
             let label = style.label.clone().unwrap_or_else(|| capitalize(&c.kind));
             let badge = if style.look == CalloutLook::Badge {
-                div().px_2().py_0p5().rounded(px(4.)).bg(color).text_color(gpui_kit::white()).text_sm().font_weight(FontWeight::SEMIBOLD).child(label)
+                div().px_2().py_0p5().rounded(px(4.)).bg(color).text_color(on_color(color)).text_sm().font_weight(FontWeight::SEMIBOLD).child(label)
             } else {
                 div().font_weight(FontWeight::BOLD).text_color(color).child(label)
             };
@@ -362,7 +376,7 @@ fn render_callout(c: &CalloutView, ix: usize, host: &Host, rcx: &RenderContext, 
     }
     let el = div().my_1().flex().flex_col().gap_1().child(header).children(body);
     let el = match style.look {
-        CalloutLook::Obsidian => el.pl(px(24.)).pr(px(12.)).py(px(12.)).rounded(px(4.)).bg(color.opacity(0.1)),
+        CalloutLook::Obsidian => el.pl(crate::ui::r(24.)).pr(crate::ui::r(12.)).py(crate::ui::r(12.)).rounded(px(4.)).bg(color.opacity(0.1)),
         CalloutLook::Badge => el.px_3().pt_2().pb_2().border(px(1.4)).border_color(color).rounded(px(6.)).bg(color.opacity(0.06)),
         CalloutLook::Soft => el.pl_3().border_l_2().border_color(color.opacity(0.6)),
         CalloutLook::Rules => el.px_2().py_1().border_t_2().border_b_2().border_color(color),

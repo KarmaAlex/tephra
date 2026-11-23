@@ -12,9 +12,8 @@ use std::path::Path;
 use std::rc::Rc;
 
 use gpui_kit::assets::IconName;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
-use gpui_kit::component::{h_flex, ActiveTheme as _, Sizable as _};
+use gpui_kit::component::{h_flex, ActiveTheme as _};
 use gpui_kit::*;
 use obsidilight_core::EditKind;
 use serde_json::{Map, Value};
@@ -44,7 +43,8 @@ enum Op {
     PlainText,
     Editor(&'static str),
     AttachFile,
-    FocusMode,
+    /// Only the current note; `true` also full screen.
+    FocusMode(bool),
 }
 
 /// (id without the `editing-toolbar:` prefix, name, default hotkey, op). Ids are the plugin's.
@@ -107,9 +107,50 @@ fn table(font: &str, bg: &str) -> Vec<(&'static str, &'static str, Option<&'stat
         ("right", "Align right", None, Op::Wrap("<p align=\"right\">", "</p>")),
         ("change-font-color", "Font colour", None, Op::WrapWith(format!("<font color=\"{font}\">"), "</font>")),
         ("change-background-color", "Background colour", None, Op::WrapWith(format!("<span style=\"background:{bg}\">"), "</span>")),
-        ("fullscreen-focus", "Focus mode", None, Op::FocusMode),
-        ("workplace-fullscreen-focus", "Focus mode (workspace)", None, Op::FocusMode),
+        ("fullscreen-focus", "Fullscreen focus mode", None, Op::FocusMode(true)),
+        ("workplace-fullscreen-focus", "Focus mode", None, Op::FocusMode(false)),
     ]
+}
+
+/// A saved name without markup and symbols ("Change font color[html]" → "Change font color").
+fn clean_name(s: &str) -> String {
+    let mut out = String::new();
+    let mut in_tag = false;
+    for c in s.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' if in_tag => in_tag = false,
+            _ if in_tag => {}
+            '[' | ']' | '(' | ')' | '=' | '!' | '*' | '`' | '~' | '$' => {}
+            _ => out.push(c),
+        }
+    }
+    let t = out.replace("html", "").split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut c = t.chars();
+    c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
+}
+
+/// A submenu's tooltip: its saved name when it has one ("Text Tools"), else what it holds.
+fn submenu_title(name: &str, ids: &[String]) -> String {
+    let has = |p: &[&str]| ids.iter().any(|i| p.iter().any(|x| i.contains(x)));
+    if !name.is_empty() && !name.starts_with("submenu") {
+        return clean_name(name);
+    }
+    if has(&["header"]) {
+        "Headings".into()
+    } else if has(&["justify", "center"]) {
+        "Alignment".into()
+    } else if has(&["list", "checklist"]) {
+        "Lists".into()
+    } else if has(&["blockquote", "callout"]) {
+        "Quote and callout".into()
+    } else if has(&["editor-copy", "editor-cut", "editor-paste"]) {
+        "Edit".into()
+    } else if has(&["superscript", "subscript", "code", "link", "math"]) {
+        "Formatting and links".into()
+    } else {
+        "More".into()
+    }
 }
 
 fn icon_for(id: &str) -> IconName {
@@ -270,9 +311,9 @@ fn run_op(op: &Op, a: &mut ActionCtx) {
                 })
                 .detach();
         }
-        Op::FocusMode => {
+        Op::FocusMode(fullscreen) => {
             if let Some(ws) = a.workspace() {
-                ws.toggle_focus_mode(a.cx);
+                ws.toggle_focus_mode(*fullscreen, a.window, a.cx);
             }
         }
     }
@@ -353,13 +394,20 @@ impl Plugin for EditingToolbar {
                     })
                 };
                 let buttons = entries.iter().enumerate().map(|(i, e)| {
-                    let tip = if e.name.is_empty() || e.name.starts_with("submenu") { e.children.first().map(|c| c.name.clone()).unwrap_or_default() } else { e.name.clone() };
+                    // our own names: the plugin's saved ones carry markup ("==Highlight==",
+                    // "<p aligin=…>", "Insert link []()")
+                    let name_of = |id: &str| ops.get(id.trim_start_matches("editing-toolbar:")).map(|(n, _)| n.to_string());
+                    let tip = if e.children.is_empty() {
+                        name_of(&e.id).unwrap_or_else(|| clean_name(&e.name))
+                    } else {
+                        submenu_title(&e.name, &e.children.iter().map(|c| c.id.trim_start_matches("editing-toolbar:").to_string()).collect::<Vec<_>>())
+                    };
                     // a submenu we have no icon for shows its first command's
                     let icon = match e.children.iter().find(|c| !c.id.starts_with("editingToolbar-Divider")) {
                         Some(first) if icon_for(&e.id) == IconName::Pencil => icon_for(&first.id),
                         _ => icon_for(&e.id),
                     };
-                    let b = Button::new(("et", i)).ghost().xsmall().icon(icon).tooltip(tip);
+                    let b = crate::ui::icon_button(("et", i), icon).tooltip(tip);
                     if e.children.is_empty() {
                         let f = run(&e.id);
                         b.on_click(move |_, window, cx| f(window, cx)).into_any_element()

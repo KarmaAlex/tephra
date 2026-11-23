@@ -88,7 +88,7 @@ impl Plugin for Outline {
                     let (editor, off) = (editor.clone(), *off);
                     div()
                         .id(("outline", i))
-                        .pl(px(14. * (level - top) as f32 + 4.))
+                        .pl(crate::ui::r(14. * (level - top) as f32 + 4.))
                         .py_0p5()
                         .text_sm()
                         .truncate()
@@ -206,7 +206,7 @@ impl Plugin for TagPane {
                     let (ws, q) = (v.workspace.clone(), format!("tag:#{full}"));
                     h_flex()
                         .id(("tag", i))
-                        .pl(px(14. * *depth as f32 + 4.))
+                        .pl(crate::ui::r(14. * *depth as f32 + 4.))
                         .pr_1()
                         .py_0p5()
                         .gap_2()

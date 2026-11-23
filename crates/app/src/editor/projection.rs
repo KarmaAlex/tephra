@@ -945,6 +945,25 @@ pub struct ProjectionInput<'a> {
     pub code_mode: &'a dyn Fn(&str) -> CodeMode,
 }
 
+/// A file that isn't a note (`.css`, `.json`, `.txt`…): its text as one editable leaf, with
+/// no Markdown at all (Obsidian renders Markdown only in notes).
+pub fn project_plain(text: &str, sel: Selection, version: u64) -> Projection {
+    let mut proj = Projection { version, sel, mode: ViewMode::Source, ..Default::default() };
+    let k = key(0, 0);
+    let mut map = LeafMap { segs: Vec::new(), src: 0..text.len(), len: text.len() };
+    if !text.is_empty() {
+        map.segs.push(Seg { kind: SegKind::Text, leaf: 0..text.len(), src: 0..text.len() });
+    }
+    proj.index.insert(k, 0);
+    proj.leaves.push((k, map));
+    let code = CodeBlock::new(text.to_string().into(), None, None::<Span>).with_leaf_key(k);
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut h);
+    proj.blocks.push(ProjBlock { node: ProjNode::Block(BlockNode::CodeBlock(code)), indent: 0.0, keys: vec![k], hash: h.finish(), align: None });
+    proj
+}
+
 pub fn project(inp: &ProjectionInput) -> Projection {
     let text = inp.text;
     // the reveal rule does the work: reading reveals nothing, source reveals everything
