@@ -11,6 +11,7 @@ mod bench;
 mod commands;
 mod editor;
 mod embeds;
+mod export;
 mod fuzzy;
 mod hotkeys;
 mod icons;
@@ -27,6 +28,13 @@ use gpui_kit::*;
 
 fn main() {
     let t0 = Instant::now();
+    // PDF export runs in a short-lived copy of this binary (see export::compile::run_isolated)
+    if std::env::args_os().nth(1).is_some_and(|a| a == "--export-worker") {
+        if let Some(dir) = std::env::args_os().nth(2) {
+            export::compile::worker(std::path::Path::new(&dir));
+        }
+        return;
+    }
     let Some(arg) = std::env::args_os().nth(1).map(PathBuf::from) else {
         eprintln!("usage: obsidilight <vault-folder | note.md>");
         std::process::exit(2);

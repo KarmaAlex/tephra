@@ -16,6 +16,7 @@ pub mod horizontal_blocks;
 pub mod latex_suite;
 pub mod links_panes;
 pub mod outline_tags;
+pub mod pdf_export;
 pub mod picker;
 pub mod search;
 pub mod spellcheck;
@@ -71,6 +72,7 @@ pub fn bundled(vault_root: &Path) -> Vec<Box<dyn Plugin>> {
         Box::new(copy_block_link::CopyBlockLink::new()),
         Box::new(editing_toolbar::EditingToolbar::new(vault_root)),
         Box::new(charts::Charts::new()),
+        Box::new(pdf_export::PdfExport::new(vault_root)),
         Box::new(word_count::WordCount::new()),
         Box::new(desmos::Desmos::new()),
         Box::new(horizontal_blocks::HorizontalBlocks::new(vault_root)),

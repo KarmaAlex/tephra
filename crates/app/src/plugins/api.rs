@@ -115,6 +115,11 @@ pub trait CalloutRenderer {
     fn render_body(&self, _kind: &str, _meta: &str, _body: &[String], _md: &MarkdownRenderer, _window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         None
     }
+    /// The body as Typst for PDF export, when `render_body` draws it specially; `md` converts
+    /// one line of Markdown to Typst.
+    fn export_body(&self, _kind: &str, _meta: &str, _body: &[String], _md: &dyn Fn(&str) -> String) -> Option<String> {
+        None
+    }
     /// Something to show after the body (e.g. the end-of-proof mark).
     fn body_end(&self, _kind: &str) -> Option<String> {
         None

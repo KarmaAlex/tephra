@@ -171,6 +171,27 @@ impl CalloutRenderer for Styles {
         matches!(kind, "algorithm" | "alg").then(|| render_algorithm(meta, body, self.line_numbers, md, window, cx))
     }
 
+    fn export_body(&self, kind: &str, meta: &str, body: &[String], md: &dyn Fn(&str) -> String) -> Option<String> {
+        if !matches!(kind, "algorithm" | "alg") {
+            return None;
+        }
+        let numbered = algorithm_numbered(meta, self.line_numbers);
+        let src: Vec<&str> = body.iter().map(String::as_str).filter(|l| !(l.trim().starts_with('^') && !l.trim().contains(' '))).collect();
+        let mut cells = Vec::new();
+        for (i, l) in algorithm::parse(&src).into_iter().enumerate() {
+            let line: Vec<String> = l.parts.iter().map(|p| match p {
+                algorithm::Part::Keyword(k) => format!("#strong[{}];", crate::export::typst::lit(k)),
+                algorithm::Part::Text(t) => md(t),
+            }).collect();
+            if numbered {
+                cells.push(format!("[#text(fill: gray)[{}]]", i + 1));
+            }
+            cells.push(format!("[#h({}em){}]", 1.2 * l.depth as f32, line.join(" ")));
+        }
+        let cols = if numbered { "(auto, 1fr)" } else { "(1fr,)" };
+        Some(format!("#grid(columns: {cols}, column-gutter: 8pt, row-gutter: 5pt, {})", cells.join(", ")))
+    }
+
     fn body_end(&self, kind: &str) -> Option<String> {
         matches!(kind, "proof" | "pf").then(|| "\u{25A1}".to_string())
     }

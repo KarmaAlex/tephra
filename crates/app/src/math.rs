@@ -88,7 +88,8 @@ type Job = (String, bool, mpsc::Sender<Option<String>>);
 
 static MATHJAX_BUNDLE: &str = include_str!("../assets/mathjax-svg.js");
 
-fn mathjax_svg(tex: &str, display: bool) -> Option<String> {
+/// MathJax's SVG for a formula (its QuickJS worker; also used by PDF export).
+pub(crate) fn mathjax_svg(tex: &str, display: bool) -> Option<String> {
     static WORKER: OnceLock<Mutex<mpsc::Sender<Job>>> = OnceLock::new();
     let tx = WORKER.get_or_init(|| {
         let (tx, rx) = mpsc::channel::<Job>();

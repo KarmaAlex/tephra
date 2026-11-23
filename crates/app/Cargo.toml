@@ -22,3 +22,11 @@ regex = "1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
 spellbook = "0.4.2"
 sha2 = "0.11.1"
+# PDF export (M5): Typst in-process, as in the M0 spike
+typst = "0.15.1"
+typst-pdf = "0.15.1"
+typst-layout = "0.15.1"
+typst-svg = "0.15.1"
+# preview pages rasterised in the export worker (same resvg as gpui-component)
+resvg = "0.45.1"
+typst-kit = { version = "0.15.1", default-features = false, features = ["embedded-fonts", "scan-fonts"] }

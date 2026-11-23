@@ -10,7 +10,7 @@ crates/app/assets/mathjax-svg.js:
 test: crates/app/assets/mathjax-svg.js ## unit + fixture tests (fixture tests skip if the fixture is absent)
 	cargo test --release --workspace
 
-.PHONY: build test ui-smoke perf perf-obsidian corpus-math vault-stats bench-ref spikes mathjax-bundle cm6-bundle
+.PHONY: build test export-check ui-smoke perf perf-obsidian corpus-math vault-stats bench-ref spikes mathjax-bundle cm6-bundle
 
 perf: build      ## idle memory / startup / typing for the app (OBSIDIAN=1 adds the baseline, SPIKES=1 the M0 spikes)
 	VAULT="$(VAULT)" tools/perf/run_perf.sh
@@ -37,5 +37,8 @@ mathjax-bundle:  ## MathJax SVG bundle for the GPUI spike's embedded QuickJS
 cm6-bundle:      ## headless CM6 state + Lezer Markdown (GFM) for the LaTeX snippets plugin's function snippets
 	NODE_PATH=$(CURDIR)/spikes/gpui/js/node_modules spikes/tauri/node_modules/.bin/esbuild tools/cm6/entry.js --bundle --minify --format=iife --platform=neutral --main-fields=module,main --target=es2020 --outfile=crates/app/assets/cm6-headless.js
 
+export-check:    ## every fixture note converts to Typst and compiles to PDF (~1 min)
+	cargo test --release -p obsidilight fixture_notes_export -- --ignored --nocapture
+
 ui-smoke: build    ## scripted UI tests (need a display; windows open briefly)
-	for t in smoke links watcher idle snippets assist academic m4 tasks hotkeys panes toolbar; do tests/ui/$$t.sh || exit 1; done
+	for t in smoke links watcher idle snippets assist academic m4 tasks hotkeys panes toolbar pdf; do tests/ui/$$t.sh || exit 1; done
