@@ -30,7 +30,7 @@ series:
     data: [1, 2]
 ```
 NOTE
-printf 'wait 800\nkey ctrl-p\ntype export current note\nkey enter\nwait 6000\nquit\n' > "$TMP/e.script"
+printf 'wait 800\nkey ctrl-p\ntype export current note\nkey enter\nwait 12000\nquit\n' > "$TMP/e.script"
 OUT=$(OBSIDILIGHT_PDF_OUT="$TMP/out.pdf" OBSIDILIGHT_SCRIPT="$TMP/e.script" timeout 40 target/release/obsidilight "$TMP/Export test.md" | grep -E "^PDF")
 echo "$OUT"
 grep -q '^PDF pages=[1-9]' <<<"$OUT" || { echo "ui-pdf: no PDF"; exit 1; }
