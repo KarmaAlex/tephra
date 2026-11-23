@@ -197,7 +197,8 @@ fn icon_for(id: &str) -> IconName {
         "right" => IconName::TextAlignEnd,
         "change-font-color" => IconName::Baseline,
         "change-background-color" => IconName::PaintBucket,
-        "fullscreen-focus" | "workplace-fullscreen-focus" => IconName::Maximize,
+        "fullscreen-focus" => IconName::Maximize,
+        "workplace-fullscreen-focus" => IconName::Focus,
         "editor:swap-line-down" => IconName::ArrowDown,
         "editor:swap-line-up" => IconName::ArrowUp,
         // submenus, by what they hold
@@ -442,6 +443,17 @@ impl Plugin for EditingToolbar {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn tooltips_have_no_markup() {
+        assert_eq!(super::clean_name("Change font color[html]"), "Change font color");
+        assert_eq!(super::clean_name("<p aligin=\"justify\"></p>"), "");
+        assert_eq!(super::clean_name("Insert link []()"), "Insert link");
+        assert_eq!(super::clean_name("==Highlight=="), "Highlight");
+        assert_eq!(super::submenu_title("submenu-aligin", &["justify".into(), "center".into()]), "Alignment");
+        assert_eq!(super::submenu_title("submenu", &["header1-text".into()]), "Headings");
+        assert_eq!(super::submenu_title("Text Tools", &["get-plain-text".into()]), "Text Tools");
+    }
+
     use super::layout;
     use serde_json::json;
 

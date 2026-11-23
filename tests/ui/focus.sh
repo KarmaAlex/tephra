@@ -1,37 +1,39 @@
 #!/usr/bin/env bash
-# Focus mode: "Focus mode" (the toolbar's workplace button, the focus-mode command) hides the
-# ribbon, sidebars, tab bar, other panes and status bar, leaving only the note; "Fullscreen
-# focus mode" (the other button, F11) does the same and also full screens the window.
-# Toggling again restores everything.
+# Focus mode: only the focused pane's note (no ribbon, sidebars, tab bars, other panes); the
+# same command restores everything. (Fullscreen focus mode also toggles the window's full
+# screen; not run here so the test never takes over the screen.)
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/.obsidian"
-printf '# Note\n\ntext\n' > "$TMP/A.md"
+printf '# A\nalpha\n' > "$TMP/A.md"
+printf '# B\nbeta\n' > "$TMP/B.md"
 cat > "$TMP/s.script" <<SCRIPT
 wait 800
-ws-tabs
-ws-focus
+key ctrl-p
+type split right
+key enter
 wait 300
-ws-tabs
-ws-focus
+ws-open B.md
+key ctrl-p
+type toggle focus mode
+key enter
 wait 300
-ws-focus fullscreen
-wait 500
-ws-tabs
-ws-focus fullscreen
+${SHOT:+shot $SHOT}
+ws-panes
+key ctrl-p
+type toggle focus mode
+key enter
 wait 300
+ws-panes
 quit
 SCRIPT
-OUT=$(OBSIDILIGHT_SCRIPT="$TMP/s.script" timeout 30 target/release/obsidilight "$TMP/A.md" | grep -E "^(FOCUS|TABS)")
+OUT=$(OBSIDILIGHT_SCRIPT="$TMP/s.script" timeout 30 target/release/obsidilight "$TMP/A.md" | grep -E "^(FOCUS|PANES)")
 echo "$OUT"
-WANT='TABS active=0 ["A.md"]
-FOCUS true fullscreen=false
-TABS active=0 ["A.md"]
+WANT='FOCUS true fullscreen=false
+PANES ["A.md"] | *["B.md"]
 FOCUS false fullscreen=false
-FOCUS true fullscreen=true
-TABS active=0 ["A.md"]
-FOCUS false fullscreen=false'
+PANES ["A.md"] | *["B.md"]'
 [ "$OUT" = "$WANT" ] || { echo "ui-focus: expected:"; echo "$WANT"; exit 1; }
 echo "ui-focus: OK"

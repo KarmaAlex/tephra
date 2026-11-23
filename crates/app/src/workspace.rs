@@ -1669,7 +1669,7 @@ impl Workspace {
         let theme = cx.theme().clone();
         let focused = id == self.pane;
         let (tabs, active) = if focused { (self.tabs.clone(), self.active) } else { self.parked.get(&id).cloned().unwrap_or_default() };
-        let split = self.pane_ids().len() > 1;
+        let split = self.pane_ids().len() > 1 && self.focus_mode.is_none();
         let names: Vec<(SharedString, bool)> = tabs.iter().map(|t| t.label(cx)).collect();
         let current = tabs.get(active).cloned();
         let editor = current.as_ref().and_then(|t| t.editor().cloned());
