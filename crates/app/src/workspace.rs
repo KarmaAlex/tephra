@@ -116,6 +116,8 @@ pub struct Workspace {
     pub recent: Vec<String>,
     /// Files shown in the tree after the last rebuild (for UI tests).
     pub tree_files: Vec<String>,
+    /// Document version of each editor last propagated to its peers (live sync).
+    synced: HashMap<EntityId, u64>,
     _watcher: Option<notify::RecommendedWatcher>,
     _subs: Vec<Subscription>,
 }
@@ -159,6 +161,7 @@ impl Workspace {
             view_args: HashMap::new(),
             recent: Vec::new(),
             tree_files: Vec::new(),
+            synced: HashMap::new(),
             _watcher: None,
             _subs: subs,
         };
@@ -524,6 +527,16 @@ impl Workspace {
         let vault = self.vault.clone();
         let editor = cx.new(|cx| Editor::open(path, vault, window, cx));
         self._subs.push(cx.subscribe_in(&editor, window, Self::on_editor_event));
+        self._subs.push(cx.observe(&editor, Self::sync_panes));
+        // the note may already be open, with unsaved edits, in another pane: start from those
+        if let Some(peer) = self.all_editors().into_iter().find(|o| *o != editor && o.read(cx).path == editor.read(cx).path) {
+            let text = peer.read(cx).doc.text();
+            if let Some((r, t)) = obsidilight_core::Document::diff(&editor.read(cx).doc.text(), &text) {
+                editor.update(cx, |e, cx| e.apply_remote(r, &t, cx));
+            }
+            let v = editor.read(cx).doc.version();
+            self.synced.insert(editor.entity_id(), v);
+        }
         if new_tab || self.tabs.is_empty() {
             self.tabs.push(editor.clone());
             self.active = self.tabs.len() - 1;
@@ -675,6 +688,30 @@ impl Workspace {
             self.activate(a, window, cx);
         }
         cx.notify();
+    }
+
+    /// Live sync: when a note's text changed in one pane, every other pane showing that note
+    /// gets the difference at once (every keystroke, not only on save).
+    fn sync_panes(&mut self, editor: Entity<Editor>, cx: &mut Context<Self>) {
+        let (id, version, path) = {
+            let e = editor.read(cx);
+            (editor.entity_id(), e.doc.version(), e.path.clone())
+        };
+        if self.synced.get(&id) == Some(&version) {
+            return;
+        }
+        self.synced.insert(id, version);
+        let peers: Vec<Entity<Editor>> = self.all_editors().into_iter().filter(|o| *o != editor && o.read(cx).path == path).collect();
+        if peers.is_empty() {
+            return;
+        }
+        let text = editor.read(cx).doc.text();
+        for p in peers {
+            let Some((range, new)) = obsidilight_core::Document::diff(&p.read(cx).doc.text(), &text) else { continue };
+            p.update(cx, |e, cx| e.apply_remote(range, &new, cx));
+            let v = p.read(cx).doc.version();
+            self.synced.insert(p.entity_id(), v);
+        }
     }
 
     fn on_editor_event(&mut self, editor: &Entity<Editor>, ev: &EditorEvent, window: &mut Window, cx: &mut Context<Self>) {

@@ -273,6 +273,76 @@ impl Document {
         true
     }
 
+    /// Applies a change made elsewhere (the same note edited in another pane). It is not an
+    /// undo step here: the selection and this document's own undo history are mapped through
+    /// it, so undo keeps undoing only this pane's edits (as CM6 does for remote changes).
+    /// History older than an overlapping change is dropped, since it can no longer apply.
+    pub fn apply_remote(&mut self, range: Range<usize>, text: &str) {
+        let range = self.clamp_range(range);
+        if range.is_empty() && text.is_empty() {
+            return;
+        }
+        let removed_len = range.end - range.start;
+        let removed = self.slice(range.clone());
+        self.apply(range.start, &removed, text);
+        let map = |p: usize, r: &Range<usize>, ins: usize| -> usize {
+            if p >= r.end {
+                p + ins - (r.end - r.start)
+            } else if p > r.start {
+                r.start + ins
+            } else {
+                p
+            }
+        };
+        self.sel = Selection::new(map(self.sel.anchor, &range, text.len()), map(self.sel.head, &range, text.len()));
+        // walk the history from newest to oldest, carrying the remote change back in time
+        let (mut r, ins) = (range, text.len());
+        let mut keep = self.undo.len();
+        'tx: for (ti, tx) in self.undo.iter_mut().enumerate().rev() {
+            tx.sel_after = Selection::new(map(tx.sel_after.anchor, &r, ins), map(tx.sel_after.head, &r, ins));
+            for c in tx.changes.iter_mut().rev() {
+                let (c_end_after, delta) = (c.at + c.inserted.len(), c.inserted.len() as isize - c.removed.len() as isize);
+                if r.end <= c.at {
+                    // the remote change lies before this one: shift it
+                    c.at = (c.at as isize + ins as isize - removed_len as isize) as usize;
+                } else if r.start >= c_end_after {
+                    // after it: in the state before this change, the remote range sits earlier
+                    r = (r.start as isize - delta) as usize..(r.end as isize - delta) as usize;
+                } else {
+                    keep = ti + 1; // overlaps: this step and older ones cannot be undone any more
+                    break 'tx;
+                }
+            }
+            tx.sel_before = Selection::new(map(tx.sel_before.anchor, &r, ins), map(tx.sel_before.head, &r, ins));
+            keep = ti;
+        }
+        // `keep` = index of the oldest transaction that was mapped successfully
+        if keep > 0 {
+            self.undo.drain(..keep);
+        }
+        self.redo.clear();
+        self.break_group = true;
+    }
+
+    /// The smallest single change turning `old` into `new`: (byte range in `old`, replacement).
+    /// Offsets lie on char boundaries. None when the texts are equal.
+    pub fn diff(old: &str, new: &str) -> Option<(Range<usize>, String)> {
+        if old == new {
+            return None;
+        }
+        let (a, b) = (old.as_bytes(), new.as_bytes());
+        let mut pre = a.iter().zip(b).take_while(|(x, y)| x == y).count();
+        while !old.is_char_boundary(pre) || !new.is_char_boundary(pre) {
+            pre -= 1;
+        }
+        let max_suf = (a.len() - pre).min(b.len() - pre);
+        let mut suf = a.iter().rev().zip(b.iter().rev()).take(max_suf).take_while(|(x, y)| x == y).count();
+        while !old.is_char_boundary(a.len() - suf) || !new.is_char_boundary(b.len() - suf) {
+            suf -= 1;
+        }
+        Some((pre..a.len() - suf, new[pre..b.len() - suf].to_string()))
+    }
+
     /// Replaces the whole text (external change reload); clears history.
     pub fn reset(&mut self, text: &str) {
         let caret = self.sel.head;
@@ -523,5 +593,52 @@ mod tests {
         let d = Document::new("è");
         assert_eq!(d.clamp(1), 0);
         assert_eq!(d.clamp(99), 2);
+    }
+
+    #[test]
+    fn remote_changes_map_through_local_history() {
+        // pane B typed "B" at the end; pane A then typed at the start
+        let mut b = Document::new("hello world");
+        b.set_selection(Selection::caret(11));
+        b.replace(11..11, "!", EditKind::Other);
+        b.apply_remote(0..0, ">> ");
+        assert_eq!(b.text(), ">> hello world!");
+        assert_eq!(b.selection(), Selection::caret(15), "caret shifted by the remote insert");
+        assert!(b.undo(), "own edit still undoable");
+        assert_eq!(b.text(), ">> hello world", "undo removes only this pane's edit");
+        // a remote change after the local edit leaves it in place
+        let mut c = Document::new("abc");
+        c.replace(0..0, "X", EditKind::Other);
+        c.apply_remote(4..4, "Y");
+        assert!(c.undo());
+        assert_eq!(c.text(), "abcY");
+        // overlapping: the local step can no longer be undone
+        let mut d = Document::new("abc");
+        d.replace(1..2, "ZZ", EditKind::Other);
+        d.apply_remote(0..4, "q");
+        assert_eq!(d.text(), "q");
+        assert!(!d.undo());
+        // several steps: only those older than the overlap are dropped
+        let mut e = Document::new("0123456789");
+        e.replace(0..0, "a", EditKind::Other); // a0123456789
+        e.replace(11..11, "z", EditKind::Other); // a0123456789z
+        e.apply_remote(0..2, "A"); // overlaps the first step only -> "A123456789z"
+        assert_eq!(e.text(), "A123456789z");
+        assert!(e.undo());
+        assert_eq!(e.text(), "A123456789");
+        assert!(!e.undo());
+    }
+
+    #[test]
+    fn diff_is_minimal_and_char_safe() {
+        assert_eq!(Document::diff("abc", "abc"), None);
+        assert_eq!(Document::diff("abc", "abXc"), Some((2..2, "X".into())));
+        assert_eq!(Document::diff("aaa", "aa"), Some((2..3, String::new())));
+        // è (c3 a8) vs é (c3 a9) share a first byte: the change must cover the whole char
+        assert_eq!(Document::diff("è", "é"), Some((0..2, "é".into())));
+        let (r, t) = Document::diff("calcolabilità x", "calcolabilità yx").unwrap();
+        let mut s = "calcolabilità x".to_string();
+        s.replace_range(r, &t);
+        assert_eq!(s, "calcolabilità yx");
     }
 }

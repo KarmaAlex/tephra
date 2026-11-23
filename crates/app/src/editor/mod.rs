@@ -246,11 +246,29 @@ impl Editor {
         cx.notify();
     }
 
+    /// The same note changed in another pane (live sync): apply the difference as a remote
+    /// change. Saving is left to the pane where the edit was made.
+    pub fn apply_remote(&mut self, range: Range<usize>, text: &str, cx: &mut Context<Self>) {
+        self.doc.apply_remote(range, text);
+        self.tabstops = None;
+        cx.notify();
+    }
+
     /// The workspace's vault watcher saw this file change.
     pub fn on_disk_changed(&mut self, cx: &mut Context<Self>) {
         let Ok(l) = file::load(&self.path) else { return };
         if Some(l.disk) == self.disk {
             return; // our own save, or no real change
+        }
+        if self.doc.len() == l.text.len() && self.doc.text() == l.text {
+            // what is on disk is what we show (another pane of this note saved it)
+            self.disk = Some(l.disk);
+            self.doc.mark_saved();
+            if self.status.as_ref().is_some_and(|s| s.starts_with("The file changed") || s.starts_with("Not saved")) {
+                self.status = None;
+            }
+            cx.notify();
+            return;
         }
         if self.doc.is_dirty() {
             self.status = Some("The file changed on disk while you have unsaved edits. Your edits are kept; saving will not overwrite the newer file.".into());

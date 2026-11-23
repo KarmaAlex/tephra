@@ -235,6 +235,21 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                         println!("PANES {}", out.join(" | "));
                     });
                 }
+                "ws-texts" => {
+                    // ws-texts: the active note's text in every pane (layout order), `d` = unsaved
+                    let _ = ws.update(cx, |ws, cx| {
+                        let mut out = Vec::new();
+                        for id in ws.pane_ids() {
+                            let tabs = ws.pane_tabs(id);
+                            let active = if id == ws.pane { ws.active } else { 0 };
+                            if let Some(e) = tabs.get(active.min(tabs.len().saturating_sub(1))) {
+                                let e = e.read(cx);
+                                out.push(format!("{}{:?}", if e.doc.is_dirty() { "d" } else { "" }, e.doc.text()));
+                            }
+                        }
+                        println!("TEXTS {}", out.join(" | "));
+                    });
+                }
                 "ws-tabs" => {
                     let _ = ws.update(cx, |ws, cx| {
                         let root = ws.vault.borrow().root.clone();
