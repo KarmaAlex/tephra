@@ -65,11 +65,25 @@ pub struct MarkdownRenderer {
     next: Rc<std::cell::Cell<usize>>,
     /// Plugin callout numbers for the rendered text, by line (previews of numbered callouts).
     numbers: Option<Rc<HashMap<usize, String>>>,
+    /// The note the rendering happens in (vault path, its current text): code-block renderers
+    /// that list the note's contents use it.
+    note: Option<Rc<(String, Rc<str>)>>,
 }
 
 impl MarkdownRenderer {
     pub fn new(resolve: Rc<dyn Fn(&str) -> Option<PathBuf>>) -> Self {
-        Self { resolve, depth: 0, next: Rc::default(), numbers: None }
+        Self { resolve, depth: 0, next: Rc::default(), numbers: None, note: None }
+    }
+
+    /// The note this renders in (vault path, current text).
+    pub fn with_note(mut self, path: String, text: Rc<str>) -> Self {
+        self.note = Some(Rc::new((path, text)));
+        self
+    }
+
+    /// The note this renders in: (vault path, current text), if known.
+    pub fn note(&self) -> Option<(&str, &str)> {
+        self.note.as_ref().map(|n| (n.0.as_str(), &*n.1))
     }
 
     /// Callout numbers for the text about to be rendered (by its line numbers).
@@ -107,7 +121,7 @@ impl MarkdownRenderer {
         for (k, ranges) in &proj.muted {
             rcx = rcx.with_foreground_ranges(*k, ranges.iter().map(|r| (r.clone(), muted)).collect());
         }
-        let inner = MarkdownRenderer { resolve: self.resolve.clone(), depth: self.depth + 1, next: Rc::default(), numbers: None };
+        let inner = MarkdownRenderer { resolve: self.resolve.clone(), depth: self.depth + 1, next: Rc::default(), numbers: None, note: self.note.clone() };
         let folds = HashMap::new();
         let h = Host { editor: None, folds: &folds, md: &inner, numbers: self.numbers.as_deref() };
         let children: Vec<AnyElement> = proj
@@ -138,14 +152,55 @@ pub fn render_node(node: &ProjNode, ix: usize, host: &Host, rcx: &RenderContext,
     match node {
         ProjNode::Block(b) => b.render(ix, FlowPosition::at(&[b], 0, true).first(true).last(true), rcx, window, cx),
         ProjNode::Callout(c) => render_callout(c, ix, host, rcx, window, cx),
-        ProjNode::Display(b) => {
+        ProjNode::Display { node: b, line } => {
             let el = b.render(ix, FlowPosition::at(&[b], 0, true).first(true).last(true), rcx, window, cx);
-            if crate::app_settings::AppSettings::flag(cx, "centerDisplayMath") { div().w_full().flex().justify_center().child(el).into_any_element() } else { el }
+            let centred = crate::app_settings::AppSettings::flag(cx, "centerDisplayMath");
+            // a plugin's equation number ("(1.2)") at the right, as LaTeX does
+            match host.numbers.and_then(|m| m.get(line)) {
+                Some(tag) => div()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .child(div().flex_1().min_w_0().flex().when(centred, |d| d.justify_center()).child(el))
+                    .child(div().flex_none().pl_4().child(tag.clone()))
+                    .into_any_element(),
+                None if centred => div().w_full().flex().justify_center().child(el).into_any_element(),
+                None => el,
+            }
         }
         ProjNode::Noted { note, child } => {
             let muted = cx.theme().muted_foreground;
             let el = child.render(ix, FlowPosition::at(&[child], 0, true).first(true).last(true), rcx, window, cx);
             div().flex().flex_col().child(div().text_xs().text_color(muted).child(note.clone())).child(el).into_any_element()
+        }
+        ProjNode::Task { checked, at, child } => {
+            let el = child.render(ix, FlowPosition::at(&[child], 0, true).first(true).last(true), rcx, window, cx);
+            let theme = cx.theme();
+            let (accent, border) = (theme.primary, theme.muted_foreground);
+            let (checked, at) = (*checked, at.clone());
+            let editor = host.editor.clone();
+            let mut tick = div()
+                .id(SharedString::from(format!("task-{ix}-{}", at.start)))
+                .flex_none()
+                .mt(px(5.))
+                .size(px(15.))
+                .rounded(px(3.))
+                .border_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                ;
+            tick = if checked { {
+                use gpui_kit::component::Sizable as _;
+                tick.bg(accent).border_color(accent).child(gpui_kit::component::Icon::new(IconName::Check).xsmall().text_color(theme.primary_foreground))
+            } } else { tick.border_color(border) };
+            if let Some(editor) = editor {
+                tick = tick.cursor_pointer().on_mouse_down(MouseButton::Left, move |_: &MouseDownEvent, _, cx| {
+                    cx.stop_propagation();
+                    let _ = editor.update(cx, |e, cx| e.toggle_task(at.clone(), cx));
+                });
+            }
+            div().flex().items_start().gap_2().child(tick).child(div().flex_1().min_w_0().child(el)).into_any_element()
         }
         ProjNode::Rendered { lang, code, at } => {
             let renderer = cx.try_global::<PluginHost>().and_then(|h| h.reg.code_block_renderer(lang));
@@ -248,6 +303,17 @@ fn render_callout(c: &CalloutView, ix: usize, host: &Host, rcx: &RenderContext, 
                 .child(div().italic().font_weight(FontWeight::SEMIBOLD).text_color(color).child(label))
                 .child(div().flex_1().min_w_0().italic().child(title_el))
         }
+        CalloutLook::Caption { .. } => {
+            // "Figure 1.2  Caption": bold label, then the title (or nothing), centred
+            let label = style.label.clone().unwrap_or_default();
+            h_flex()
+                .gap_2()
+                .items_center()
+                .justify_center()
+                .children(fold_btn)
+                .when(!label.is_empty(), |d| d.child(div().font_weight(FontWeight::BOLD).child(label)))
+                .child(div().min_w_0().child(title_el))
+        }
         CalloutLook::Badge | CalloutLook::Rules => {
             let label = style.label.clone().unwrap_or_else(|| capitalize(&c.kind));
             let badge = if style.look == CalloutLook::Badge {
@@ -258,12 +324,19 @@ fn render_callout(c: &CalloutView, ix: usize, host: &Host, rcx: &RenderContext, 
             h_flex().gap_2().items_center().children(fold_btn).child(badge).child(div().flex_1().min_w_0().child(title_el))
         }
     };
+    if let CalloutLook::Caption { below } = style.look {
+        let body = div().flex().flex_col().items_center().children(body);
+        let el = div().my_2().flex().flex_col().gap_1().w_full();
+        let el = if below { el.child(body).child(header) } else { el.child(header).child(body) };
+        return el.into_any_element();
+    }
     let el = div().my_1().flex().flex_col().gap_1().child(header).children(body);
     let el = match style.look {
         CalloutLook::Obsidian => el.pl(px(24.)).pr(px(12.)).py(px(12.)).rounded(px(4.)).bg(color.opacity(0.1)),
         CalloutLook::Badge => el.px_3().pt_2().pb_2().border(px(1.4)).border_color(color).rounded(px(6.)).bg(color.opacity(0.06)),
         CalloutLook::Soft => el.pl_3().border_l_2().border_color(color.opacity(0.6)),
         CalloutLook::Rules => el.px_2().py_1().border_t_2().border_b_2().border_color(color),
+        CalloutLook::Caption { .. } => el,
     };
     el.into_any_element()
 }

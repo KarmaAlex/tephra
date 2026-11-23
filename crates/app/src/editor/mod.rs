@@ -146,6 +146,8 @@ pub struct Editor {
     deco_retry: bool,
     /// Plugin callout numbers for (doc version, plugin generation).
     numbers_cache: ((u64, u64), Rc<HashMap<usize, String>>),
+    /// The text as a shared string, by document version (handed to code-block renderers).
+    text_rc: (u64, Rc<str>),
     /// Hover preview of a link (target, mouse position, rendered snippet source + numbers).
     hover: Option<HoverPreview>,
     hover_pending: Option<String>,
@@ -203,6 +205,7 @@ impl Editor {
             deco_cache: HashMap::new(),
             deco_retry: false,
             numbers_cache: ((u64::MAX, 0), Rc::default()),
+            text_rc: (u64::MAX, Rc::from("")),
             hover: None,
             hover_pending: None,
             suggest: None,
@@ -364,7 +367,8 @@ impl Editor {
                 let (note, sub) = target.split_once('#')?;
                 let rel = if note.is_empty() { Some(this_rel.clone()) } else { vault.index.resolve(note, &this_rel) };
                 let rel = rel?;
-                let t = if rel == this_rel { crate::plugins::LinkTarget::Text(&text) } else { crate::plugins::LinkTarget::Meta(vault.index.note(&rel)?) };
+                let target_text = if rel == this_rel { text.as_str() } else { vault.index.text(&rel)? };
+                let t = crate::plugins::NoteCtx { path: &rel, text: target_text, index: &vault.index };
                 labelers.iter().find_map(|l| l.label(&t, sub))
             };
             let theme = cx.theme();
@@ -488,6 +492,27 @@ impl Editor {
             return;
         }
         cx.emit(EditorEvent::OpenLink { target: target.to_string(), new_tab });
+        cx.notify();
+    }
+
+    /// Ticks or unticks the task whose `[ ]` / `[x]` is at `at` (clicking its checkbox; works in
+    /// reading view too, as in Obsidian). One undoable edit, saved like typing.
+    pub fn toggle_task(&mut self, at: Range<usize>, cx: &mut Context<Self>) {
+        let now = match self.doc.slice(at.clone()).as_str() {
+            "[ ]" => "[x]",
+            "[x]" | "[X]" => "[ ]",
+            _ => return, // the text moved under us: do nothing
+        };
+        if self.status.as_ref().is_some_and(|s| s.starts_with("Cannot open")) {
+            return;
+        }
+        let sel = self.doc.selection();
+        api::apply_edit(&mut self.doc, &mut self.tabstops, at, now, EditKind::Other);
+        self.doc.set_selection(sel);
+        if std::env::var_os("OBSIDILIGHT_SCRIPT").is_some() {
+            println!("TASK {now}");
+        }
+        self.schedule_save(cx);
         cx.notify();
     }
 
@@ -783,8 +808,11 @@ impl Editor {
         let (snippet, first) = preview::snippet(&text, sub)?;
         let mut numbers = HashMap::new();
         if let Some(h) = cx.try_global::<PluginHost>() {
+            let vault = self.vault.borrow();
+            let rel = if note.is_empty() { vault.relative(&self.path) } else { vault.resolve(note, &self.path).map(|p| vault.relative(&p)).unwrap_or_default() };
+            let ctx = crate::plugins::NoteCtx { path: &rel, text: &text, index: &vault.index };
             for (_, r) in &h.reg.callout_renderers {
-                for (line, label) in r.numbers(&text) {
+                for (line, label) in r.numbers(&ctx) {
                     if line >= first {
                         numbers.entry(line - first).or_insert(label);
                     }
@@ -819,14 +847,19 @@ impl Editor {
     /// Callout labels from plugins (numbering), recomputed when the text or plugins change.
     fn callout_numbers(&mut self, cx: &App) -> Rc<HashMap<usize, String>> {
         let host = cx.try_global::<PluginHost>();
-        let key = (self.doc.version(), host.map_or(0, |h| h.generation));
+        // other notes matter too (which equations they reference): the index generation
+        let index_gen = self.vault.borrow().index.generation();
+        let key = (self.doc.version(), host.map_or(0, |h| h.generation).wrapping_add(index_gen.wrapping_mul(1 << 20)));
         if self.numbers_cache.0 != key {
             let renderers: Vec<_> = host.map(|h| h.reg.callout_renderers.iter().map(|(_, r)| r.clone()).collect()).unwrap_or_default();
             let mut map = HashMap::new();
             if !renderers.is_empty() {
                 let text = self.doc.text();
+                let vault = self.vault.borrow();
+                let rel = vault.relative(&self.path);
+                let ctx = crate::plugins::NoteCtx { path: &rel, text: &text, index: &vault.index };
                 for r in renderers {
-                    for (k, v) in r.numbers(&text) {
+                    for (k, v) in r.numbers(&ctx) {
                         map.entry(k).or_insert(v);
                     }
                 }
@@ -1115,7 +1148,11 @@ impl Render for Editor {
         let md = {
             let vault = self.vault.clone();
             let path = self.path.clone();
-            render::MarkdownRenderer::new(Rc::new(move |t: &str| vault.borrow().resolve(t, &path)))
+            let rel = self.vault.borrow().relative(&self.path);
+            if self.text_rc.0 != self.doc.version() {
+                self.text_rc = (self.doc.version(), self.doc.text().into());
+            }
+            render::MarkdownRenderer::new(Rc::new(move |t: &str| vault.borrow().resolve(t, &path))).with_note(rel, self.text_rc.1.clone())
         };
         let host = render::Host { editor: Some(cx.entity().downgrade()), folds: &self.folds, md: &md, numbers: Some(&numbers) };
         let mut children: Vec<AnyElement> = Vec::with_capacity(hi - lo + 2);

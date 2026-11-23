@@ -73,6 +73,9 @@ pub enum CalloutLook {
     Obsidian,
     /// Bordered box with the label as a filled badge (Academic Notes theorem-likes).
     Badge,
+    /// A float: the body centred with a caption line (bold label, then the title), below the
+    /// body (figures) or above it (tables).
+    Caption { below: bool },
     /// No box: accent bar and an italic run-in label (proofs, remarks).
     Soft,
     /// Rules above and below (algorithms).
@@ -91,11 +94,21 @@ pub struct CalloutStyle {
     pub label: Option<String>,
 }
 
+/// A note as plugins see it while numbering or labelling: its text (with unsaved edits, for
+/// the note being edited), its vault path, and the read-only vault index (for things that
+/// depend on other notes, e.g. which equations are referenced).
+pub struct NoteCtx<'a> {
+    pub path: &'a str,
+    pub text: &'a str,
+    pub index: &'a obsidilight_core::index::VaultIndex,
+}
+
 pub trait CalloutRenderer {
     /// Style for `kind` (lowercased) with `|meta`, or None to leave it to others / the core.
     fn style(&self, kind: &str, meta: &str, dark: bool) -> Option<CalloutStyle>;
-    /// Labels for a note's callouts by header line (numbering: "Theorem 1.2").
-    fn numbers(&self, _text: &str) -> std::collections::HashMap<usize, String> {
+    /// Labels by line: a callout's header line ("Theorem 1.2"), or the first line of a display
+    /// formula ("(1.2)", drawn at its right).
+    fn numbers(&self, _note: &NoteCtx) -> std::collections::HashMap<usize, String> {
         Default::default()
     }
     /// Draws a callout's body itself (e.g. pseudocode); `body` = its lines without quote markers.
@@ -108,18 +121,10 @@ pub trait CalloutRenderer {
     }
 }
 
-/// The note an internal link points into.
-pub enum LinkTarget<'a> {
-    /// The note being edited (its current, possibly unsaved text).
-    Text(&'a str),
-    /// Another note, from the vault index.
-    Meta(&'a obsidilight_core::index::NoteMeta),
-}
-
 /// Display text for internal links without an alias (references: `[[#^lemma1]]` → "lem 1.1").
 pub trait LinkLabeler {
-    /// `sub` is the part after `#` (e.g. `^lemma1`).
-    fn label(&self, target: &LinkTarget, sub: &str) -> Option<String>;
+    /// `target` is the note the link points into; `sub` is the part after `#` (e.g. `^lemma1`).
+    fn label(&self, target: &NoteCtx, sub: &str) -> Option<String>;
 }
 
 /// Renders fenced code blocks of one language (e.g. `chart`, `desmos-graph`) when the caret is

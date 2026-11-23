@@ -2,7 +2,7 @@
 VAULT ?= $(HOME)/dev/vault-fixture
 
 build: crates/app/assets/mathjax-svg.js
-	cargo build --release -p obsidilight
+	cargo build --release -p obsidilight -p winshot
 
 crates/app/assets/mathjax-svg.js:
 	$(MAKE) mathjax-bundle
@@ -37,12 +37,5 @@ mathjax-bundle:  ## MathJax SVG bundle for the GPUI spike's embedded QuickJS
 cm6-bundle:      ## headless CM6 state + Lezer Markdown (GFM) for the LaTeX snippets plugin's function snippets
 	NODE_PATH=$(CURDIR)/spikes/gpui/js/node_modules spikes/tauri/node_modules/.bin/esbuild tools/cm6/entry.js --bundle --minify --format=iife --platform=neutral --main-fields=module,main --target=es2020 --outfile=crates/app/assets/cm6-headless.js
 
-ui-smoke: build    ## scripted UI test on a temp copy of the perf note (needs a display)
-	tests/ui/smoke.sh
-	tests/ui/links.sh
-	tests/ui/watcher.sh
-	tests/ui/idle.sh
-	tests/ui/snippets.sh
-	tests/ui/assist.sh
-	tests/ui/academic.sh
-	tests/ui/m4.sh
+ui-smoke: build    ## scripted UI tests (need a display; windows open briefly)
+	for t in smoke links watcher idle snippets assist academic m4 tasks; do tests/ui/$$t.sh || exit 1; done

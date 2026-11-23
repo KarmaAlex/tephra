@@ -1,13 +1,14 @@
 //! Academic Notes (replaces the community plugin of the same name; reimplemented from its
 //! observed behaviour, none of its code): callout styling for its environments (D7) with the
 //! vault's palettes, numbering per section, references (`[[#^lemma1]]` shows "lem 1.1"),
-//! algorithm pseudocode with line numbers, and the end-of-proof mark.
+//! algorithm pseudocode with line numbers, the end-of-proof mark, numbered figures, tables and
+//! referenced equations, and the ```` ```academic-toc ```` contents block.
 
 pub mod algorithm;
 pub mod numbering;
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use gpui_kit::component::ActiveTheme as _;
@@ -30,6 +31,8 @@ const ENVS: &[(&str, &str, &[&str])] = &[
     ("proof", "Proof", &["proof", "pf"]),
     ("remark", "Remark", &["remark", "rem", "rmk"]),
     ("algorithm", "Algorithm", &["algorithm", "alg"]),
+    ("figure", "Figure", &["figure", "fig", "subfigure"]),
+    ("table", "Table", &["table", "tab"]),
 ];
 
 /// Display names of aliases that differ from their group's (e.g. `axiom` -> Axiom).
@@ -61,21 +64,69 @@ struct Styles {
     line_numbers: bool,
 }
 
-/// Numbers of the last text asked about (the editor asks again on every change).
+/// Numbers per note, recomputed when its text or the vault index changes (the editor asks on
+/// every change; references ask for other notes too).
 #[derive(Default)]
-struct NumberCache(RefCell<(u64, Rc<Vec<numbering::Numbered>>)>);
+struct NumberCache {
+    formats: numbering::Formats,
+    notes: RefCell<HashMap<String, (u64, Rc<Vec<numbering::Numbered>>)>>,
+}
+
+/// Block ids (and `\label`s) that links point at in `note`: from other notes (the index) and
+/// from the note's own text as it is now.
+fn referenced_ids(note: &NoteCtx) -> HashSet<String> {
+    let mut ids = HashSet::new();
+    let mut add = |target: &str| {
+        if let Some(id) = target.split_once('#').and_then(|(_, sub)| sub.strip_prefix('^')) {
+            ids.insert(id.trim().to_string());
+        }
+    };
+    for b in note.index.backlinks(note.path) {
+        if b.source != note.path {
+            if let Some(l) = note.index.note(&b.source).and_then(|m| m.links.get(b.link)) {
+                add(&l.target);
+            }
+        }
+    }
+    let mut rest = note.text;
+    while let Some(i) = rest.find("[[") {
+        let after = &rest[i + 2..];
+        let Some(j) = after.find("]]") else { break };
+        let inner = after[..j].split('|').next().unwrap_or("");
+        if let Some((p, _)) = inner.split_once('#') {
+            if p.is_empty() || note.index.resolve(inner, note.path).as_deref() == Some(note.path) {
+                add(inner);
+            }
+        }
+        rest = &after[j + 2..];
+    }
+    ids
+}
 
 impl NumberCache {
-    fn of_text(&self, text: &str) -> Rc<Vec<numbering::Numbered>> {
+    fn of_note(&self, note: &NoteCtx) -> Rc<Vec<numbering::Numbered>> {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        text.hash(&mut h);
+        note.text.hash(&mut h);
+        note.index.generation().hash(&mut h);
         let key = h.finish();
-        let mut c = self.0.borrow_mut();
-        if c.0 != key || c.1.is_empty() && !text.is_empty() {
-            *c = (key, Rc::new(numbering::number(&numbering::items_of_text(text))));
+        let mut c = self.notes.borrow_mut();
+        if let Some((k, v)) = c.get(note.path) {
+            if *k == key {
+                return v.clone();
+            }
         }
-        c.1.clone()
+        let mut items = numbering::items_of_text(note.text);
+        if items.iter().any(|i| matches!(i, numbering::Item::Equation { .. })) {
+            let refs = referenced_ids(note);
+            numbering::mark_referenced(&mut items, |id| refs.contains(id));
+        }
+        let v = Rc::new(numbering::number_with(&items, &self.formats));
+        if c.len() > 32 {
+            c.clear();
+        }
+        c.insert(note.path.to_string(), (key, v.clone()));
+        v
     }
 }
 
@@ -112,8 +163,8 @@ fn render_algorithm(meta: &str, body: &[String], line_numbers: bool, md: &Markdo
 }
 
 impl CalloutRenderer for Styles {
-    fn numbers(&self, text: &str) -> HashMap<usize, String> {
-        self.numbers.of_text(text).iter().map(|n| (n.line, n.label.clone())).collect()
+    fn numbers(&self, note: &NoteCtx) -> HashMap<usize, String> {
+        self.numbers.of_note(note).iter().filter(|n| !n.label.is_empty()).map(|n| (n.line, n.label.clone())).collect()
     }
 
     fn render_body(&self, kind: &str, meta: &str, body: &[String], md: &MarkdownRenderer, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
@@ -135,13 +186,19 @@ impl CalloutRenderer for Styles {
             "cor" => 4,
             "claim" => 5,
             "example" => 6,
+            "figure" | "table" => 7,
             _ => 7, // solution, proof, remark
         };
         let look = match *group {
             "proof" | "remark" => CalloutLook::Soft,
             "algorithm" => CalloutLook::Rules,
+            "figure" => CalloutLook::Caption { below: true },
+            "table" => CalloutLook::Caption { below: false },
             _ => CalloutLook::Badge,
         };
+        if kind == "subfigure" {
+            return Some(CalloutStyle { color: rgb(p[ix]).into(), look, icon: None, label: Some(String::new()) });
+        }
         let label = alias_label(kind).unwrap_or(label);
         Some(CalloutStyle { color: rgb(p[ix]).into(), look, icon: None, label: Some(label.to_string()) })
     }
@@ -179,28 +236,88 @@ pub fn contents(text: &str, depth: u8) -> Vec<(u8, String, usize, bool)> {
     out
 }
 
-/// `[[#^id]]` / `[[Note#^id]]` pointing into a numbered callout shows its short label.
+/// `[[#^id]]` / `[[Note#^id]]` pointing at a numbered callout or equation shows its short
+/// label ("lem 1.1", "fig 1.2", "eq:1.3"); `id` may also be an equation's `\label`.
 struct References {
     numbers: Rc<NumberCache>,
 }
 
 impl LinkLabeler for References {
-    fn label(&self, target: &LinkTarget, sub: &str) -> Option<String> {
+    fn label(&self, target: &NoteCtx, sub: &str) -> Option<String> {
         let id = sub.strip_prefix('^')?;
-        let (numbers, line) = match target {
-            LinkTarget::Text(t) => {
-                let line = t.lines().position(|l| {
-                    let l = l.trim_end();
-                    l.ends_with(&format!("^{id}")) && l[..l.len() - id.len() - 1].chars().next_back().is_none_or(|c| c.is_whitespace() || c == '>')
-                })?;
-                (self.numbers.of_text(t), line)
-            }
-            LinkTarget::Meta(m) => {
-                let line = m.block_ids.iter().find(|(b, _)| b == id)?.1;
-                (Rc::new(numbering::number(&numbering::items_of_meta(m))), line)
-            }
-        };
-        numbering::at_line(&numbers, line).map(|n| n.short.clone())
+        let numbers = self.numbers.of_note(target);
+        if let Some(n) = numbers.iter().find(|n| n.ids.iter().any(|i| i == id)) {
+            return Some(n.short.clone());
+        }
+        let (line, text) = target.text.lines().enumerate().find(|(_, l)| {
+            let l = l.trim_end();
+            l.ends_with(&format!("^{id}")) && l[..l.len() - id.len() - 1].chars().next_back().is_none_or(|c| c.is_whitespace() || c == '>')
+        })?;
+        // an id on its own line after a quote (no `>`) names the whole outer callout (a figure,
+        // not its last subfigure); inside a quote, the innermost one
+        if text.trim_start().starts_with('>') {
+            numbering::at_line(&numbers, line).map(|n| n.short.clone())
+        } else {
+            numbers.iter().filter(|n| n.line <= line && line <= n.end_line).min_by_key(|n| n.line).map(|n| n.short.clone())
+        }
+    }
+}
+
+/// ```` ```academic-toc ```` : the note's headings (H2 down to the contents depth; the H1 is
+/// the title), as links. `depth: N` inside the block overrides the depth. In exported PDFs it
+/// becomes the document's outline, so a note without the block exports without contents.
+struct Toc {
+    depth: u8,
+}
+
+impl Toc {
+    fn depth(&self, code: &str) -> u8 {
+        code.lines().find_map(|l| l.trim().strip_prefix("depth:").and_then(|d| d.trim().parse::<u8>().ok())).unwrap_or(self.depth).clamp(2, 6)
+    }
+}
+
+/// (level, text, offset) of the headings a contents block lists.
+pub fn toc_entries(text: &str, depth: u8) -> Vec<(u8, String, usize)> {
+    use obsidilight_core::markdown::{parse_blocks, BlockKind};
+    parse_blocks(text)
+        .into_iter()
+        .filter_map(|b| match b.kind {
+            BlockKind::Heading { level } if (2..=depth).contains(&level) => Some((level, text[b.content.clone()].trim().to_string(), b.range.start)),
+            _ => None,
+        })
+        .collect()
+}
+
+impl CodeBlockRenderer for Toc {
+    fn render(&self, code: &str, md: &MarkdownRenderer, _window: &mut Window, cx: &mut App) -> AnyElement {
+        let depth = self.depth(code);
+        let theme = cx.theme().clone();
+        let title = div().text_sm().font_weight(FontWeight::BOLD).pb_1().child("Contents");
+        let Some((path, text)) = md.note() else { return div().child(title).into_any_element() };
+        let path = path.to_string();
+        let rows = toc_entries(text, depth).into_iter().enumerate().map(|(i, (level, label, off))| {
+            let path = path.clone();
+            div()
+                .id(("toc-row", i))
+                .pl(px(16. * (level - 2) as f32))
+                .py_0p5()
+                .text_sm()
+                .text_color(theme.link)
+                .cursor_pointer()
+                .child(label)
+                // mouse down, not click: a click on the block would first reveal its source
+                .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                    cx.stop_propagation();
+                    if let Some(ws) = WorkspaceHandle::current(cx) {
+                        ws.open(&path, OpenAt::Offset(off), false, window, cx);
+                    }
+                })
+        });
+        div().flex().flex_col().px_3().py_2().border_l_2().border_color(theme.border).child(title).children(rows).into_any_element()
+    }
+
+    fn export_typst(&self, code: &str, _md: &dyn Fn(&str) -> String) -> Option<String> {
+        Some(format!("#outline(title: [Contents], depth: {})", self.depth(code)))
     }
 }
 
@@ -224,13 +341,18 @@ impl AcademicNotes {
                 id: "academic-notes",
                 name: "Academic Notes",
                 version: "0.1.0",
-                description: "Theorem-like environments (definition, theorem, proof, …) as styled callouts. Numbering and references arrive in M3.",
+                description: "Theorem-like environments, figures and tables as numbered callouts, numbered referenced equations, references that show numbers (lem 1.1, eq:1.2), pseudocode, and the academic-toc contents block.",
                 enabled_by_default: true,
                 settings: vec![
                     SettingSpec { key: "lightPalette", label: "Light palette", description: "Accent colours in the light theme.", kind: SettingKind::Choice(palettes.clone()), default: s("lightPalette", "forest") },
                     SettingSpec { key: "darkPalette", label: "Dark palette", description: "Accent colours in the dark theme.", kind: SettingKind::Choice(palettes), default: s("darkPalette", "colorful-dark") },
                     SettingSpec { key: "tocDepth", label: "Contents depth", description: "Deepest heading level shown in the Contents panel.", kind: SettingKind::Number, default: Value::from(an.get("tocDepth").and_then(Value::as_u64).unwrap_or(3)) },
                     SettingSpec { key: "algorithmLineNumbers", label: "Number algorithm lines", description: "Line numbers in pseudocode (a block can say lines=false).", kind: SettingKind::Toggle, default: b("algorithmLineNumbers", true) },
+                    SettingSpec { key: "theoremFormat", label: "Theorem reference format", description: "How references to theorem-like environments show: {type} and {number}.", kind: SettingKind::Text, default: s("theoremFormat", "{type} {number}") },
+                    SettingSpec { key: "figureFormat", label: "Figure reference format", description: "{number} is the figure's number.", kind: SettingKind::Text, default: s("figureFormat", "fig {number}") },
+                    SettingSpec { key: "tableFormat", label: "Table reference format", description: "{number} is the table's number.", kind: SettingKind::Text, default: s("tableFormat", "tab {number}") },
+                    SettingSpec { key: "algorithmFormat", label: "Algorithm reference format", description: "{number} is the algorithm's number.", kind: SettingKind::Text, default: s("algorithmFormat", "alg {number}") },
+                    SettingSpec { key: "eqFormat", label: "Equation reference format", description: "{number} is the equation's number. Only equations something links to are numbered.", kind: SettingKind::Text, default: s("eqFormat", "eq:{number}") },
                 ],
                 code_languages: &[],
             },
@@ -244,10 +366,19 @@ impl Plugin for AcademicNotes {
     }
     fn on_load(&mut self, settings: &Map<String, Value>, reg: &mut Registrar) {
         let get = |k: &str, d: &str| settings.get(k).and_then(Value::as_str).unwrap_or(d).to_string();
-        let numbers = Rc::new(NumberCache::default());
+        let fmt = |k: &str, d: &str| settings.get(k).and_then(Value::as_str).filter(|v| v.contains("{number}")).unwrap_or(d).to_string();
+        let formats = numbering::Formats {
+            theorem: fmt("theoremFormat", "{type} {number}"),
+            figure: fmt("figureFormat", "fig {number}"),
+            table: fmt("tableFormat", "tab {number}"),
+            algorithm: fmt("algorithmFormat", "alg {number}"),
+            equation: fmt("eqFormat", "eq:{number}"),
+        };
+        let numbers = Rc::new(NumberCache { formats, ..Default::default() });
         reg.callout_renderer(Styles { light: palette(&get("lightPalette", "forest")), dark: palette(&get("darkPalette", "colorful-dark")), numbers: numbers.clone(), line_numbers: settings.get("algorithmLineNumbers").and_then(Value::as_bool).unwrap_or(true) });
         reg.link_labeler(Rc::new(References { numbers }));
         let depth = settings.get("tocDepth").and_then(Value::as_f64).unwrap_or(3.0).clamp(1.0, 6.0) as u8;
+        reg.code_block_renderer("academic-toc", Toc { depth });
         reg.sidebar_view(SidebarView {
             id: "contents".into(),
             title: "Contents".into(),
@@ -288,8 +419,9 @@ impl Plugin for AcademicNotes {
 
 #[cfg(test)]
 mod tests {
-    use super::{palette, CalloutLook, CalloutRenderer, LinkLabeler, LinkTarget, References, Styles};
+    use super::{palette, toc_entries, CalloutLook, CalloutRenderer, LinkLabeler, NoteCtx, References, Styles};
     use gpui_kit::rgb;
+    use obsidilight_core::index::VaultIndex;
 
     #[test]
     fn claims_its_environments_only() {
@@ -304,14 +436,54 @@ mod tests {
         assert!(s.style("note", "", false).is_none(), "Obsidian's own types stay with the core");
         assert!(s.style("warning", "", false).is_none());
         let t = "## A\n> [!thm] x\n\n> [!lemma]\n> y\n> ^lemma1\n\nsee [[#^lemma1]]\n";
-        let n = s.numbers(t);
+        let idx = VaultIndex::default();
+        let note = NoteCtx { path: "n.md", text: t, index: &idx };
+        let n = s.numbers(&note);
         assert_eq!((n.get(&1).map(String::as_str), n.get(&3).map(String::as_str)), (Some("Theorem 1.1"), Some("Lemma 1.1")));
         let r = References { numbers: Default::default() };
-        assert_eq!(r.label(&LinkTarget::Text(t), "^lemma1").as_deref(), Some("lem 1.1"));
-        assert_eq!(r.label(&LinkTarget::Text(t), "^nope"), None);
-        assert_eq!(r.label(&LinkTarget::Text(t), "A"), None, "heading links keep their text");
+        assert_eq!(r.label(&note, "^lemma1").as_deref(), Some("lem 1.1"));
+        assert_eq!(r.label(&note, "^nope"), None);
+        assert_eq!(r.label(&note, "A"), None, "heading links keep their text");
+        assert_eq!(s.style("figure", "", false).unwrap().look, CalloutLook::Caption { below: true });
+        assert_eq!(s.style("table", "", false).unwrap().look, CalloutLook::Caption { below: false });
         let c: Vec<(u8, String)> = super::contents("# T\n## A\n> [!thm] Big\n> x\n#### deep\n> [!lem]\n> y\n", 3).into_iter().map(|(d, s, _, _)| (d, s)).collect();
         assert_eq!(c, vec![(1, "T".into()), (2, "A".into()), (3, "Theorem 1.1 · Big".into()), (5, "Lemma 1.1".into())]);
+    }
+
+    #[test]
+    fn equations_numbered_when_referenced_in_the_note_or_elsewhere() {
+        let root = std::env::temp_dir().join(format!("ol-an-eq-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let n1 = "# N1\n## A\n$$ a $$\n^e1\n\n$$ b $$\n^e2\n\n$$\nc \\label{eq:c}\n$$\n\n> [!figure] F\n> x\n^f1\n\nsee [[#^e1]] and [[#^eq:c]] and [[#^f1]]\n";
+        std::fs::write(root.join("N1.md"), n1).unwrap();
+        std::fs::write(root.join("N2.md"), "[[N1#^e2]]").unwrap();
+        let idx = VaultIndex::build(&root);
+        let s = Styles { light: palette("forest"), dark: palette("forest"), numbers: Default::default(), line_numbers: true };
+        let note = NoteCtx { path: "N1.md", text: n1, index: &idx };
+        let mut n: Vec<(usize, String)> = s.numbers(&note).into_iter().collect();
+        n.sort();
+        assert_eq!(n, vec![(2, "(1.1)".into()), (5, "(1.2)".into()), (8, "(1.3)".into()), (12, "Figure 1.1".into())]);
+        let r = References { numbers: Default::default() };
+        let figs = "## S\n> [!figure] Pair\n> > [!subfigure] L\n> > x\n> > ^left\n>\n> > [!subfigure] R\n> > y\n^pair\n";
+        let fnote = NoteCtx { path: "F.md", text: figs, index: &idx };
+        assert_eq!((r.label(&fnote, "^pair").as_deref(), r.label(&fnote, "^left").as_deref()), (Some("fig 1.1"), Some("fig 1.1 (a)")));
+        let labels: Vec<Option<String>> = ["^e1", "^e2", "^eq:c", "^f1", "^c"].iter().map(|id| r.label(&note, id)).collect();
+        assert_eq!(labels, vec![Some("eq:1.1".into()), Some("eq:1.2".into()), Some("eq:1.3".into()), Some("fig 1.1".into()), None]);
+        // unreferenced once N2 stops linking: e2 loses its number and e.g. c moves up
+        std::fs::write(root.join("N2.md"), "nothing").unwrap();
+        let idx = VaultIndex::build(&root);
+        let note = NoteCtx { path: "N1.md", text: n1, index: &idx };
+        assert_eq!(r.label(&note, "^eq:c").as_deref(), Some("eq:1.2"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn toc_lists_h2_to_depth() {
+        let t = "# Title\n## A\n### A1\n#### A1a\n## B\n";
+        let got: Vec<(u8, String)> = toc_entries(t, 3).into_iter().map(|(l, s, _)| (l, s)).collect();
+        assert_eq!(got, vec![(2, "A".into()), (3, "A1".into()), (2, "B".into())]);
+        assert_eq!(super::Toc { depth: 3 }.depth("depth: 2\n"), 2);
     }
 }
 

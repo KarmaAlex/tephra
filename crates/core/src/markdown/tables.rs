@@ -91,6 +91,12 @@ pub fn parse_table(text: &str, r: Range<usize>) -> Option<Table> {
         lines.push(ls..ls + line.len());
         ls += raw.len() + 1;
     }
+    parse_table_lines(text, &lines)
+}
+
+/// Parses a table from its line ranges (without line breaks), e.g. the lines of a table inside
+/// a callout with their `> ` prefixes left out. None if the second line is not a delimiter row.
+pub fn parse_table_lines(text: &str, lines: &[Range<usize>]) -> Option<Table> {
     if lines.len() < 2 {
         return None;
     }
@@ -124,5 +130,13 @@ mod tests {
         let tb = parse_table(t, 0..t.len()).unwrap();
         assert_eq!(tb.rows[1].iter().map(|r| &t[r.clone()]).collect::<Vec<_>>(), vec!["1", "2"]);
         assert!(parse_table("| a |\n| b |", 0..11).is_none());
+    }
+
+    #[test]
+    fn quoted_lines() {
+        let t = "> | a | b |\n> |---|---|\n> | 1 | 2 |";
+        let lines = vec![2..11, 14..23, 26..35];
+        let tb = parse_table_lines(t, &lines).unwrap();
+        assert_eq!(tb.rows[1].iter().map(|r| &t[r.clone()]).collect::<Vec<_>>(), vec!["1", "2"]);
     }
 }

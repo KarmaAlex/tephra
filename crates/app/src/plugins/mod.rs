@@ -271,7 +271,7 @@ mod tests {
     }
     impl EditorHook for Nop {}
     impl LinkLabeler for Nop {
-        fn label(&self, _: &LinkTarget, _: &str) -> Option<String> {
+        fn label(&self, _: &NoteCtx, _: &str) -> Option<String> {
             None
         }
     }

@@ -124,8 +124,12 @@ pub enum ProjNode {
     Rendered { lang: String, code: String, at: usize },
     /// A block with a note above it (e.g. "Desmos plugin disabled").
     Noted { note: String, child: BlockNode },
-    /// A rendered display formula on its own (may be centred, per the editor setting).
-    Display(BlockNode),
+    /// A rendered display formula on its own (may be centred, per the editor setting); `line`
+    /// = its first line in the note (where a plugin's equation number is keyed).
+    Display { node: BlockNode, line: usize },
+    /// A task list item (`- [ ] …`) drawn with a clickable checkbox; `at` = the source range of
+    /// `[ ]` / `[x]`. While the caret is on the item it is a plain paragraph showing its source.
+    Task { checked: bool, at: Range<usize>, child: BlockNode },
 }
 
 /// How the host handles a fenced code block's language.
@@ -599,6 +603,13 @@ struct QuoteCtx<'a> {
     sub: usize,
     keys: Vec<u64>,
     occurrences: HashMap<String, usize>,
+    /// Offsets of the note's newlines (line numbers of formulas).
+    newlines: &'a [usize],
+}
+
+/// Line number of a byte offset, given the offsets of every `\n`.
+fn line_at(newlines: &[usize], off: usize) -> usize {
+    newlines.partition_point(|&p| p < off)
 }
 
 impl QuoteCtx<'_> {
@@ -613,9 +624,77 @@ impl QuoteCtx<'_> {
         LeafBuilder::new(self.text, src, self.sel.clone(), self.palette, self.resolve, self.link_label)
     }
 
-    /// Callout body lines, with each unrevealed display formula that sits on its own lines
-    /// split out as a `Display` block (so it can be centred like top-level display math).
+    /// Callout body lines: GFM tables (unless the caret is in them) become tables; the rest
+    /// goes through [`Self::body_text`].
     fn body_lines(&mut self, r: &Range<usize>, proj: &mut Projection) -> Vec<ProjNode> {
+        let text = self.text;
+        // each line's range without its quote prefix
+        let mut lines: Vec<Range<usize>> = Vec::new();
+        let mut ls = r.start;
+        for raw in text[r.clone()].split('\n') {
+            let full = ls..ls + raw.strip_suffix('\r').unwrap_or(raw).len();
+            let pre = text[full.clone()].len() - text[full.clone()].trim_start_matches(|c: char| c == '>' || c == ' ' || c == '\t').len();
+            lines.push(full.start + pre..full.end);
+            ls += raw.len() + 1;
+        }
+        let line_start = |i: usize| text[..lines[i].start].rfind('\n').map_or(0, |p| p + 1).max(r.start);
+        let mut out = Vec::new();
+        let mut cur = r.start;
+        let mut i = 0;
+        while i + 1 < lines.len() {
+            let is_row = |j: usize| lines.get(j).is_some_and(|l| text[l.clone()].contains('|'));
+            let delim = obsidilight_core::markdown::tables::parse_table_lines(text, &lines[i..i + 2]).is_some();
+            if !(is_row(i) && delim) {
+                i += 1;
+                continue;
+            }
+            let mut j = i + 2;
+            while is_row(j) {
+                j += 1;
+            }
+            let (ts, te) = (line_start(i), lines[j - 1].end);
+            let revealed = self.sel.start <= te && self.sel.end >= ts;
+            let Some(t) = (!revealed).then(|| obsidilight_core::markdown::tables::parse_table_lines(text, &lines[i..j])).flatten() else {
+                i = j;
+                continue;
+            };
+            if ts > cur {
+                out.extend(self.body_text(&(cur..ts.saturating_sub(1).max(cur)), proj));
+            }
+            let cols = t.rows[0].len();
+            let rows: Vec<Vec<Paragraph>> = t
+                .rows
+                .iter()
+                .map(|row| {
+                    (0..cols)
+                        .map(|c| match row.get(c) {
+                            Some(cell) => {
+                                let k = self.next_key();
+                                let mut lb = self.leaf(cell.clone());
+                                lb.table_cell = true;
+                                let inl = parse_inline(text, cell.clone());
+                                lb.inlines(&inl, cell.clone(), &TextMark::default());
+                                lb.finish(k, proj)
+                            }
+                            None => Paragraph::default(),
+                        })
+                        .collect()
+                })
+                .collect();
+            let aligns = t.aligns.iter().map(|a| column_align(*a)).collect();
+            out.push(ProjNode::Block(BlockNode::Table(Table::new(rows, aligns))));
+            cur = (te + 1).min(r.end);
+            i = j;
+        }
+        if cur < r.end || out.is_empty() {
+            out.extend(self.body_text(&(cur..r.end), proj));
+        }
+        out
+    }
+
+    /// Callout body text, with each unrevealed display formula that sits on its own lines
+    /// split out as a `Display` block (so it can be centred like top-level display math).
+    fn body_text(&mut self, r: &Range<usize>, proj: &mut Projection) -> Vec<ProjNode> {
         let text = self.text;
         let mut out = Vec::new();
         let mut cur = r.start;
@@ -633,7 +712,7 @@ impl QuoteCtx<'_> {
                 out.push(self.lines(&(cur..ls - 1), proj));
             }
             match self.lines(&(ls..le), proj) {
-                ProjNode::Block(b) => out.push(ProjNode::Display(b)),
+                ProjNode::Block(b) => out.push(ProjNode::Display { node: b, line: line_at(self.newlines, ls) }),
                 other => out.push(other),
             }
             cur = (le + 1).min(r.end);
@@ -752,6 +831,7 @@ pub fn project(inp: &ProjectionInput) -> Projection {
     };
     let mut proj = Projection { version: inp.version, sel: inp.sel, mode: inp.mode, ..Default::default() };
     let blocks = parse_blocks(text);
+    let newlines: Vec<usize> = text.bytes().enumerate().filter(|(_, c)| *c == b'\n').map(|(i, _)| i).collect();
     for (bi, b) in blocks.iter().enumerate() {
         let rev = sel.start <= b.range.end && sel.end >= b.range.start;
         let new_leaf = |src: Range<usize>| LeafBuilder::new(text, src, sel.clone(), inp.palette, inp.resolve, inp.link_label);
@@ -811,7 +891,7 @@ pub fn project(inp: &ProjectionInput) -> Projection {
                     let para = lb.finish(k, &mut proj);
                     nodes.push((ProjNode::Block(BlockNode::Blockquote { children: vec![BlockNode::Paragraph(para)], span: None }), vec![k]));
                 } else {
-                    let mut ctx = QuoteCtx { text, sel: sel.clone(), palette: inp.palette, resolve: inp.resolve, link_label: inp.link_label, bi, sub: 0, keys: Vec::new(), occurrences: HashMap::new() };
+                    let mut ctx = QuoteCtx { text, sel: sel.clone(), palette: inp.palette, resolve: inp.resolve, link_label: inp.link_label, bi, sub: 0, keys: Vec::new(), occurrences: HashMap::new(), newlines: &newlines };
                     for item in &items {
                         let node = ctx.item(item, false, &mut proj);
                         nodes.push((node, std::mem::take(&mut ctx.keys)));
@@ -825,6 +905,26 @@ pub fn project(inp: &ProjectionInput) -> Projection {
                 let inl = parse_inline(text, b.content.clone());
                 lb.inlines(&inl, b.content.clone(), &TextMark::default());
                 nodes.push((ProjNode::Block(BlockNode::Heading { level: *level, children: lb.finish(k, &mut proj), span: None }), vec![k]));
+            }
+            BlockKind::ListItem { task: Some(done), .. } if inp.mode != ViewMode::Source => {
+                // Our own checkbox, not the list renderer's: the line stays an ordinary leaf (caret,
+                // clicks, editing), and the source `- [ ] ` shows while the caret is on the item.
+                let k = key(bi, 0);
+                let mut lb = new_leaf(b.range.clone());
+                lb.marker(b.marker.clone(), &TextMark::default(), rev);
+                let inl = parse_inline(text, b.content.clone());
+                let start = lb.map.len;
+                let mark = if *done && !rev { TextMark::default().strikethrough() } else { TextMark::default() };
+                lb.inlines(&inl, b.content.clone(), &mark);
+                if *done && !rev {
+                    let end = lb.map.len;
+                    lb.muted.push(start..end);
+                }
+                let para = BlockNode::Paragraph(lb.finish(k, &mut proj));
+                indent = b.indent as f32 * 6.0;
+                let box_at = text[b.marker.clone()].find('[').map(|i| b.marker.start + i).unwrap_or(b.marker.start);
+                let node = if rev { ProjNode::Block(para) } else { ProjNode::Task { checked: *done, at: box_at..box_at + 3, child: para } };
+                nodes.push((node, vec![k]));
             }
             BlockKind::ListItem { ordered, task } => {
                 let k = key(bi, 0);
@@ -918,10 +1018,10 @@ pub fn project(inp: &ProjectionInput) -> Projection {
                     // rendered preview under the source (not editable, no key)
                     let mut preview = Paragraph::default();
                     preview.push(InlineNode::custom(MarkdownNode::new(MATH_NODE, MathAtom { tex, display: true }).text(ATOM)));
-                    nodes.push((ProjNode::Display(BlockNode::Paragraph(preview)), vec![]));
+                    nodes.push((ProjNode::Display { node: BlockNode::Paragraph(preview), line: line_at(&newlines, b.range.start) }, vec![]));
                 } else {
                     lb.math_atom(b.range.clone(), &tex, true);
-                    nodes.push((ProjNode::Display(BlockNode::Paragraph(lb.finish(k, &mut proj))), vec![k]));
+                    nodes.push((ProjNode::Display { node: BlockNode::Paragraph(lb.finish(k, &mut proj)), line: line_at(&newlines, b.range.start) }, vec![k]));
                 }
             }
             BlockKind::Rule => {
@@ -969,7 +1069,7 @@ mod tests {
                     out.push_str(&t);
                     c.children.iter().for_each(|x| node_text(x, k, out));
                 }
-                ProjNode::Noted { child, .. } | ProjNode::Display(child) => para_text(child, out),
+                ProjNode::Noted { child, .. } | ProjNode::Display { node: child, .. } | ProjNode::Task { child, .. } => para_text(child, out),
                 ProjNode::Rendered { .. } => {}
             }
         }
@@ -990,6 +1090,39 @@ mod tests {
         let mut s = String::new();
         node_text(&block.node, k, &mut s);
         s
+    }
+
+    #[test]
+    fn tables_inside_callouts() {
+        let t = "> [!table] Costs\n> | a | b |\n> |---|---|\n> | 1 | 2 |\n\nafter\n";
+        let p = proj(t, t.len());
+        let ProjNode::Callout(c) = &p.blocks[0].node else { panic!("callout") };
+        assert!(c.children.iter().any(|n| matches!(n, ProjNode::Block(BlockNode::Table(_)))), "rendered as a table");
+        // caret in the table (so in the callout): the callout's source, as for any callout
+        let p = proj(t, t.find("| 1").unwrap() + 2);
+        assert!(!matches!(p.blocks[0].node, ProjNode::Callout(_)));
+    }
+
+    #[test]
+    fn tasks_get_a_checkbox_until_the_caret_is_on_them() {
+        let t = "intro\n- [ ] da fare\n- [x] fatto\n";
+        let p = proj(t, 0);
+        let tasks: Vec<(bool, &str)> = p.blocks.iter().filter_map(|b| match &b.node {
+            ProjNode::Task { checked, at, .. } => Some((*checked, &t[at.clone()])),
+            _ => None,
+        }).collect();
+        assert_eq!(tasks, vec![(false, "[ ]"), (true, "[x]")]);
+        let k = p.blocks[1].keys[0];
+        assert_eq!(leaf_text(&p, k), "da fare", "marker hidden");
+        // caret at the start of the first task's text: its source shows, the other keeps its box
+        let p = proj(t, t.find("da").unwrap());
+        assert!(matches!(p.blocks[1].node, ProjNode::Block(_)));
+        assert_eq!(leaf_text(&p, p.blocks[1].keys[0]), "- [ ] da fare");
+        assert!(matches!(p.blocks[2].node, ProjNode::Task { checked: true, .. }));
+        // every offset on the task line maps to a caret position
+        for off in t.find("- [ ]").unwrap()..t.find("\n- [x]").unwrap() {
+            assert!(p.locate(off).is_some(), "offset {off}");
+        }
     }
 
     #[test]
@@ -1063,9 +1196,9 @@ mod tests {
         let p = proj(t, t.len());
         let ProjNode::Callout(c) = &p.blocks[0].node else { panic!() };
         assert_eq!(c.children.len(), 3);
-        assert!(matches!(c.children[1], ProjNode::Display(_)));
+        assert!(matches!(c.children[1], ProjNode::Display { .. }));
         let p = proj(t, t.find("a^2").unwrap()); // caret in the callout: source, no split
-        assert!(matches!(p.blocks[0].node, ProjNode::Block(_)) || matches!(&p.blocks[0].node, ProjNode::Callout(c) if c.children.iter().all(|n| !matches!(n, ProjNode::Display(_)))));
+        assert!(matches!(p.blocks[0].node, ProjNode::Block(_)) || matches!(&p.blocks[0].node, ProjNode::Callout(c) if c.children.iter().all(|n| !matches!(n, ProjNode::Display { .. }))));
     }
 
     #[test]

@@ -256,14 +256,21 @@ impl VaultIndex {
         let changed = self.notes.get(rel) != Some(&meta);
         self.docs.insert(rel.to_string(), SearchDoc::new(rel, text, meta.tags.clone()));
         self.notes.insert(rel.to_string(), meta);
-        self.generation += 1;
+        self.bump();
         changed
     }
 
     fn drop_note(&mut self, rel: &str) {
         self.notes.remove(rel);
         self.docs.remove(rel);
-        self.generation += 1;
+        self.bump();
+    }
+
+    /// A new generation, unique in this process (a rebuilt index never repeats an old one,
+    /// so caches keyed by it can't be fooled).
+    fn bump(&mut self) {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        self.generation = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Changes whenever anything in the index changes.
@@ -296,7 +303,7 @@ impl VaultIndex {
     }
 
     fn resolve_all(&mut self) {
-        self.generation += 1;
+        self.bump();
         let resolver = &self.resolver;
         self.backlinks.clear();
         for (path, n) in self.notes.iter_mut() {
