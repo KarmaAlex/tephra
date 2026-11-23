@@ -12,6 +12,7 @@ mod commands;
 mod editor;
 mod embeds;
 mod fuzzy;
+mod hotkeys;
 mod icons;
 mod math;
 mod plugins;
@@ -40,6 +41,7 @@ fn main() {
         workspace::bind_keys(cx);
         app_settings::AppSettings::init(cx, &root);
         plugins::PluginHost::init(cx, &root);
+        hotkeys::install(cx);
         let opts = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size(px(1280.), px(860.)), cx))),
             titlebar: Some(TitlebarOptions { title: Some(title), ..Default::default() }),

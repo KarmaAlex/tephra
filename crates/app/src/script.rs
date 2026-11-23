@@ -222,6 +222,19 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                         println!("TREE {f:?}");
                     });
                 }
+                "ws-panes" => {
+                    // ws-panes: every pane (layout order) with its tabs; * = focused
+                    let _ = ws.update(cx, |ws, cx| {
+                        let root = ws.vault.borrow().root.clone();
+                        let focused = ws.pane;
+                        let mut out = Vec::new();
+                        for id in ws.pane_ids() {
+                            let tabs: Vec<String> = ws.pane_tabs(id).iter().map(|e| e.read(cx).path.strip_prefix(&root).map(|p| p.display().to_string()).unwrap_or_default()).collect();
+                            out.push(format!("{}{:?}", if id == focused { "*" } else { "" }, tabs));
+                        }
+                        println!("PANES {}", out.join(" | "));
+                    });
+                }
                 "ws-tabs" => {
                     let _ = ws.update(cx, |ws, cx| {
                         let root = ws.vault.borrow().root.clone();

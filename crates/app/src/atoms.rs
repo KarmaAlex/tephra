@@ -13,6 +13,11 @@ use crate::editor::projection::{ImageAtom, MathAtom, IMAGE_NODE, MATH_NODE};
 /// Widest an embedded image is drawn, in logical pixels.
 pub const MAX_IMAGE_WIDTH: f32 = 680.0;
 
+thread_local! {
+    /// Width available to the editor being rendered (narrow panes shrink images to fit).
+    pub static CONTENT_WIDTH: std::cell::Cell<f32> = const { std::cell::Cell::new(MAX_IMAGE_WIDTH) };
+}
+
 pub fn extensions() -> Arc<MarkdownExtensions> {
     Arc::new(MarkdownExtensions::default().plugin(MathPlugin).plugin(ImagePlugin))
 }
@@ -64,7 +69,8 @@ impl MarkdownPlugin for ImagePlugin {
             return Some(InlineElement::new(div().text_color(cx.theme().danger).child(SharedString::from(format!("![[{}]] — not found", a.name)))));
         };
         let (w, h) = a.size.map(|(w, h)| (w as f32, h as f32)).unwrap_or((320.0, 200.0));
-        let scale = (MAX_IMAGE_WIDTH / w).min(1.0);
+        let max = CONTENT_WIDTH.with(|c| c.get()).clamp(120.0, MAX_IMAGE_WIDTH);
+        let scale = (max / w).min(1.0);
         // whole pixels: gpui-kit rejects an object whose baseline exceeds its measured height
         let (w, h) = ((w * scale).round(), (h * scale).round());
         // decoded lazily by GPUI's image cache when first painted

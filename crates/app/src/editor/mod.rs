@@ -84,10 +84,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-c", Copy, c),
         KeyBinding::new("ctrl-x", Cut, c),
         KeyBinding::new("ctrl-v", Paste, c),
-        KeyBinding::new("ctrl-s", Save, c),
-        KeyBinding::new("ctrl-e", ToggleReading, c),
-        KeyBinding::new("ctrl-shift-e", ToggleSource, c),
         KeyBinding::new("escape", Cancel, c),
+        // Ctrl+S, Ctrl+E, Ctrl+Shift+E are the app commands' hotkeys (editable; see hotkeys.rs)
     ]);
 }
 
@@ -1155,6 +1153,11 @@ impl Render for Editor {
             render::MarkdownRenderer::new(Rc::new(move |t: &str| vault.borrow().resolve(t, &path))).with_note(rel, self.text_rc.1.clone())
         };
         let host = render::Host { editor: Some(cx.entity().downgrade()), folds: &self.folds, md: &md, numbers: Some(&numbers) };
+        // this pane's text width (last frame): images wider than it shrink to fit
+        let width = f32::from(self.scroll.bounds().size.width) - 64.0;
+        if width > 0.0 {
+            crate::atoms::CONTENT_WIDTH.with(|c| c.set(width));
+        }
         let mut children: Vec<AnyElement> = Vec::with_capacity(hi - lo + 2);
         if lo > 0 {
             children.push(div().h(px(ys[lo] - 24.0)).into_any_element());

@@ -8,6 +8,7 @@ pub mod academic_notes;
 pub mod api;
 pub mod bookmarks;
 pub mod command_palette;
+pub mod copy_block_link;
 pub mod desmos;
 pub mod horizontal_blocks;
 pub mod latex_suite;
@@ -37,6 +38,9 @@ pub struct PluginHost {
     dir: Option<PathBuf>,
     /// Bumped whenever registrations change, so views re-render/re-project.
     pub generation: u64,
+    /// Your hotkeys by command id (`.obsidilight/hotkeys.json`); a command without an entry
+    /// keeps its default, an empty list means no hotkey.
+    hotkeys: HashMap<String, Vec<String>>,
 }
 
 impl Global for PluginHost {}
@@ -62,6 +66,7 @@ pub fn bundled(vault_root: &Path) -> Vec<Box<dyn Plugin>> {
         Box::new(outline_tags::Outline::new()),
         Box::new(outline_tags::TagPane::new()),
         Box::new(academic_notes::AcademicNotes::new(vault_root)),
+        Box::new(copy_block_link::CopyBlockLink::new()),
         Box::new(word_count::WordCount::new()),
         Box::new(desmos::Desmos::new()),
         Box::new(horizontal_blocks::HorizontalBlocks::new(vault_root)),
@@ -109,7 +114,13 @@ impl PluginHost {
             }
             settings.insert(m.id.to_string(), values);
         }
-        Self { plugins, enabled, loaded: HashSet::new(), reg: Registry::default(), settings, dir, generation: 0 }
+        let hotkeys: HashMap<String, Vec<String>> = dir
+            .as_ref()
+            .and_then(|d| read_json(d.join("hotkeys.json")))
+            .and_then(|v| v.as_object().cloned())
+            .map(|o| o.into_iter().map(|(k, v)| (k, v.as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default())).collect())
+            .unwrap_or_default();
+        Self { plugins, enabled, loaded: HashSet::new(), reg: Registry::default(), settings, dir, generation: 0, hotkeys }
     }
 
     /// Installs the host for this window's vault and loads the enabled plugins.
@@ -133,6 +144,42 @@ impl PluginHost {
             f(&mut Registrar { plugin: id, reg: &mut self.reg });
             self.generation += 1;
         }
+    }
+
+    /// The hotkeys a command answers to: yours, else its default.
+    pub fn hotkeys_of(&self, c: &Command) -> Vec<String> {
+        match self.hotkeys.get(&c.id) {
+            Some(v) => v.clone(),
+            None => c.hotkey.iter().cloned().collect(),
+        }
+    }
+
+    /// Whether you changed this command's hotkeys.
+    pub fn hotkey_overridden(&self, id: &str) -> bool {
+        self.hotkeys.contains_key(id)
+    }
+
+    /// The command whose hotkey this is.
+    pub fn command_for(&self, k: &Keystroke) -> Option<Command> {
+        self.reg.commands.iter().map(|(_, c)| c).find(|c| self.hotkeys_of(c).iter().any(|h| crate::hotkeys::matches(h, k))).cloned()
+    }
+
+    fn apply_hotkeys(&mut self, id: &str, keys: Option<Vec<String>>) {
+        match keys {
+            Some(v) => self.hotkeys.insert(id.to_string(), v),
+            None => self.hotkeys.remove(id),
+        };
+        if let Some(d) = &self.dir {
+            let v: Map<String, Value> = self.hotkeys.iter().map(|(k, v)| (k.clone(), Value::from(v.clone()))).collect();
+            let _ = write_atomic(&d.join("hotkeys.json"), &serde_json::to_string_pretty(&Value::Object(v)).unwrap_or_default());
+        }
+        self.generation += 1;
+    }
+
+    /// Sets a command's hotkeys (None: back to the default); saved and applied at once.
+    pub fn set_hotkeys(cx: &mut App, id: &str, keys: Option<Vec<String>>) {
+        cx.global_mut::<PluginHost>().apply_hotkeys(id, keys);
+        cx.refresh_windows();
     }
 
     /// Display name of a plugin (None for the app's own registrations).
@@ -343,6 +390,18 @@ mod tests {
         std::fs::write(dir.join("plugins.json"), r#"{"enabled": ["spellcheck"]}"#).unwrap();
         let host3 = PluginHost::new(Some(dir.clone()), vec![Box::new(KitchenSink(manifest("word-count", true))), Box::new(KitchenSink(manifest("new", true)))]);
         assert!(!host3.is_enabled("word-count") && host3.is_enabled("new"), "M3-era file: legacy ids known");
+        // hotkey overrides: saved, and an empty list removes the default
+        let mut h = PluginHost::new(Some(dir.clone()), vec![Box::new(KitchenSink(manifest("a", true)))]);
+        h.load_plugin("a");
+        let c = h.reg.commands[0].1.clone();
+        assert_eq!(h.hotkeys_of(&c), vec!["ctrl-alt-k"]);
+        h.apply_hotkeys("a:c", Some(vec!["ctrl-shift-j".into()]));
+        let h2 = PluginHost::new(Some(dir.clone()), vec![]);
+        assert_eq!(h2.hotkeys_of(&c), vec!["ctrl-shift-j"]);
+        h.apply_hotkeys("a:c", Some(vec![]));
+        assert!(h.hotkeys_of(&c).is_empty());
+        h.apply_hotkeys("a:c", None);
+        assert_eq!(h.hotkeys_of(&c), vec!["ctrl-alt-k"]);
         host.persist_settings("a");
         let saved: Value = serde_json::from_str(&std::fs::read_to_string(dir.join("plugins/a.json")).unwrap()).unwrap();
         assert_eq!(saved["future"], serde_json::json!(3));
