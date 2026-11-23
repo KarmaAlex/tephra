@@ -219,6 +219,9 @@ pub enum ProjNode {
     /// A task list item (`- [ ] …`) drawn with a clickable checkbox; `at` = the source range of
     /// `[ ]` / `[x]`. While the caret is on the item it is a plain paragraph showing its source.
     Task { checked: bool, at: Range<usize>, child: BlockNode },
+    /// Nodes one under the other with no gap, each indented by its pixels: a callout's run of
+    /// text lines and list items (one child of the callout).
+    Stack(Vec<(f32, ProjNode)>),
 }
 
 /// How the host handles a fenced code block's language.
@@ -330,7 +333,7 @@ pub fn capitalize(kind: &str) -> String {
 }
 
 /// Normalises a code fence language for the highlighter (Bison/Yacc/Flex use C: their actions are C).
-fn code_lang(lang: &str) -> Option<String> {
+pub(crate) fn code_lang(lang: &str) -> Option<String> {
     let l = lang.to_lowercase();
     let mapped = match l.as_str() {
         "" => return None,
@@ -833,7 +836,7 @@ impl QuoteCtx<'_> {
                 continue;
             }
             if ls > cur + 1 {
-                out.push(self.lines(&(cur..ls - 1), proj));
+                out.push(self.text_run(&(cur..ls - 1), proj));
             }
             match self.lines(&(ls..le), proj) {
                 ProjNode::Block(b) => out.push(ProjNode::Display { node: b, line: line_at(self.newlines, ls) }),
@@ -842,9 +845,74 @@ impl QuoteCtx<'_> {
             cur = (le + 1).min(r.end);
         }
         if cur < r.end || out.is_empty() {
-            out.push(self.lines(&(cur..r.end), proj));
+            out.push(self.text_run(&(cur..r.end), proj));
         }
         out
+    }
+
+    /// A run of callout body lines, as Obsidian renders them: list items (tasks included) drawn
+    /// as the top level draws them, indented by nesting; the other lines as paragraphs. One
+    /// node, so the callout's gap between children doesn't come between them.
+    fn text_run(&mut self, r: &Range<usize>, proj: &mut Projection) -> ProjNode {
+        let text = self.text;
+        let mut items: Vec<(f32, ProjNode)> = Vec::new();
+        let mut para: Option<Range<usize>> = None; // lines not in a list, gathered
+        let mut ls = r.start;
+        for raw in text[r.clone()].split('\n') {
+            let le = ls + raw.strip_suffix('\r').unwrap_or(raw).len();
+            let line = ls..le;
+            ls += raw.len() + 1;
+            // the content after the quote markers, parsed as a line of its own
+            let cs = obsidilight_core::markdown::callouts::quote_prefixes(text, &line).last().map_or(line.start, |p| p.end);
+            let item = parse_blocks(&text[cs..le]).into_iter().next().filter(|b| matches!(b.kind, BlockKind::ListItem { .. }));
+            let Some(b) = item else {
+                para = Some(para.map_or(line.clone(), |p| p.start..line.end));
+                continue;
+            };
+            if let Some(p) = para.take() {
+                items.push((0.0, self.lines(&p, proj)));
+            }
+            let (marker, content) = (cs + b.marker.start..cs + b.marker.end, cs + b.content.start..cs + b.content.end);
+            let k = self.next_key();
+            let mut lb = self.leaf(line.clone());
+            lb.prefixes = obsidilight_core::markdown::callouts::quote_prefixes(text, &line).into_iter().map(|p| (p, false)).collect();
+            let inl = parse_inline(text, content.clone());
+            let indent = b.indent as f32 * 6.0;
+            let node = match b.kind {
+                BlockKind::ListItem { task: Some(done), .. } => {
+                    lb.marker(marker.clone(), &TextMark::default(), false);
+                    let start = lb.map.len;
+                    lb.inlines(&inl, content.clone(), &if done { TextMark::default().strikethrough() } else { TextMark::default() });
+                    if done {
+                        let end = lb.map.len;
+                        lb.muted.push(start..end);
+                    }
+                    let box_at = text[marker.clone()].find('[').map_or(marker.start, |i| marker.start + i);
+                    ProjNode::Task { checked: done, at: box_at..box_at + 3, child: BlockNode::Paragraph(lb.finish(k, proj)) }
+                }
+                BlockKind::ListItem { ordered, task } => {
+                    lb.hidden(marker.clone());
+                    lb.inlines(&inl, content.clone(), &TextMark::default());
+                    let start = if ordered { text[marker.clone()].trim().trim_end_matches(['.', ')']).parse::<u32>().ok() } else { None };
+                    let para = lb.finish(k, proj);
+                    ProjNode::Block(BlockNode::List {
+                        children: vec![BlockNode::ListItem { children: vec![BlockNode::Paragraph(para)], spread: false, checked: task, task_marker: None, span: None }],
+                        ordered,
+                        start,
+                        span: None,
+                    })
+                }
+                _ => unreachable!("filtered to list items"),
+            };
+            items.push((indent, node));
+        }
+        if let Some(p) = para.take() {
+            items.push((0.0, self.lines(&p, proj)));
+        }
+        match items.len() {
+            1 if items[0].0 == 0.0 => items.pop().map(|(_, n)| n).expect("one"),
+            _ => ProjNode::Stack(items),
+        }
     }
 
     fn lines(&mut self, r: &Range<usize>, proj: &mut Projection) -> ProjNode {
@@ -1216,6 +1284,7 @@ mod tests {
                 }
                 ProjNode::Noted { child, .. } | ProjNode::Display { node: child, .. } | ProjNode::Task { child, .. } => para_text(child, out),
                 ProjNode::Rendered { .. } => {}
+                ProjNode::Stack(items) => items.iter().for_each(|(_, x)| node_text(x, k, out)),
             }
         }
         fn para_text(n: &BlockNode, out: &mut String) {
@@ -1246,6 +1315,31 @@ mod tests {
         // caret in the table (so in the callout): the callout's source, as for any callout
         let p = proj(t, t.find("| 1").unwrap() + 2);
         assert!(!matches!(p.blocks[0].node, ProjNode::Callout(_)));
+    }
+
+    #[test]
+    fn lists_inside_callouts_are_lists() {
+        let t = "> [!note] N\n> intro\n> - one\n> \t- nested\n> 1. first\n> - [x] done\n> after\n\nend\n";
+        let p = proj(t, t.len());
+        let ProjNode::Callout(c) = &p.blocks[0].node else { panic!("callout") };
+        let [ProjNode::Stack(items)] = c.children.as_slice() else { panic!("one run of lines: {}", c.children.len()) };
+        let kinds: Vec<(f32, &str)> = items
+            .iter()
+            .map(|(i, n)| {
+                (*i, match n {
+                    ProjNode::Block(BlockNode::List { ordered: false, .. }) => "bullet",
+                    ProjNode::Block(BlockNode::List { ordered: true, .. }) => "number",
+                    ProjNode::Task { checked: true, .. } => "done",
+                    ProjNode::Block(BlockNode::Paragraph(_)) => "text",
+                    _ => "other",
+                })
+            })
+            .collect();
+        assert_eq!(kinds, vec![(0.0, "text"), (0.0, "bullet"), (24.0, "bullet"), (0.0, "number"), (0.0, "done"), (0.0, "text")]);
+        let ProjNode::Task { at, .. } = &items[4].1 else { panic!() };
+        assert_eq!(&t[at.clone()], "[x]", "the checkbox toggles the source");
+        // what the callout shows: no quote prefixes, list markers or `[x]`
+        assert_eq!(leaf_text(&p, p.blocks[0].keys[0]), "Nintroonenestedfirstdoneafter");
     }
 
     #[test]

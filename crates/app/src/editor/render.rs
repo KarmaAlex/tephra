@@ -63,6 +63,21 @@ pub fn callout_style_for(kind: &str, meta: &str, dark: bool, cx: &App) -> Callou
     s
 }
 
+/// Fixes C++ highlighting: gpui-kit registers tree-sitter-cpp with only its own highlight
+/// rules, which extend C's (the grammar inherits C's), so types, `return`, strings and
+/// comments got no colour. C++ gets C's rules followed by its own, as editors combine them.
+pub fn register_languages() {
+    use gpui_kit::component::highlighter::{GrammarConfig, LanguageRegistry};
+    let reg = LanguageRegistry::singleton();
+    let (Some(c), Some(cpp)) = (reg.language("c"), reg.language("cpp")) else { return };
+    if cpp.highlights.contains(c.highlights.as_ref()) {
+        return; // already combined (a newer gpui-kit)
+    }
+    let highlights = format!("{}\n{}", c.highlights, cpp.highlights);
+    let fixed = GrammarConfig { highlights: highlights.into(), ..cpp.clone() };
+    reg.register(cpp.name.as_ref(), &fixed);
+}
+
 /// Text colour readable on a filled `bg`: near-black on light colours (the dark palettes'
 /// pastel badges), white on dark ones (WCAG relative luminance).
 pub fn on_color(bg: Hsla) -> Hsla {
@@ -246,6 +261,14 @@ pub fn render_node(node: &ProjNode, ix: usize, host: &Host, rcx: &RenderContext,
             }
             div().flex().items_start().gap_2().child(tick).child(div().flex_1().min_w_0().child(el)).into_any_element()
         }
+        ProjNode::Stack(items) => div()
+            .flex()
+            .flex_col()
+            .children(items.iter().map(|(indent, n)| {
+                let el = render_node(n, ix, host, rcx, window, cx);
+                if *indent > 0.0 { div().pl(crate::ui::r(*indent)).child(el).into_any_element() } else { el }
+            }))
+            .into_any_element(),
         ProjNode::Rendered { lang, code, at } => {
             let renderer = cx.try_global::<PluginHost>().and_then(|h| h.reg.code_block_renderer(lang));
             let inner = match renderer {
@@ -383,4 +406,29 @@ fn render_callout(c: &CalloutView, ix: usize, host: &Host, rcx: &RenderContext, 
         CalloutLook::Caption { .. } => el,
     };
     el.into_any_element()
+}
+
+#[cfg(test)]
+mod highlight_tests {
+    use gpui_kit::base::input::{HighlightStyleResolver, Rope};
+    use gpui_kit::component::highlighter::SyntaxHighlighter;
+    use gpui_kit::HighlightStyle;
+
+    /// Styles only keywords, so a styled range means "highlighted as a keyword".
+    struct Keywords;
+    impl HighlightStyleResolver for Keywords {
+        fn style(&self, name: &str) -> Option<HighlightStyle> {
+            (name == "keyword").then(|| HighlightStyle { color: Some(gpui_kit::red()), ..Default::default() })
+        }
+    }
+
+    #[test]
+    fn cpp_gets_cs_highlight_rules_too() {
+        super::register_languages();
+        let code = "int main() { return 0; }";
+        let mut h = SyntaxHighlighter::new("cpp");
+        h.update(None, &Rope::from_str(code), None);
+        let keywords: Vec<&str> = h.styles(&(0..code.len()), &Keywords).into_iter().filter(|(_, s)| s.color.is_some()).map(|(r, _)| &code[r]).collect();
+        assert!(keywords.contains(&"return"), "C's keywords in C++: {keywords:?}");
+    }
 }

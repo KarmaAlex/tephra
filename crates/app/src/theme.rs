@@ -76,6 +76,7 @@ body {
   --table-border-width: 1px;
   --table-border-color: var(--background-modifier-border);
   --table-header-background: transparent;
+  --table-header-weight: 600;
   --table-white-space: normal;
   --font-text-size: 16px;
   --h1-size: 1.618em; --h2-size: 1.462em; --h3-size: 1.318em; --h4-size: 1.188em; --h5-size: 1.076em; --h6-size: 1em;
@@ -596,11 +597,15 @@ fn compute_text_style(cx: &App, classes: &[String]) -> (TextViewStyle, f32, Hsla
         cell.text.white_space = Some(WhiteSpace::Nowrap);
     }
     s = s.with_table_cell(cell);
+    // the header row: Obsidian's background (none by default) and weight (semibold)
+    let mut head = StyleRefinement::default();
     if let Some(bg) = c("--table-header-background") {
-        let mut head = StyleRefinement::default();
         head.background = Some(bg.into());
-        s = s.with_table_head(head);
     }
+    if let Some(w) = t.var("--table-header-weight", dark, classes).and_then(|w| w.trim().parse::<f32>().ok()) {
+        head.text.font_weight = Some(FontWeight(w));
+    }
+    s = s.with_table_head(head);
     let highlight = c("--text-highlight-bg").unwrap_or(cx.theme().yellow.opacity(0.35));
     (s, body, highlight)
 }

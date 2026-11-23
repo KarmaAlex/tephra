@@ -208,7 +208,25 @@ pub fn run(job: Job) -> Result<Output, String> {
         }
         format!("({},)", found.join(", "))
     };
-    source = source.replace("@@SANS@@", &pick(&job.sans)).replace("@@MONO@@", &pick(&job.mono));
+    // the text font's ascender and descender (em): lines are laid out like the editor's, a
+    // fixed line height with the glyphs centred in it (see `HELPERS`)
+    let (asc, desc) = job
+        .sans
+        .iter()
+        .find_map(|n| fonts().book().select(&n.to_lowercase(), typst::text::FontVariant::default()))
+        .and_then(|i| fonts().font(i))
+        .map(|f| {
+            let i = f.instantiate(typst::text::FontVariant::default(), typst::layout::Abs::pt(11.0), &Default::default());
+            (i.metrics().ascender.get(), -i.metrics().descender.get())
+        })
+        .filter(|(a, d)| *a > 0.3 && *d >= 0.0 && a + d < 2.0)
+        .unwrap_or((1.025, 0.275));
+    source = source
+        .replace("@@SANS@@", &pick(&job.sans))
+        .replace("@@MONO@@", &pick(&job.mono))
+        .replace("@@ASC@@", &format!("{asc:.4}"))
+        .replace("@@DESC@@", &format!("{desc:.4}"));
+    files.insert(super::typst::SYNTAX_THEME_FILE.to_string(), Bytes::new(super::typst::SYNTAX_THEME.as_bytes().to_vec()));
     let math_ms = t0.elapsed().as_secs_f64() * 1000.0;
     let main = file_id("main.typ");
     let world = DocWorld { main, source: Source::new(main, source), files, library: LazyHash::new(Library::default()) };

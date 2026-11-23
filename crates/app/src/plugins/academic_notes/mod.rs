@@ -183,13 +183,15 @@ impl CalloutRenderer for Styles {
                 algorithm::Part::Keyword(k) => format!("#strong[{}];", crate::export::typst::lit(k)),
                 algorithm::Part::Text(t) => md(t),
             }).collect();
+            // as `render_algorithm` draws it: a 22 px column of small muted numbers, 8 px apart
+            // from the line, which is indented 18 px per level (`u_`: a reading-view pixel)
             if numbered {
-                cells.push(format!("[#text(fill: gray)[{}]]", i + 1));
+                cells.push(format!("align(right, text(size: 14 * u_, fill: c_.muted)[{}])", i + 1));
             }
-            cells.push(format!("[#h({}em){}]", 1.2 * l.depth as f32, line.join(" ")));
+            cells.push(format!("pad(left: {} * u_)[{}]", 18 * l.depth, line.join(" ")));
         }
-        let cols = if numbered { "(auto, 1fr)" } else { "(1fr,)" };
-        Some(format!("#grid(columns: {cols}, column-gutter: 8pt, row-gutter: 5pt, {})", cells.join(", ")))
+        let cols = if numbered { "(22 * u_, 1fr)" } else { "(1fr,)" };
+        Some(format!("#grid(columns: {cols}, column-gutter: 8 * u_, {})", cells.join(", ")))
     }
 
     fn body_end(&self, kind: &str) -> Option<String> {
@@ -337,8 +339,17 @@ impl CodeBlockRenderer for Toc {
         div().flex().flex_col().px_3().py_2().border_l_2().border_color(theme.border).child(title).children(rows).into_any_element()
     }
 
+    /// The block as the editor draws it (a bar at the left, "Contents", the H2…H`depth` headings
+    /// in the link colour, indented per level), plus page numbers and links, as befits a PDF.
     fn export_typst(&self, code: &str, _md: &dyn Fn(&str) -> String) -> Option<String> {
-        Some(format!("#outline(title: [Contents], depth: {})", self.depth(code)))
+        Some(format!(
+            "#block(width: 100%, stroke: (left: 2 * u_ + c_.hr), inset: (x: 12 * u_, y: 8 * u_), {{\n\
+             set text(size: 14 * u_)\n\
+             show outline.entry: it => if it.level < 2 {{ }} else {{ pad(left: 16 * u_ * (it.level - 2), y: 2 * u_, link(it.element.location(), text(fill: c_.link, it.body()) + h(1fr) + text(fill: c_.muted, it.page()))) }}\n\
+             pad(bottom: 4 * u_, text(weight: 700)[Contents])\n\
+             outline(title: none, depth: {})\n}})",
+            self.depth(code)
+        ))
     }
 }
 

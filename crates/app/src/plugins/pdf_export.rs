@@ -23,7 +23,7 @@ use super::api::*;
 use super::api::{Action, MenuItem};
 use super::PluginHost;
 use crate::export::compile::{self, Job, Output};
-use crate::export::typst::{lit, str_arg, Ctx, Emitter, Style};
+use crate::export::typst::{lit, on_white, str_arg, Ctx, Emitter, Look, Rgb, Style};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Page {
@@ -45,19 +45,23 @@ impl Page {
     }
 }
 
-/// The document settings before the body.
-pub fn prelude(title: &str, p: &Page) -> String {
+/// The document settings before the body: page, fonts, the reading view's look (`look`) and
+/// the helpers that draw it (`export::typst::HELPERS`).
+pub fn prelude(title: &str, p: &Page, look: &Look) -> String {
     let t = lit(title);
     let header = if p.header { format!("align(center, text(size: 8pt, fill: luma(110))[{t}])") } else { "none".into() };
     let footer = if p.footer { "context align(center, text(size: 8pt, fill: luma(110))[#counter(page).display() / #counter(page).final().first()])".to_string() } else { "none".into() };
     let [mt, mr, mb, ml] = p.margins_mm;
+    let size = p.font_pt * p.scale;
+    // `u_`: one pixel of the reading view, whose text is 16 px
     format!(
-        "#set document(title: {})\n#set page(paper: {}, flipped: {}, margin: (top: {mt:.1}mm, right: {mr:.1}mm, bottom: {mb:.1}mm, left: {ml:.1}mm), header: {header}, footer: {footer})\n#let scale_ = {:.2}\n#set text(font: @@SANS@@, size: {:.2}pt, hyphenate: false)\n#set par(leading: 0.65em, spacing: 1.1em)\n#show heading: set block(above: 1.3em, below: 0.7em)\n#show raw: set text(font: @@MONO@@, size: 0.9em)\n",
+        "#set document(title: {})\n#set page(paper: {}, flipped: {}, margin: (top: {mt:.1}mm, right: {mr:.1}mm, bottom: {mb:.1}mm, left: {ml:.1}mm), header: {header}, footer: {footer})\n#let u_ = {:.4}pt\n#let body_ = {size:.2}pt\n#let asc_ = @@ASC@@\n#let desc_ = @@DESC@@\n#set text(font: @@SANS@@, size: {size:.2}pt, hyphenate: false)\n{}{}\n",
         str_arg(title),
         str_arg(&p.paper.to_lowercase()),
         p.landscape,
-        p.scale,
-        p.font_pt * p.scale
+        size / 16.0,
+        look.defs(),
+        crate::export::typst::HELPERS,
     )
 }
 
@@ -71,6 +75,65 @@ enum State {
 fn hsla_rgb(c: Hsla) -> (u8, u8, u8) {
     let r: gpui_kit::Rgba = c.into();
     ((r.r * 255.0) as u8, (r.g * 255.0) as u8, (r.b * 255.0) as u8)
+}
+
+/// A colour as it shows on white paper (translucent ones mixed in).
+fn on_paper(c: Hsla) -> Rgb {
+    let a = gpui_kit::Rgba::from(c).a;
+    on_white(hsla_rgb(c), a)
+}
+
+/// The reading view's look for a note with `classes`, in the theme's light colours.
+pub fn look_for(classes: &[String], cx: &App) -> Look {
+    let mut l = Look { center_math: crate::app_settings::AppSettings::flag(cx, "centerDisplayMath"), ..Look::default() };
+    let Some(t) = cx.try_global::<crate::theme::ThemeCss>() else { return l };
+    let c = |n: &str| t.color(n, false, classes);
+    let set = |slot: &mut Rgb, n: &str| {
+        if let Some(v) = c(n) {
+            *slot = on_paper(v);
+        }
+    };
+    set(&mut l.text, "--text-normal");
+    set(&mut l.muted, "--text-muted");
+    set(&mut l.accent, "--interactive-accent");
+    set(&mut l.on_accent, "--text-on-accent");
+    set(&mut l.link, "--link-color");
+    set(&mut l.border, "--table-border-color");
+    set(&mut l.code_bg, "--code-background");
+    // gpui-kit draws inline code on the theme's "accent" (Obsidian's hover background)
+    set(&mut l.inline_code_bg, "--background-modifier-hover");
+    set(&mut l.highlight, "--text-highlight-bg");
+    set(&mut l.quote, "--blockquote-border-color");
+    set(&mut l.hr, "--hr-color");
+    l.table_head = c("--table-header-background").filter(|v| gpui_kit::Rgba::from(*v).a > 0.01).map(on_paper);
+    if let Some(w) = t.length("--table-border-width", false, classes, 16.0) {
+        l.border_px = w.max(0.0);
+    }
+    if let Some(w) = t.var("--table-header-weight", false, classes).and_then(|w| w.trim().parse::<u16>().ok()) {
+        l.table_head_weight = w;
+    }
+    if let Some(w) = t.length("--hr-thickness", false, classes, 16.0) {
+        l.hr_px = w;
+    }
+    for (i, h) in l.headings.iter_mut().enumerate() {
+        let n = i + 1;
+        if let Some(px) = t.length(&format!("--h{n}-size"), false, classes, 16.0) {
+            h.0 = px / 16.0;
+        }
+        if let Some(w) = t.var(&format!("--h{n}-weight"), false, classes).and_then(|w| w.trim().parse::<u16>().ok()) {
+            h.1 = w;
+        }
+        // `inherit` (no colour): the text's; the editor mutes H6
+        h.2 = c(&format!("--h{n}-color")).map(on_paper).or((n == 6).then_some(l.muted));
+    }
+    l
+}
+
+/// An icon's SVG (Lucide, drawn with `currentColor`).
+fn icon_svg(icon: gpui_kit::assets::IconName) -> Option<String> {
+    use gpui_kit::AssetSource as _;
+    let b = crate::icons::AppAssets.load(&icon.path()).ok()??;
+    String::from_utf8(b.into_owned()).ok()
 }
 
 /// The fonts the editor draws with (its reading view), then fallbacks: (text, code).
@@ -113,14 +176,25 @@ pub fn build(rel: &str, text: &str, page: &Page, cx: &App) -> Option<Job> {
     };
     let style = |kind: &str, meta: &str| {
         let s = crate::editor::render::callout_style_for(kind, meta, false, cx); // paper is white
-        Style { look: s.look, color: hsla_rgb(s.color), label: s.label }
+        Style { look: s.look, color: hsla_rgb(s.color), label: s.label, icon: s.icon.and_then(icon_svg) }
     };
     let code = |lang: &str, code: &str, md: &dyn Fn(&str) -> String| host.reg.code_block_renderer(lang).and_then(|r| r.export_typst(code, md));
+    let code_note = |lang: &str| match host.code_mode(lang) {
+        crate::editor::projection::CodeMode::Note(n) => Some(n),
+        _ => None,
+    };
     let callout_body = |kind: &str, meta: &str, body: &[String], md: &dyn Fn(&str) -> String| host.reg.callout_renderer(kind, meta).and_then(|r| r.export_body(kind, meta, body, md));
     let body_end = |kind: &str| host.reg.callout_renderer(kind, "").and_then(|r| r.body_end(kind));
     let embed = |name: &str| v.resolve(name, &abs);
-    let no_border = obsidilight_core::index::parse_note(rel, text).frontmatter.is_some_and(|f| f.contains("NoBorder"));
-    let e = Emitter::new(Ctx { numbers: &numbers, link_label: &link_label, style: &style, code: &code, callout_body: &callout_body, body_end: &body_end, embed: &embed, no_border });
+    let classes = {
+        let mut cut = text.len().min(8192);
+        while !text.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        obsidilight_core::index::cssclasses(&text[..cut])
+    };
+    let look = look_for(&classes, cx);
+    let e = Emitter::new(Ctx { numbers: &numbers, link_label: &link_label, style: &style, code: &code, code_note: &code_note, callout_body: &callout_body, body_end: &body_end, embed: &embed });
     let body = e.blocks(text, 0);
     let title = Path::new(rel).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
     // the title as a heading, unless the note starts with that H1 already
@@ -128,8 +202,9 @@ pub fn build(rel: &str, text: &str, page: &Page, cx: &App) -> Option<Job> {
         .into_iter()
         .find(|b| matches!(b.kind, obsidilight_core::markdown::BlockKind::Heading { .. }))
         .is_some_and(|b| b.kind == (obsidilight_core::markdown::BlockKind::Heading { level: 1 }) && text[b.content.clone()].trim() == title);
-    let heading = if page.title && !own_h1 { format!("= {}\n\n", lit(&title)) } else { String::new() };
-    let source = format!("{}\n{heading}{body}\n", prelude(&title, page));
+    // the title as Obsidian's inline title: an H1, half a line above the note
+    let heading = if page.title && !own_h1 { format!("#heading(level: 1)[{}]\n\n#v(0.5em)\n\n", lit(&title)) } else { String::new() };
+    let source = format!("{}\n{heading}{body}\n", prelude(&title, page, &look));
     let (sans, mono) = editor_fonts(cx);
     Some(Job { source, math: e.math.into_inner(), files: e.files.into_inner(), sans, mono })
 }
@@ -550,11 +625,11 @@ impl Plugin for PdfExport {
 
 #[cfg(test)]
 mod tests {
-    use super::{prelude, Margin, Options, Page};
+    use super::{prelude, Look, Margin, Options, Page};
 
     #[test]
     fn prelude_has_page_header_footer() {
-        let t = prelude("Note \"x\"", &Page::simple(10.0));
+        let t = prelude("Note \"x\"", &Page::simple(10.0), &Look::default());
         assert!(t.contains("paper: \"a4\", flipped: false, margin: (top: 10.0mm, right: 10.0mm, bottom: 10.0mm, left: 10.0mm)"), "{t}");
         assert!(t.contains("#counter(page).display() / #counter(page).final().first()"));
         assert!(t.contains("#set document(title: \"Note \\\"x\\\"\")"));
@@ -568,8 +643,8 @@ mod tests {
         assert!(p.landscape && !p.header && p.footer && !p.title);
         assert!((p.margins_mm[0] - 25.4).abs() < 0.01 && (p.margins_mm[1] - 12.7).abs() < 0.01, "px to mm");
         assert!((p.scale - 0.8).abs() < 1e-9);
-        let t = prelude("x", &p);
-        assert!(t.contains("flipped: true") && t.contains("header: none") && t.contains("#let scale_ = 0.80") && t.contains("size: 8.80pt"), "{t}");
+        let t = prelude("x", &p, &Look::default());
+        assert!(t.contains("flipped: true") && t.contains("header: none") && t.contains("#let u_ = 0.5500pt") && t.contains("size: 8.80pt"), "{t}");
         o.scale_pct = 10.0;
         assert!((o.page(&base).scale - 0.5).abs() < 1e-9, "clamped to the safe minimum");
         o.margin = Margin::None;

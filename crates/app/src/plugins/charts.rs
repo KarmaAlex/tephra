@@ -57,6 +57,12 @@ fn inline_list(s: &str) -> Vec<String> {
 /// The subset of YAML the Charts plugin's blocks use: `key: value`, inline `[…]` lists, block
 /// `- item` lists, and `series:` as a list of `title`/`data` maps.
 pub fn parse(src: &str) -> Result<Spec, String> {
+    // a block indented as a whole (6 of your 10 chart blocks start with a tab) reads like an
+    // unindented one: the first line's indentation comes off every line
+    let first = src.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
+    let pre = &first[..first.len() - first.trim_start().len()];
+    let dedented: String = src.lines().map(|l| l.strip_prefix(pre).unwrap_or(l)).collect::<Vec<_>>().join("\n");
+    let src = dedented.as_str();
     let mut kind = String::new();
     let mut labels = Vec::new();
     let mut series: Vec<Series> = Vec::new();
@@ -239,6 +245,9 @@ pub fn layout(s: &Spec, w: f32, h: f32, fg: Rgba, grid: Rgba) -> Vec<Prim> {
     out
 }
 
+/// The editor's widest text column, in pixels (760 less its padding).
+const READING_WIDTH: f32 = 696.0;
+
 /// The primitives as Typst markup: a box of `w`×`h` points drawn with `place`.
 pub fn to_typst(prims: &[Prim], w: f32, h: f32) -> String {
     let c = |c: &Rgba| format!("rgb({}, {}, {}, {}%)", c.0, c.1, c.2, (c.3 * 100.0).round());
@@ -246,6 +255,8 @@ pub fn to_typst(prims: &[Prim], w: f32, h: f32) -> String {
     let mut s = format!("box(width: {w:.1}pt, height: {h:.1}pt, {{\n");
     for p in prims {
         match p {
+            // an empty bar: GPUI paints nothing for it, nor does the PDF
+            Prim::Rect { h, .. } if *h < 0.5 => {}
             Prim::Rect { x, y, w, h, fill, stroke } => {
                 let st = stroke.map(|k| format!(", stroke: 0.8pt + {}", c(&k))).unwrap_or_default();
                 s += &format!("  place(dx: {x:.1}pt, dy: {y:.1}pt, rect(width: {w:.1}pt, height: {h:.1}pt, fill: {}{st}))\n", c(fill));
@@ -368,13 +379,15 @@ impl CodeBlockRenderer for ChartBlock {
 
     fn export_typst(&self, code: &str, _md: &dyn Fn(&str) -> String) -> Option<String> {
         let spec = parse(code).ok().filter(|s| s.kind == "bar" || s.kind == "line")?;
-        // A4 text width with 10 mm margins ≈ 538 pt
-        let w = 538.0 * spec.width;
+        // drawn as the editor draws it in a full-width pane (696 px of text), 1 pt per pixel,
+        // then scaled to the PDF's column at its text size (`u_`: a reading-view pixel)
+        let w = READING_WIDTH * spec.width;
         let h = w / 2.0;
-        // drawn for a 538 pt column, then scaled to the real one (landscape, margins, columns) and
-        // to the export's downscale
-        let chart = to_typst(&layout(&spec, w, h, Rgba(80, 80, 80, 1.0), Rgba(210, 210, 210, 1.0)), w, h);
-        Some(format!("#align(center, layout(size => scale(size.width / 538pt * scale_ * 100%, origin: top + left, reflow: true, {chart})))"))
+        let chart = to_typst(&layout(&spec, w, h, Rgba(0x5c, 0x5c, 0x5c, 1.0), Rgba(0xe0, 0xe0, 0xe0, 1.0)), w, h);
+        Some(format!(
+            "#block(width: 100%, inset: (y: 8 * u_), align(center, layout(size => scale(calc.min(size.width, {READING_WIDTH} * u_) * {:.3} / {w:.1}pt * 100%, origin: top + left, reflow: true, {chart}))))",
+            spec.width
+        ))
     }
 }
 
@@ -423,6 +436,9 @@ mod tests {
         let b = parse("type: line\nlabels:\n  - x\n  - y\nseries:\n  - data: [1, 2]\n").unwrap();
         assert_eq!(b.labels, vec!["x", "y"]);
         assert!(parse("labels: [a]").is_err());
+        // a block indented as a whole, as most of the vault's are
+        let t = parse("\ttype: bar\n\tlabels: [1, 2]\n\tseries:\n\t\t- title: s\n\t\t  data: [0, 3]\n").unwrap();
+        assert_eq!((t.kind.as_str(), t.labels.len(), t.series[0].data.clone()), ("bar", 2, vec![0.0, 3.0]));
     }
 
     #[test]

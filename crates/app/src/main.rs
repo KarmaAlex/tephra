@@ -50,6 +50,7 @@ fn main() {
     let title: SharedString = root.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default().into();
     gpui_kit::application().with_assets(icons::AppAssets).run(move |cx| {
         gpui_kit::init(cx);
+        editor::render::register_languages();
         editor::bind_keys(cx);
         workspace::bind_keys(cx);
         app_settings::AppSettings::init(cx, &root);
