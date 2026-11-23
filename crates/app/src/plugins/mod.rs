@@ -10,6 +10,7 @@ pub mod bookmarks;
 pub mod charts;
 pub mod command_palette;
 pub mod copy_block_link;
+pub mod daily_notes;
 pub mod desmos;
 pub mod editing_toolbar;
 pub mod horizontal_blocks;
@@ -21,6 +22,7 @@ pub mod picker;
 pub mod search;
 pub mod spellcheck;
 pub mod switcher;
+pub mod templates;
 pub mod word_count;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -63,6 +65,8 @@ pub fn bundled(vault_root: &Path) -> Vec<Box<dyn Plugin>> {
         Box::new(search::Search::new()),
         Box::new(switcher::Switcher::new()),
         Box::new(command_palette::CommandPalette::new()),
+        Box::new(daily_notes::DailyNotes::new(vault_root)),
+        Box::new(templates::Templates::new(vault_root)),
         Box::new(bookmarks::Bookmarks::new(vault_root)),
         Box::new(links_panes::Backlinks::new()),
         Box::new(links_panes::OutgoingLinks::new()),

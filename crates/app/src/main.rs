@@ -17,6 +17,7 @@ mod fuzzy;
 mod hotkeys;
 mod icons;
 mod math;
+mod moment;
 mod plugins;
 mod script;
 mod settings_ui;

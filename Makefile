@@ -41,4 +41,4 @@ export-check:    ## every fixture note converts to Typst and compiles to PDF (~1
 	cargo test --release -p obsidilight fixture_notes_export -- --ignored --nocapture
 
 ui-smoke: build    ## scripted UI tests (need a display; windows open briefly)
-	for t in smoke links watcher idle snippets assist academic m4 tasks hotkeys panes sync toolbar pdf; do tests/ui/$$t.sh || exit 1; done
+	for t in smoke links watcher idle snippets assist academic m4 tasks hotkeys panes sync toolbar pdf daily; do tests/ui/$$t.sh || exit 1; done

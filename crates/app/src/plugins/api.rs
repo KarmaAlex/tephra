@@ -271,6 +271,11 @@ impl WorkspaceHandle {
         let rel = rel.to_string();
         self.0.update(cx, |ws, cx| ws.create_and_open(&rel, new_tab, window, cx)).map_err(|e| e.to_string())?
     }
+    /// Creates a note with `text` (when it doesn't exist yet) and opens it.
+    pub fn create_note_with(&self, rel: &str, text: &str, new_tab: bool, window: &mut Window, cx: &mut App) -> Result<(), String> {
+        let (rel, text) = (rel.to_string(), text.to_string());
+        self.0.update(cx, |ws, cx| ws.create_with_text(&rel, &text, new_tab, window, cx)).map_err(|e| e.to_string())?
+    }
     /// Hides both sidebars (or brings them back): a distraction-free editor.
     pub fn toggle_focus_mode(&self, cx: &mut App) {
         let _ = self.0.update(cx, |ws, cx| ws.toggle_focus_mode(cx));

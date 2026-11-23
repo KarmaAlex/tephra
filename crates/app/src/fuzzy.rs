@@ -47,6 +47,11 @@ pub fn score(query: &str, text: &str) -> Option<(u32, Vec<Range<usize>>)> {
             }
         }
     }
+    // several words that appear together, as typed, beat the same words scattered
+    let words: Vec<String> = fold(query).split_whitespace().map(String::from).collect();
+    if words.len() > 1 && !t.contains(&words.join(" ")) {
+        cost += 2;
+    }
     ranges.sort_by_key(|r| r.start);
     let mut merged: Vec<Range<usize>> = Vec::new();
     for r in ranges {
@@ -73,7 +78,9 @@ mod tests {
         assert_eq!(c("xyz", "The MST problem"), None);
         assert_eq!(c("", "anything"), Some(0));
         assert_eq!(c("calcolab", "Calcolabilità"), Some(0));
+        assert!(c("insert template", "Templates: Insert template") < c("insert template", "Templates: Insert current date"), "the phrase first");
         let (_, r) = score("mst prob", "The MST problem").unwrap();
         assert_eq!(r, vec![4..7, 8..12]);
+        assert_eq!(c("mst prob", "The MST problem"), Some(2), "phrase: no penalty");
     }
 }

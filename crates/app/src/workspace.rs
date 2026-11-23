@@ -569,6 +569,12 @@ impl Workspace {
 
     /// Creates a note (vault path; `.md` added; folders created) and opens it.
     pub fn create_and_open(&mut self, rel: &str, new_tab: bool, window: &mut Window, cx: &mut Context<Self>) -> Result<(), String> {
+        self.create_with_text(rel, "", new_tab, window, cx)
+    }
+
+    /// Like [`create_and_open`](Self::create_and_open), writing `text` into a note that doesn't
+    /// exist yet (an existing note is opened unchanged).
+    pub fn create_with_text(&mut self, rel: &str, text: &str, new_tab: bool, window: &mut Window, cx: &mut Context<Self>) -> Result<(), String> {
         let mut rel = rel.trim().trim_matches('/').to_string();
         if !is_note(&rel) {
             rel.push_str(".md");
@@ -581,7 +587,11 @@ impl Workspace {
             if let Some(d) = path.parent() {
                 std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
             }
-            std::fs::OpenOptions::new().write(true).create_new(true).open(&path).map_err(|e| e.to_string())?;
+            {
+                use std::io::Write as _;
+                let mut f = std::fs::OpenOptions::new().write(true).create_new(true).open(&path).map_err(|e| e.to_string())?;
+                f.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
+            }
             self.vault.borrow_mut().index.refresh(&rel);
             self.rebuild_tree(cx);
             for t in self.all_editors() {
