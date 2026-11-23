@@ -19,6 +19,7 @@ pub mod latex_suite;
 pub mod links_panes;
 pub mod note_composer;
 pub mod outline_tags;
+pub mod page_preview;
 pub mod pdf_export;
 pub mod picker;
 pub mod search;
@@ -71,6 +72,7 @@ pub fn bundled(vault_root: &Path) -> Vec<Box<dyn Plugin>> {
         Box::new(templates::Templates::new(vault_root)),
         Box::new(note_composer::NoteComposer::new(vault_root)),
         Box::new(file_recovery::FileRecovery::new(vault_root)),
+        Box::new(page_preview::PagePreview::new()),
         Box::new(bookmarks::Bookmarks::new(vault_root)),
         Box::new(links_panes::Backlinks::new()),
         Box::new(links_panes::OutgoingLinks::new()),
@@ -194,6 +196,11 @@ impl PluginHost {
     pub fn set_hotkeys(cx: &mut App, id: &str, keys: Option<Vec<String>>) {
         cx.global_mut::<PluginHost>().apply_hotkeys(id, keys);
         cx.refresh_windows();
+    }
+
+    /// Whether a loaded plugin previews `target` when hovered from `source`.
+    pub fn wants_preview(cx: &App, target: &str, source: HoverSource, ctrl: bool) -> bool {
+        cx.try_global::<PluginHost>().is_some_and(|h| h.reg.wants_preview(target, source, ctrl))
     }
 
     /// Display name of a plugin (None for the app's own registrations).
@@ -350,6 +357,11 @@ mod tests {
         }
     }
     impl VaultListener for Nop {}
+    impl HoverPolicy for Nop {
+        fn wants(&self, _: &str, _: HoverSource, _: bool) -> bool {
+            false
+        }
+    }
     impl TextDecorator for Nop {
         fn decorate(&self, _: &str) -> Vec<std::ops::Range<usize>> {
             Vec::new()
@@ -375,6 +387,7 @@ mod tests {
             r.editor_menu(Rc::new(|_, _| Vec::new()));
             r.vault_listener(Rc::new(Nop));
             r.toolbar(ToolbarSlot { id: "t".into(), render: Rc::new(|_, _, _| div().into_any_element()) });
+            r.hover_policy(Rc::new(Nop));
         }
     }
 
@@ -387,18 +400,18 @@ mod tests {
         let mut h = PluginHost::new(None, vec![Box::new(KitchenSink(manifest("a", true))), Box::new(KitchenSink(manifest("b", false)))]);
         assert!(h.load_plugin("a"));
         assert!(!h.load_plugin("a"), "loading twice is a no-op");
-        assert_eq!(h.reg.count("a"), 14);
+        assert_eq!(h.reg.count("a"), 15);
         assert_eq!(h.reg.commands[0].1.id, "a:c");
         h.apply_enabled("b", true);
-        assert_eq!(h.reg.count("b"), 14);
+        assert_eq!(h.reg.count("b"), 15);
         let g = h.generation;
         h.apply_enabled("a", false);
         assert_eq!(h.reg.count("a"), 0, "unload must remove every registration");
-        assert_eq!(h.reg.count("b"), 14, "other plugins untouched");
+        assert_eq!(h.reg.count("b"), 15, "other plugins untouched");
         assert!(!h.is_loaded("a") && h.is_loaded("b") && !h.is_enabled("a"));
         assert!(h.generation > g);
         h.apply_setting("b", "k", Value::Bool(false)); // reloads b
-        assert_eq!((h.reg.count("b"), h.setting("b", "k")), (14, Value::Bool(false)));
+        assert_eq!((h.reg.count("b"), h.setting("b", "k")), (15, Value::Bool(false)));
     }
 
     #[test]

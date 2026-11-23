@@ -55,6 +55,17 @@ impl Editor {
         Some(self.proj.leaf(key)?.to_src(idx))
     }
 
+    /// Document offset of the character drawn under `p` (not the nearest caret position:
+    /// both edges of a short link's text map outside the link once its markers are hidden).
+    pub fn char_under(&self, p: Point<Pixels>) -> Option<usize> {
+        let (key, g) = self.geometry.iter().find(|(_, g)| g.bounds().contains(&p))?;
+        let idx = g.index_for_position(p);
+        let caret = g.position_for_caret(Caret::new(idx));
+        let before = p.x < caret.x;
+        let off = self.proj.leaf(*key)?.src_of_char(idx, before)?;
+        Some(self.doc.clamp(off))
+    }
+
     /// Caret rectangle for a document offset (window coordinates).
     pub fn caret_bounds(&self, offset: usize) -> Option<Bounds<Pixels>> {
         let (key, idx) = self.proj.locate(offset)?;

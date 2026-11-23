@@ -88,10 +88,25 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                     });
                 }
                 "move" => {
-                    // move <x> <y>: mouse moves there (hover)
+                    // move <x> <y> [ctrl]: mouse moves there (hover)
                     let p = point(px(num(0)), px(num(1)));
+                    let modifiers = Modifiers { control: rest.split_whitespace().any(|w| w == "ctrl"), ..Default::default() };
                     let _ = handle.update(cx, |_, w, cx| {
-                        w.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position: p, ..Default::default() }), cx);
+                        w.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position: p, modifiers, ..Default::default() }), cx);
+                    });
+                }
+                "moveat" => {
+                    // moveat <offset> [ctrl]: hover just right of where a document offset is drawn
+                    let off = num(0) as usize;
+                    let active = ws.update(cx, |ws, _| ws.tabs.get(ws.active).cloned()).ok().flatten().unwrap_or_else(|| editor.clone());
+                    let Some(b) = active.update(cx, |e, _| e.caret_bounds(off)) else {
+                        println!("MOVEAT {off}: not on screen");
+                        continue;
+                    };
+                    let p = point(b.origin.x + px(3.), b.center().y);
+                    let modifiers = Modifiers { control: rest.split_whitespace().any(|w| w == "ctrl"), ..Default::default() };
+                    let _ = handle.update(cx, |_, w, cx| {
+                        w.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position: p, modifiers, ..Default::default() }), cx);
                     });
                 }
                 "rclick" => {

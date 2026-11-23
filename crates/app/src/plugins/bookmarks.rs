@@ -11,9 +11,11 @@ use std::rc::Rc;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{h_flex, v_flex, ActiveTheme as _, IconName, Sizable as _};
 use gpui_kit::*;
+use gpui_kit::prelude::FluentBuilder as _;
 use serde_json::{json, Map, Value};
 
 use super::api::*;
+use super::page_preview::PreviewOnHover as _;
 use super::api::MenuItem;
 
 /// The bookmark file, as JSON (Obsidian's format).
@@ -305,6 +307,10 @@ impl Plugin for Bookmarks {
                                 s2.borrow_mut().remove(&at);
                                 cx.refresh_windows();
                             }))
+                            .when(!missing && obsidilight_core::index::is_note(&path) && matches!(kind.as_str(), "file" | "heading" | "block"), |d| {
+                                let sub = item["subpath"].as_str().unwrap_or("").trim_start_matches('#').to_string();
+                                d.preview_on_hover(&v.workspace, &path, &sub)
+                            })
                             .on_click(move |ev, w, cx| {
                                 let new_tab = ev.modifiers().secondary(cx);
                                 let path = item2["path"].as_str().unwrap_or("");

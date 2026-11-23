@@ -50,6 +50,48 @@ pub fn snippet(text: &str, sub: &str) -> Option<(String, usize)> {
     Some((cap(&text[start..end]), line_of(start)))
 }
 
+/// Plugin labels (callout and equation numbers) of `text`, for preview lines from `first` on,
+/// keyed by line within the preview.
+pub fn numbers(rel: &str, text: &str, first: usize, index: &obsidilight_core::index::VaultIndex, cx: &gpui_kit::App) -> std::collections::HashMap<usize, String> {
+    let mut numbers = std::collections::HashMap::new();
+    if let Some(h) = cx.try_global::<crate::plugins::PluginHost>() {
+        let ctx = crate::plugins::NoteCtx { path: rel, text, index };
+        for (_, r) in &h.reg.callout_renderers {
+            for (line, label) in r.numbers(&ctx) {
+                if line >= first {
+                    numbers.entry(line - first).or_insert(label);
+                }
+            }
+        }
+    }
+    numbers
+}
+
+/// The popup card: `snippet` rendered with `md` (links and images resolved from its note),
+/// anchored below `at`.
+pub fn card(md: &super::render::MarkdownRenderer, snippet: &str, numbers: std::collections::HashMap<usize, String>, at: gpui_kit::Point<gpui_kit::Pixels>, window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) -> gpui_kit::AnyElement {
+    use gpui_kit::component::ActiveTheme as _;
+    use gpui_kit::*;
+    let theme = cx.theme().clone();
+    let md = md.clone().with_numbers(numbers);
+    let body = md.render(snippet, window, cx);
+    let card = div()
+        .id("link-preview")
+        .w(px(520.))
+        .max_h(px(380.))
+        .overflow_y_scroll()
+        .px_4()
+        .py_3()
+        .bg(theme.popover)
+        .text_color(theme.popover_foreground)
+        .border_1()
+        .border_color(theme.border)
+        .rounded(px(8.))
+        .shadow_lg()
+        .child(body);
+    deferred(anchored().position(point(at.x, at.y + px(14.))).snap_to_window_with_margin(px(8.)).child(card)).with_priority(2).into_any_element()
+}
+
 #[cfg(test)]
 mod tests {
     use super::snippet;

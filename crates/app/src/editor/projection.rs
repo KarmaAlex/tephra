@@ -177,6 +177,17 @@ impl LeafMap {
     }
 
     /// The leaf range covering the document range `r` (clipped to this leaf).
+    /// Source offset of the leaf character starting at `idx` (`before`: the one ending there),
+    /// for "which character is under the mouse". None at a leaf edge or on a pad.
+    pub fn src_of_char(&self, idx: usize, before: bool) -> Option<usize> {
+        let seg = self.segs.iter().find(|s| s.kind != SegKind::Hidden && if before { s.leaf.start < idx && idx <= s.leaf.end } else { s.leaf.start <= idx && idx < s.leaf.end })?;
+        match seg.kind {
+            SegKind::Text => Some(seg.src.start + (if before { idx - 1 } else { idx }) - seg.leaf.start),
+            SegKind::Atom => Some(seg.src.start),
+            _ => None,
+        }
+    }
+
     pub fn leaf_range(&self, r: &Range<usize>) -> Option<Range<usize>> {
         let a = r.start.max(self.src.start);
         let b = r.end.min(self.src.end);

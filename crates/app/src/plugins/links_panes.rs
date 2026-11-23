@@ -20,6 +20,7 @@ use obsidilight_core::search::{fold, Expr, Term};
 use serde_json::{Map, Value};
 
 use super::api::*;
+use super::page_preview::PreviewOnHover as _;
 use super::search::{highlighted, snippet};
 
 /// One line to show under a note: where clicking goes, the text, what to highlight.
@@ -175,6 +176,7 @@ fn render_grouped(prefix: &'static str, g: &Grouped, ws: &WorkspaceHandle, cx: &
                 .cursor_pointer()
                 .child(div().truncate().child(display_name(path)))
                 .child(div().text_xs().text_color(muted).child(ms.len().to_string()))
+                .preview_on_hover(ws, path, "")
                 .on_click(move |ev, w, cx| ws1.open(&p1, OpenAt::Keep, ev.modifiers().secondary(cx), w, cx))
                 .into_any_element(),
         );
@@ -352,6 +354,7 @@ impl Plugin for OutgoingLinks {
                         .child(gpui_kit::component::Icon::new(if *embed { gpui_kit::assets::IconName::Image } else { gpui_kit::assets::IconName::Link }).xsmall_icon().text_color(theme.muted_foreground))
                         .child(div().flex_1().min_w_0().truncate().child(label))
                         .when(*n > 1, |d| d.child(div().text_xs().text_color(theme.muted_foreground).child(n.to_string())))
+                        .when(ok && is_note(target), |d| d.preview_on_hover(&v.workspace, target, ""))
                         .on_click(move |ev, w, cx| {
                             let new_tab = ev.modifiers().secondary(cx);
                             if ok {

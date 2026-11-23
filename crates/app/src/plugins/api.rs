@@ -145,6 +145,24 @@ pub trait CodeBlockRenderer {
     }
 }
 
+/// Where a link is hovered (Obsidian's page preview has a "require Ctrl" choice per source).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HoverSource {
+    /// Live preview or source mode.
+    Editor,
+    /// Reading view.
+    Reading,
+    /// Sidebar lists (files, backlinks, search results, bookmarks) and the graph.
+    Sidebar,
+}
+
+/// Decides whether hovering an internal link shows its preview. Any registered policy saying
+/// yes is enough; with none, links never preview.
+pub trait HoverPolicy {
+    /// `target` = the link (`note#sub`), `ctrl` = Ctrl held.
+    fn wants(&self, target: &str, source: HoverSource, ctrl: bool) -> bool;
+}
+
 /// Keys an editor hook may intercept (typed characters go through `on_char`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EditorKey {
@@ -303,6 +321,11 @@ impl WorkspaceHandle {
             None => target.trim_end_matches(".md").to_string(),
         }
     }
+    /// Shows the hover preview of a vault note (`sub` = heading or `^block`, may be empty) near
+    /// `at` after a short delay, or hides it (`None`). For sidebar lists; the editor has its own.
+    pub fn preview_link(&self, target: Option<(String, String)>, at: Point<Pixels>, cx: &mut App) {
+        let _ = self.0.update(cx, |ws, cx| ws.preview_link(target, at, cx));
+    }
     /// Hides both sidebars (or brings them back): a distraction-free editor.
     pub fn toggle_focus_mode(&self, cx: &mut App) {
         let _ = self.0.update(cx, |ws, cx| ws.toggle_focus_mode(cx));
@@ -438,6 +461,7 @@ pub struct Registry {
     pub editor_menus: Vec<(PluginId, EditorMenuProvider)>,
     pub vault_listeners: Vec<(PluginId, Rc<dyn VaultListener>)>,
     pub toolbars: Vec<(PluginId, ToolbarSlot)>,
+    pub hover_policies: Vec<(PluginId, Rc<dyn HoverPolicy>)>,
 }
 
 impl Registry {
@@ -456,6 +480,7 @@ impl Registry {
         self.editor_menus.retain(|(p, _)| *p != id);
         self.vault_listeners.retain(|(p, _)| *p != id);
         self.toolbars.retain(|(p, _)| *p != id);
+        self.hover_policies.retain(|(p, _)| *p != id);
     }
 
     /// How many registrations a plugin currently holds (tests: unload must leave zero).
@@ -474,6 +499,12 @@ impl Registry {
             + self.editor_menus.iter().filter(|(p, _)| *p == id).count()
             + self.vault_listeners.iter().filter(|(p, _)| *p == id).count()
             + self.toolbars.iter().filter(|(p, _)| *p == id).count()
+            + self.hover_policies.iter().filter(|(p, _)| *p == id).count()
+    }
+
+    /// Whether hovering `target` from `source` previews it.
+    pub fn wants_preview(&self, target: &str, source: HoverSource, ctrl: bool) -> bool {
+        self.hover_policies.iter().any(|(_, p)| p.wants(target, source, ctrl))
     }
 
     /// The first plugin style claiming a callout type (plugins in load order).
@@ -541,5 +572,8 @@ impl Registrar<'_> {
     }
     pub fn vault_listener(&mut self, l: Rc<dyn VaultListener>) {
         self.reg.vault_listeners.push((self.plugin, l));
+    }
+    pub fn hover_policy(&mut self, p: Rc<dyn HoverPolicy>) {
+        self.reg.hover_policies.push((self.plugin, p));
     }
 }

@@ -17,6 +17,7 @@ use obsidilight_core::search::{parse_query, FileHit};
 use serde_json::{Map, Value};
 
 use super::api::*;
+use super::page_preview::PreviewOnHover as _;
 use crate::embeds::SharedVault;
 
 pub const VIEW: &str = "search:search";
@@ -192,6 +193,7 @@ impl Render for SearchView {
                                         .child(div().font_weight(FontWeight::SEMIBOLD).text_color(fg).truncate().child(name))
                                         .child(div().flex_1().min_w_0().text_xs().text_color(muted).truncate().child(folder))
                                         .when(count > 0, |d| d.child(div().text_xs().text_color(muted).child(count.to_string())))
+                                        .preview_on_hover(&ws, &path, "")
                                         .on_click(move |ev, window, cx| ws.open(&path, OpenAt::Keep, ev.modifiers().secondary(cx), window, cx))
                                         .into_any_element()
                                 }

@@ -381,6 +381,14 @@ impl AcademicNotes {
     }
 }
 
+struct ReferencePreview;
+
+impl HoverPolicy for ReferencePreview {
+    fn wants(&self, target: &str, source: HoverSource, _ctrl: bool) -> bool {
+        target.contains("#^") && source != HoverSource::Sidebar
+    }
+}
+
 impl Plugin for AcademicNotes {
     fn manifest(&self) -> &PluginManifest {
         &self.manifest
@@ -398,6 +406,8 @@ impl Plugin for AcademicNotes {
         let numbers = Rc::new(NumberCache { formats, ..Default::default() });
         reg.callout_renderer(Styles { light: palette(&get("lightPalette", "forest")), dark: palette(&get("darkPalette", "colorful-dark")), numbers: numbers.clone(), line_numbers: settings.get("algorithmLineNumbers").and_then(Value::as_bool).unwrap_or(true) });
         reg.link_labeler(Rc::new(References { numbers }));
+        // references (`[[#^lemma1]]`) preview their statement on plain hover in the note
+        reg.hover_policy(Rc::new(ReferencePreview));
         let depth = settings.get("tocDepth").and_then(Value::as_f64).unwrap_or(3.0).clamp(1.0, 6.0) as u8;
         reg.code_block_renderer("academic-toc", Toc { depth });
         reg.sidebar_view(SidebarView {

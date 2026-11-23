@@ -85,6 +85,16 @@ impl Layout {
     }
 }
 
+/// A hover preview shown for a sidebar row.
+struct WsPreview {
+    key: String,
+    rel: String,
+    at: Point<Pixels>,
+    text: Rc<str>,
+    snippet: String,
+    numbers: HashMap<usize, String>,
+}
+
 pub struct Workspace {
     pub vault: SharedVault,
     tree: Entity<TreeState>,
@@ -116,6 +126,9 @@ pub struct Workspace {
     pub recent: Vec<String>,
     /// Files shown in the tree after the last rebuild (for UI tests).
     pub tree_files: Vec<String>,
+    /// Hover preview requested by a sidebar list (key = `rel#sub`), and the one shown.
+    preview_pending: Option<String>,
+    preview: Option<WsPreview>,
     /// Document version of each editor last propagated to its peers (live sync).
     synced: HashMap<EntityId, u64>,
     _watcher: Option<notify::RecommendedWatcher>,
@@ -162,6 +175,8 @@ impl Workspace {
             recent: Vec::new(),
             tree_files: Vec::new(),
             synced: HashMap::new(),
+            preview_pending: None,
+            preview: None,
             _watcher: None,
             _subs: subs,
         };
@@ -698,6 +713,52 @@ impl Workspace {
             self.activate(a, window, cx);
         }
         cx.notify();
+    }
+
+    /// Shows (after a short delay) or hides the hover preview of a vault note for a sidebar row.
+    pub fn preview_link(&mut self, target: Option<(String, String)>, at: Point<Pixels>, cx: &mut Context<Self>) {
+        let Some((rel, sub)) = target else {
+            self.preview_pending = None;
+            if self.preview.take().is_some() {
+                cx.notify();
+            }
+            return;
+        };
+        let key = format!("{rel}#{sub}");
+        if self.preview.as_ref().is_some_and(|p| p.key == key) || self.preview_pending.as_ref() == Some(&key) {
+            return;
+        }
+        if self.preview.take().is_some() {
+            cx.notify();
+        }
+        self.preview_pending = Some(key.clone());
+        cx.spawn(async move |ws, cx| {
+            cx.background_executor().timer(Duration::from_millis(350)).await;
+            let _ = ws.update(cx, |ws, cx| {
+                if ws.preview_pending.as_ref() != Some(&key) {
+                    return;
+                }
+                ws.preview_pending = None;
+                let Some(text) = ws.note_text(&rel, cx) else { return };
+                let Some((snippet, first)) = crate::editor::preview::snippet(&text, &sub) else { return };
+                let numbers = crate::editor::preview::numbers(&rel, &text, first, &ws.vault.borrow().index, cx);
+                if std::env::var_os("OBSIDILIGHT_SCRIPT").is_some() {
+                    println!("PREVIEW {key} {:?}", snippet.lines().next().unwrap_or(""));
+                }
+                ws.preview = Some(WsPreview { key, rel, at, text: text.into(), snippet, numbers });
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn render_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let p = self.preview.as_ref()?;
+        let vault = self.vault.clone();
+        let path = vault.borrow().root.join(&p.rel);
+        let md = crate::editor::render::MarkdownRenderer::new(Rc::new(move |t: &str| vault.borrow().resolve(t, &path))).with_note(p.rel.clone(), p.text.clone());
+        let (snippet, numbers, at) = (p.snippet.clone(), p.numbers.clone(), p.at);
+        Some(crate::editor::preview::card(&md, &snippet, numbers, at, window, cx))
     }
 
     /// Live sync: when a note's text changed in one pane, every other pane showing that note
@@ -1333,19 +1394,25 @@ impl Workspace {
                         let (fg, warn) = (theme.foreground, theme.warning);
                         let weak = weak.clone();
                         let path = root.join(&id);
+                        let row = h_flex()
+                            .gap_1p5()
+                            .text_sm()
+                            .text_color(if conflict { warn } else { fg })
+                            .child(Icon::new(icon).small())
+                            .child(item.label.clone())
+                            .when(conflict, |d| d.child(div().text_xs().child("sync conflict")));
+                        // notes preview on (Ctrl+)hover, like Obsidian's file explorer
+                        let row = if !folder && is_note(&id) {
+                            use crate::plugins::page_preview::PreviewOnHover as _;
+                            div().id(SharedString::from(format!("tree-row:{id}"))).w_full().child(row).preview_on_hover(&WorkspaceHandle(weak.clone()), &id, "").into_any_element()
+                        } else {
+                            row.into_any_element()
+                        };
                         ListItem::new(ix)
                             .w_full()
                             .px_2()
                             .pl(px(14.) * entry.depth() + px(8.))
-                            .child(
-                                h_flex()
-                                    .gap_1p5()
-                                    .text_sm()
-                                    .text_color(if conflict { warn } else { fg })
-                                    .child(Icon::new(icon).small())
-                                    .child(item.label.clone())
-                                    .when(conflict, |d| d.child(div().text_xs().child("sync conflict"))),
-                            )
+                            .child(row)
                             .when(!folder, |li| {
                                 li.on_click(move |ev, window, cx| {
                                     let new_tab = ev.modifiers().secondary(cx);
@@ -1490,6 +1557,7 @@ impl Render for Workspace {
         let ribbon = self.render_ribbon(cx).into_any_element();
         let right = self.render_right_sidebar(window, cx);
         let status = self.render_status_bar(cx);
+        let preview = self.render_preview(window, cx);
         div()
             .id("workspace")
             .key_context(CONTEXT)
@@ -1565,5 +1633,6 @@ impl Render for Workspace {
             .children(sidebar)
             .child(v_flex().flex_1().min_w_0().h_full().child(div().flex_1().min_h_0().flex().child(panes)).children(status))
             .children(right)
+            .children(preview)
     }
 }

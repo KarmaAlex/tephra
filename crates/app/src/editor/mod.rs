@@ -753,28 +753,24 @@ pub(crate) struct SuggestState {
 }
 
 impl Editor {
-    /// The internal link under the mouse: its target (`note#sub`), if previewable now. Block
-    /// references preview on plain hover (Academic Notes); other links with Ctrl (Obsidian).
-    fn link_under(&self, p: Point<Pixels>, ctrl: bool) -> Option<String> {
-        let off = self.hit_test(p, input::Bias::Nearest)?;
-        let c = self.caret_bounds(off)?;
-        let (key, _) = self.proj.locate(off)?;
-        if (c.center().y - p.y).abs() > c.size.height || !self.geometry.get(&key)?.bounds().contains(&p) {
-            return None; // nearest text is not under the mouse
-        }
+    /// The internal link under the mouse: its target (`note#sub`), if a plugin's hover policy
+    /// previews it now (page preview: with Ctrl; Academic Notes: block references on hover).
+    fn link_under(&self, p: Point<Pixels>, ctrl: bool, cx: &App) -> Option<String> {
+        let off = self.char_under(p)?;
         let line = self.doc.line_of(off);
         let ls = self.doc.line_start(line);
         let text = self.doc.line_text(line);
         let col = off - ls;
         let n = obsidilight_core::markdown::parse_inline(&text, 0..text.len())
             .into_iter()
-            .find(|n| matches!(n.kind, obsidilight_core::markdown::InlineKind::WikiLink { embed: false }) && n.range.start < col && col < n.range.end)?;
+            .find(|n| matches!(n.kind, obsidilight_core::markdown::InlineKind::WikiLink { embed: false }) && n.range.start <= col && col < n.range.end)?;
         let target = n.link_target(&text).to_string();
-        (target.contains("#^") || ctrl).then_some(target)
+        let source = if self.mode == ViewMode::Reading { crate::plugins::HoverSource::Reading } else { crate::plugins::HoverSource::Editor };
+        PluginHost::wants_preview(cx, &target, source, ctrl).then_some(target)
     }
 
     pub(crate) fn on_hover(&mut self, p: Point<Pixels>, ctrl: bool, cx: &mut Context<Self>) {
-        let target = if self.dragging { None } else { self.link_under(p, ctrl) };
+        let target = if self.dragging { None } else { self.link_under(p, ctrl, cx) };
         if target.is_some() && self.hover.as_ref().map(|h| &h.link) == target.as_ref() {
             return;
         }
@@ -822,42 +818,17 @@ impl Editor {
             if p == self.path { self.doc.text() } else { std::fs::read_to_string(p).ok()? }
         };
         let (snippet, first) = preview::snippet(&text, sub)?;
-        let mut numbers = HashMap::new();
-        if let Some(h) = cx.try_global::<PluginHost>() {
+        let numbers = {
             let vault = self.vault.borrow();
             let rel = if note.is_empty() { vault.relative(&self.path) } else { vault.resolve(note, &self.path).map(|p| vault.relative(&p)).unwrap_or_default() };
-            let ctx = crate::plugins::NoteCtx { path: &rel, text: &text, index: &vault.index };
-            for (_, r) in &h.reg.callout_renderers {
-                for (line, label) in r.numbers(&ctx) {
-                    if line >= first {
-                        numbers.entry(line - first).or_insert(label);
-                    }
-                }
-            }
-        }
+            preview::numbers(&rel, &text, first, &vault.index, cx)
+        };
         Some(HoverPreview { link: target.to_string(), at, snippet, numbers })
     }
 
     fn render_hover(&self, md: &render::MarkdownRenderer, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let h = self.hover.as_ref()?;
-        let theme = cx.theme().clone();
-        let md = md.clone().with_numbers(h.numbers.clone());
-        let body = md.render(&h.snippet, window, cx);
-        let card = div()
-            .id("link-preview")
-            .w(px(520.))
-            .max_h(px(380.))
-            .overflow_y_scroll()
-            .px_4()
-            .py_3()
-            .bg(theme.popover)
-            .text_color(theme.popover_foreground)
-            .border_1()
-            .border_color(theme.border)
-            .rounded(px(8.))
-            .shadow_lg()
-            .child(body);
-        Some(deferred(anchored().position(point(h.at.x, h.at.y + px(14.))).snap_to_window_with_margin(px(8.)).child(card)).with_priority(2).into_any_element())
+        Some(preview::card(md, &h.snippet, h.numbers.clone(), h.at, window, cx))
     }
 
     /// Callout labels from plugins (numbering), recomputed when the text or plugins change.
