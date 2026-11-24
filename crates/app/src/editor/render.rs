@@ -88,11 +88,6 @@ pub fn on_color(bg: Hsla) -> Hsla {
     if 1.05 / (l + 0.05) >= (l + 0.05) / 0.0603 { gpui_kit::white() } else { gpui_kit::rgb(0x1a1a1a).into() }
 }
 
-/// Leaf-key bases for nested Markdown renders: the editor's own projection uses keys below
-/// `1 << 40` (`block << 16 | sub`), so every plugin-rendered block gets a base above that.
-const KEY_BASE_STEP: u64 = 1 << 40;
-static NEXT_KEY_BASE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(KEY_BASE_STEP);
-
 /// Renders Markdown read-only (for plugins: e.g. the columns of a layout block), with links and
 /// embeds resolved from the note it appears in.
 #[derive(Clone)]
@@ -134,15 +129,11 @@ impl MarkdownRenderer {
     pub fn render(&self, md: &str, window: &mut Window, cx: &mut App) -> AnyElement {
         let n = self.next.get();
         self.next.set(n + 1);
-        // A fresh leaf-key base for this render: a plugin block's nested Markdown must not
-        // reuse the editor's leaf keys, or its text would overwrite the editor's leaf geometry
-        // (the first line became unclickable and the caret jumped when such a note was edited).
-        let key_base = NEXT_KEY_BASE.fetch_add(KEY_BASE_STEP, std::sync::atomic::Ordering::Relaxed);
-        let el = self.render_inner(md, key_base, window, cx);
+        let el = self.render_inner(md, window, cx);
         div().id(SharedString::from(format!("md-{}-{n}", self.depth))).child(el).into_any_element()
     }
 
-    fn render_inner(&self, md: &str, key_base: u64, window: &mut Window, cx: &mut App) -> AnyElement {
+    fn render_inner(&self, md: &str, window: &mut Window, cx: &mut App) -> AnyElement {
         if self.depth > 4 {
             return div().child(md.to_string()).into_any_element(); // runaway nesting
         }
@@ -172,7 +163,9 @@ impl MarkdownRenderer {
             resolve: &resolve,
             link_label: &|_| None,
             code_mode: &code_mode,
-            key_base,
+            // a plugin block's nested Markdown must not reuse the editor's leaf keys, or its text
+            // would overwrite the editor's leaf geometry (first line unclickable, caret jumps)
+            key_base: super::projection::NESTED_KEY_BASE,
         });
         let muted = cx.theme().muted_foreground;
         let mut rcx = RenderContext::from_app(cx).with_style(style).with_markdown_extensions(crate::atoms::extensions()).with_body_font_size(px(body));

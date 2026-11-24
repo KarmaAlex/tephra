@@ -37,7 +37,7 @@ impl MarkdownPlugin for MathPlugin {
         let color = context.text_style().color;
         match crate::math::render(&m.tex, m.display, font_px, color, window.scale_factor()) {
             Some(img_) => {
-                let el = img(img_.image.clone().into_source()).w(px(img_.width)).h(px(img_.height));
+                let el = img(ImageSource::Render(img_.image.clone())).w(px(img_.width)).h(px(img_.height));
                 if m.display {
                     // display math: its own line, a little air above and below; optionally centred
                     let centred = crate::app_settings::AppSettings::flag(cx, "centerDisplayMath");

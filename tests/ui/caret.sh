@@ -3,7 +3,8 @@
 # - Down inside an empty $$\n$$ block walks line by line (it used to jump to the document
 #   end, because the step was half the caret height while code/math lines are taller).
 # - Clicking past the right edge of a wrapped row keeps the caret on that row's end (it used
-#   to move to the next row, because the wrap-point caret painted downstream).
+#   to move to the next row, because the wrap-point caret painted downstream), while clicking
+#   at the start of the next row keeps it there: one offset, two rows (caret affinity).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 TMP=$(mktemp -d)
@@ -34,12 +35,15 @@ wait 900
 resize 1190 813
 wait 300
 pos 8
+pos 100
 pos 300
 quit
 SCRIPT
 POS=$(OBSIDILIGHT_SCRIPT="$TMP/p.script" timeout 40 target/release/obsidilight "$TMP/wrap.md" | grep -E "^POS")
 echo "$POS"
+X1=$(awk '/^POS 8 /{print $3}' <<<"$POS")
 Y1=$(awk '/^POS 8 /{print $4}' <<<"$POS")
+YR2=$(awk '/^POS 100 /{print $4}' <<<"$POS")
 Y2=$(awk '/^POS 300 /{print $4}' <<<"$POS")
 [ -n "$Y1" ] && [ -n "$Y2" ] || fail "no positions"
 [ "$Y2" -gt "$Y1" ] || fail "the paragraph did not wrap (y1=$Y1 y2=$Y2)"
@@ -58,4 +62,29 @@ echo "$OUT"
 [[ "$OUT" =~ caret_px=\([0-9]+,([0-9]+) ]] || fail "no caret in output"
 CY=${BASH_REMATCH[1]}
 [ "$CY" -lt $(( Y2 - 5 )) ] || fail "click past the right edge moved the caret to row 2: caret y=$CY, row1 center=$Y1, row2 center=$Y2"
+
+# clicking left of the second row's start puts the caret at that row's start (the same offset
+# as the first row's end), not at the end of the first row
+[ "$YR2" -gt "$Y1" ] || fail "offset 100 is not on row 2 (y1=$Y1 yr2=$YR2)"
+cat > "$TMP/s.script" <<SCRIPT
+wait 900
+resize 1190 813
+wait 300
+click $(( X1 - 8 )) $YR2
+wait 200
+state
+key down
+wait 200
+state
+quit
+SCRIPT
+OUT=$(OBSIDILIGHT_SCRIPT="$TMP/s.script" timeout 40 target/release/obsidilight "$TMP/wrap.md" | grep -E "^STATE")
+echo "$OUT"
+mapfile -t ST <<<"$OUT"
+for i in 0 1; do
+  [[ "${ST[$i]}" =~ caret_px=\(([0-9]+),([0-9]+) ]] || fail "no caret in output"
+  CX=${BASH_REMATCH[1]}; CY=${BASH_REMATCH[2]}
+  [ "$CX" -le $(( X1 + 5 )) ] || fail "caret not at a row start (state $i): x=$CX, rows start at x=$X1"
+  [ "$CY" -gt "$Y1" ] || fail "caret back on row 1 (state $i): y=$CY, row1 center=$Y1"
+done
 echo "ui-caret: OK"

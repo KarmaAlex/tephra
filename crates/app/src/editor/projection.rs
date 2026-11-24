@@ -329,6 +329,12 @@ fn key(block: usize, sub: usize) -> u64 {
     ((block as u64) << 16) | sub as u64
 }
 
+/// The leaf-key base of every nested Markdown render (a plugin block's body, a page preview).
+/// The editor's own keys (`block << 16 | sub`, base 0) stay far below it, so a nested render
+/// never overwrites the editor's leaf geometry; the editor drops keys at or above it from its
+/// geometry, since nested text is read-only and never hit-tested.
+pub const NESTED_KEY_BASE: u64 = 1 << 40;
+
 /// Display name for a callout type (Obsidian built-ins and the vault's Academic Notes types).
 /// `thm` -> `Thm` (Obsidian's title for a callout without one).
 pub fn capitalize(kind: &str) -> String {
@@ -1016,8 +1022,8 @@ pub struct ProjectionInput<'a> {
     pub resolve: &'a dyn Fn(&str) -> Option<PathBuf>,
     pub link_label: &'a dyn Fn(&str) -> Option<String>,
     pub code_mode: &'a dyn Fn(&str) -> CodeMode,
-    /// Added to every leaf key: nested Markdown renders (plugin blocks) get a fresh base, so
-    /// their leaves never collide with the editor's own keys in the geometry map.
+    /// Added to every leaf key: 0 for the editor, [`NESTED_KEY_BASE`] for nested Markdown
+    /// renders (plugin blocks), so their leaves never collide with the editor's own.
     pub key_base: u64,
 }
 
@@ -1284,7 +1290,7 @@ mod tests {
     fn key_base_offsets_every_leaf_key_and_block_id() {
         let none = |_: &str| None;
         let t = "## H\n\npara with $x$ math\n\n> [!algorithm] A\n> body line\n";
-        let base = 1u64 << 40;
+        let base = NESTED_KEY_BASE;
         let p = project(&ProjectionInput { text: t, sel: Selection::caret(0), mode: ViewMode::Reading, version: 0, palette: Palette { highlight: hsla(0., 0., 0., 1.) }, resolve: &none, code_mode: &|_| CodeMode::Plain, link_label: &|_| None, key_base: base });
         assert!(!p.leaves.is_empty());
         for (k, _) in &p.leaves {

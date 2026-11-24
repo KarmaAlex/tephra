@@ -1593,7 +1593,7 @@ impl Workspace {
             }
         }
         // resting on a closed folder opens it
-        let hover = row.filter(|r| r.starts_with("dir:") && !self.expanded.contains(r));
+        let hover = row.filter(|r| file_drag::is_dir_row(r) && !self.expanded.contains(r));
         if hover != self.drag_hover {
             self.drag_hover = hover.clone();
             if let Some(h) = hover {
@@ -1678,10 +1678,8 @@ impl Workspace {
                     tree(&self.tree, move |ix, entry, _selected, _w, cx| {
                         let item = entry.item();
                         let id = item.id.to_string();
-                        // `TreeEntry::is_folder()` only means "has children", so an empty
-                        // folder would read as a file here; the `dir:` id prefix is what
-                        // actually marks a folder row (see `rebuild_tree`).
-                        let folder = id.starts_with("dir:") || entry.is_folder();
+                        // not `entry.is_folder()`: that means "has children" (empty folders)
+                        let folder = file_drag::is_dir_row(&id);
                         let conflict = !folder && is_sync_conflict(&id);
                         let icon = if folder {
                             if entry.is_expanded() { IconName::FolderOpen } else { IconName::Folder }
@@ -1761,8 +1759,7 @@ impl Workspace {
                     })
                     .context_menu(move |_ix, entry, menu, _w, cx| {
                         let id = entry.item().id.to_string();
-                        // as in the row above: the `dir:` prefix marks a folder row, even an empty one
-                        let folder = id.starts_with("dir:") || entry.is_folder();
+                        let folder = file_drag::is_dir_row(&id);
                         let rel = id.strip_prefix("dir:").unwrap_or(&id).to_string();
                         *target.borrow_mut() = Some((rel.clone(), folder));
                         let mut menu = menu

@@ -9,6 +9,12 @@ pub struct TreeDrag {
     pub folder: bool,
 }
 
+/// Whether a file-list row is a folder: `rebuild_tree` gives every directory row the `dir:` id
+/// prefix. (The tree's own `is_folder()` means "has children", so it misses empty folders.)
+pub fn is_dir_row(row: &str) -> bool {
+    row.starts_with("dir:")
+}
+
 /// The folder a drop on a file-list row moves into: the folder itself for a folder row
 /// (`dir:<path>`), the folder holding the file for a file row ("" = the vault root).
 pub fn dest_of_row(row: &str) -> String {

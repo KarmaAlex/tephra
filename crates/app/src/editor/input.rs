@@ -2,7 +2,7 @@
 
 use std::ops::Range;
 
-use gpui_kit::base::text::editor_host::{Caret, LeafGeometry};
+use gpui_kit::base::text::editor_host::{Caret, CaretAffinity};
 use gpui_kit::*;
 use obsidilight_core::{EditKind, Selection};
 
@@ -16,37 +16,16 @@ pub enum Bias {
     Up,
 }
 
-/// Leaf byte index for a window point: the visual line whose box contains `p.y` (found by
-/// binary search over caret positions, which are non-decreasing in y), then the nearest
-/// caret on that line by x. Snapping y to the line first keeps a click past the right edge
-/// of a wrapped row on that row's end instead of the next row.
-fn index_at(g: &LeafGeometry, p: Point<Pixels>) -> usize {
-    let b = g.bounds();
-    let py = f32::from(p.y).clamp(f32::from(b.top()) + 1.0, f32::from(b.bottom()) - 1.0);
-    let len = g.len();
-    if len == 0 {
-        return 0;
-    }
-    let caret_y = |i: usize| f32::from(g.position_for_caret(Caret::new(i)).y);
-    let mut lo = 0;
-    let mut hi = len;
-    while lo < hi {
-        let mid = (lo + hi + 1) / 2;
-        if caret_y(mid) <= py {
-            lo = mid;
-        } else {
-            hi = mid - 1;
-        }
-    }
-    let line_top = caret_y(lo);
-    let lh = f32::from(g.line_height());
-    let y = if py < line_top + lh { line_top + lh * 0.5 } else { py };
-    g.index_for_position(point(p.x, px(y)))
-}
-
 impl Editor {
     /// Window point -> document offset, using the last frame's leaf geometry.
     pub fn hit_test(&self, p: Point<Pixels>, bias: Bias) -> Option<usize> {
+        self.hit_caret(p, bias).map(|(off, _)| off)
+    }
+
+    /// Window point -> document offset, plus whether the hit is the end of a soft-wrapped row
+    /// (upstream): at a wrap one offset is both the end of the upper row and the start of the
+    /// lower one, and only the point that was hit tells them apart.
+    pub fn hit_caret(&self, p: Point<Pixels>, bias: Bias) -> Option<(usize, bool)> {
         let mut best: Option<(f32, f32, u64)> = None; // (vertical distance, horizontal distance, key)
         for (key, g) in &self.geometry {
             let b = g.bounds();
@@ -77,15 +56,17 @@ impl Editor {
         }
         let (_, _, key) = best?;
         let g = &self.geometry[&key];
-        let idx = index_at(g, p);
-        Some(self.proj.leaf(key)?.to_src(idx))
+        let b = g.bounds();
+        let y = p.y.clamp(b.top() + px(1.), b.bottom() - px(1.));
+        let c = g.caret_for_position(point(p.x, y));
+        Some((self.proj.leaf(key)?.to_src(c.index), c.affinity == CaretAffinity::Upstream))
     }
 
     /// Document offset of the character drawn under `p` (not the nearest caret position:
     /// both edges of a short link's text map outside the link once its markers are hidden).
     pub fn char_under(&self, p: Point<Pixels>) -> Option<usize> {
         let (key, g) = self.geometry.iter().find(|(_, g)| g.bounds().contains(&p))?;
-        let idx = index_at(g, p);
+        let idx = g.index_for_position(p);
         let caret = g.position_for_caret(Caret::new(idx));
         let before = p.x < caret.x;
         let off = self.proj.leaf(*key)?.src_of_char(idx, before)?;
@@ -93,12 +74,13 @@ impl Editor {
     }
 
     /// Caret rectangle for a document offset (window coordinates). At a soft wrap the caret
-    /// paints at the end of the upper line (`position_for_index`), so clicking past the end
-    /// of a line keeps the caret on that line instead of the next one.
+    /// paints at the start of the lower row, unless the head was placed at the end of the
+    /// upper row (a click past a row's end, Up/Down along the right edge): `upstream_head`.
     pub fn caret_bounds(&self, offset: usize) -> Option<Bounds<Pixels>> {
         let (key, idx) = self.proj.locate(offset)?;
         let g = self.geometry.get(&key)?;
-        let at = g.position_for_index(idx);
+        let caret = if self.upstream_head == Some(offset) { Caret::upstream(idx) } else { Caret::new(idx) };
+        let at = g.position_for_caret(caret);
         Some(Bounds::new(at, size(px(2.), g.caret_height())))
     }
 
@@ -120,15 +102,26 @@ impl Editor {
         } else {
             px(line_h.max(f32::from(caret.size.height)) * 0.5)
         };
-        let y = if dir > 0 { caret.bottom() + step } else { caret.top() - step };
+        let mut y = if dir > 0 { caret.bottom() + step } else { caret.top() - step };
         let bias = if dir > 0 { Bias::Down } else { Bias::Up };
-        let head = match self.hit_test(point(x, y), bias) {
-            // no line further in that direction: go to the document edge
-            Some(h) if h != s.head => h,
-            _ => if dir > 0 { self.doc.len() } else { 0 },
-        };
+        // A hit on the caret's own offset means the point is still inside the caret's line
+        // (a line box taller than estimated): step further. Only when nothing lies in that
+        // direction at all does the caret go to the document edge.
+        let mut target = None;
+        for _ in 0..3 {
+            match self.hit_caret(point(x, y), bias) {
+                None => break,
+                Some((h, upstream)) if h != s.head => {
+                    target = Some((h, upstream));
+                    break;
+                }
+                Some(_) => y += px(line_h.max(1.0) * dir.signum() as f32),
+            }
+        }
+        let (head, upstream) = target.unwrap_or((if dir > 0 { self.doc.len() } else { 0 }, false));
         let sel = if select { Selection::new(s.anchor, head) } else { Selection::caret(head) };
         self.set_selection(sel, true, cx);
+        self.upstream_head = upstream.then_some(head);
     }
 }
 
@@ -137,7 +130,7 @@ pub fn on_mouse_down(e: &mut Editor, ev: &MouseDownEvent, window: &mut Window, c
     if ev.modifiers.secondary(cx) {
         return; // Ctrl+click is for opening links; leave the caret where it is
     }
-    let Some(off) = e.hit_test(ev.position, Bias::Nearest) else { return };
+    let Some((off, upstream)) = e.hit_caret(ev.position, Bias::Nearest) else { return };
     let s = e.doc.selection();
     let sel = match ev.click_count {
         2 => {
@@ -153,16 +146,20 @@ pub fn on_mouse_down(e: &mut Editor, ev: &MouseDownEvent, window: &mut Window, c
     };
     e.dragging = true;
     e.set_selection(sel, false, cx);
+    // the caret stays on the row that was clicked, also at a soft wrap
+    e.upstream_head = (upstream && e.doc.selection().head == off).then_some(off);
 }
+
 pub fn on_mouse_move(e: &mut Editor, ev: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Editor>) {
     if !e.dragging || ev.pressed_button != Some(MouseButton::Left) {
         e.on_hover(ev.position, ev.modifiers.secondary(cx), cx);
         return;
     }
-    if let Some(off) = e.hit_test(ev.position, Bias::Nearest) {
+    if let Some((off, upstream)) = e.hit_caret(ev.position, Bias::Nearest) {
         let s = e.doc.selection();
         if off != s.head {
             e.set_selection(Selection::new(s.anchor, off), false, cx);
+            e.upstream_head = upstream.then_some(off);
         }
     }
 }

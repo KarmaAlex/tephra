@@ -5,29 +5,14 @@
 use std::collections::HashMap;
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
 
-use gpui_kit::{Hsla, Image, ImageFormat, RenderImage, Rgba};
+use gpui_kit::{Hsla, RenderImage, Rgba};
 
-/// The rasterised formula. `Render` is already decoded, so GPUI paints it in the same frame
-/// (an `Arc<Image>` is decoded asynchronously and would blink a frame when first shown).
-#[derive(Clone)]
-pub enum MathImg {
-    Render(Arc<RenderImage>),
-    Image(Arc<Image>),
-}
-
-impl MathImg {
-    pub fn into_source(self) -> gpui_kit::ImageSource {
-        match self {
-            MathImg::Render(r) => gpui_kit::ImageSource::Render(r),
-            MathImg::Image(i) => gpui_kit::ImageSource::Image(i),
-        }
-    }
-}
-
-/// A rendered formula, sized in logical pixels.
+/// A rendered formula, sized in logical pixels. The image is already decoded (BGRA), so GPUI
+/// paints it in the frame it first appears in: an `Arc<Image>` is decoded asynchronously and
+/// painted nothing for a frame, the flicker while typing in a math block.
 #[derive(Clone)]
 pub struct MathImage {
-    pub image: MathImg,
+    pub image: Arc<RenderImage>,
     pub width: f32,
     pub height: f32,
     /// Distance from the top to the baseline.
@@ -66,7 +51,7 @@ pub fn render(tex: &str, display: bool, font_px: f32, color: Hsla, scale: f32) -
     if let Some(hit) = cache().lock().ok()?.get(&key) {
         return hit.clone();
     }
-    let out = ratex(tex, display, font_px, rgba, scale).or_else(|| mathjax(tex, display, font_px, rgba));
+    let out = ratex(tex, display, font_px, rgba, scale).or_else(|| mathjax(tex, display, font_px, rgba, scale));
     if let Ok(mut c) = cache().lock() {
         // decoded images are raw RGBA, much bigger than the PNG bytes this cache used to hold:
         // bound it so a whole-vault browsing session can't grow it without limit
@@ -101,16 +86,18 @@ fn ratex(tex: &str, display: bool, font_px: f32, rgba: Rgba, scale: f32) -> Opti
     let width = (list.width as f32 * font_px + 2.0 * pad).ceil();
     let height = ((list.height + list.depth) as f32 * font_px + 2.0 * pad).ceil();
     let baseline = pad + list.height as f32 * font_px;
-    // Decode now and hand GPUI a RenderImage: an `Arc<Image>` is decoded asynchronously, so a
-    // freshly rendered formula would paint nothing for a frame (the flicker while typing).
     let img = image::load_from_memory_with_format(&png, image::ImageFormat::Png).ok()?.into_rgba8();
     let (w, h) = img.dimensions();
-    let mut buf = img.into_raw();
-    for px in buf.chunks_exact_mut(4) {
-        px.swap(0, 2); // RGBA -> BGRA, what RenderImage expects
+    Some(MathImage { image: render_image(w, h, img.into_raw())?, width, height, baseline })
+}
+
+/// Straight-alpha RGBA pixels -> a decoded GPUI image (BGRA, like GPUI's own PNG decoding).
+fn render_image(w: u32, h: u32, mut rgba: Vec<u8>) -> Option<Arc<RenderImage>> {
+    for px in rgba.chunks_exact_mut(4) {
+        px.swap(0, 2);
     }
-    let frame = image::Frame::new(image::RgbaImage::from_raw(w, h, buf)?);
-    Some(MathImage { image: MathImg::Render(Arc::new(RenderImage::new(vec![frame]))), width, height, baseline })
+    let frame = image::Frame::new(image::RgbaImage::from_raw(w, h, rgba)?);
+    Some(Arc::new(RenderImage::new(vec![frame])))
 }
 
 // ---- MathJax fallback (QuickJS worker thread, created on first use) -----------------
@@ -164,7 +151,7 @@ fn replace_attr(svg: &str, name: &str, value: &str) -> String {
     format!("{}{}{}", &svg[..start], value, &svg[start + end..])
 }
 
-fn mathjax(tex: &str, display: bool, font_px: f32, rgba: Rgba) -> Option<MathImage> {
+fn mathjax(tex: &str, display: bool, font_px: f32, rgba: Rgba, scale: f32) -> Option<MathImage> {
     let svg = mathjax_svg(tex, display)?;
     let ex = font_px * 0.442;
     let w = (svg_attr(&svg, "width")?.strip_suffix("ex")?.parse::<f32>().ok()? * ex).ceil().max(1.0);
@@ -176,7 +163,17 @@ fn mathjax(tex: &str, display: bool, font_px: f32, rgba: Rgba) -> Option<MathIma
         .unwrap_or(0.0);
     let hex = format!("#{:02x}{:02x}{:02x}", (rgba.r * 255.0) as u8, (rgba.g * 255.0) as u8, (rgba.b * 255.0) as u8);
     let svg = replace_attr(&replace_attr(&svg, "width", &format!("{w:.1}")), "height", &format!("{h:.1}")).replace("currentColor", &hex);
-    Some(MathImage { image: MathImg::Image(Arc::new(Image::from_bytes(ImageFormat::Svg, svg.into_bytes()))), width: w, height: h, baseline: h + va * ex })
+    // rasterised here at device scale, like RaTeX's output (MathJax's SVG is all paths)
+    let tree = resvg::usvg::Tree::from_str(&svg, &resvg::usvg::Options::default()).ok()?;
+    let s = scale.max(1.0);
+    let mut pix = resvg::tiny_skia::Pixmap::new((w * s).ceil() as u32, (h * s).ceil() as u32)?;
+    resvg::render(&tree, resvg::tiny_skia::Transform::from_scale(s, s), &mut pix.as_mut());
+    let rgba = pix.pixels().iter().flat_map(|p| {
+        let c = p.demultiply();
+        [c.red(), c.green(), c.blue(), c.alpha()]
+    });
+    let image = render_image(pix.width(), pix.height(), rgba.collect())?;
+    Some(MathImage { image, width: w, height: h, baseline: h + va * ex })
 }
 
 #[cfg(test)]
@@ -189,17 +186,18 @@ mod tests {
         let a = render("\\frac{a}{b}", false, 16.0, hsla(0., 0., 0., 1.), 1.0).expect("render");
         assert!(a.width > 5.0 && a.height > 10.0 && a.baseline > 0.0 && a.baseline < a.height);
         let b = render("\\frac{a}{b}", false, 16.0, hsla(0., 0., 0., 1.), 1.0).unwrap();
-        match (&a.image, &b.image) {
-            (MathImg::Render(x), MathImg::Render(y)) => assert!(Arc::ptr_eq(x, y)),
-            _ => panic!("cache hit returned a different image"),
-        }
+        assert!(Arc::ptr_eq(&a.image, &b.image));
     }
 
     #[test]
     fn corpus_failures_are_covered() {
         // the constructs RaTeX rejects in the corpus (synthetic, not from notes)
         for (tex, d) in [("x \\textemdash y", false), ("2^\\sqrt{t}", false), ("\\text{N\\\\A}", true)] {
-            assert!(render(tex, d, 16.0, hsla(0., 0., 0., 1.), 1.0).is_some(), "{tex}");
+            let m = render(tex, d, 16.0, hsla(0., 0., 0., 1.), 1.0);
+            let m = m.unwrap_or_else(|| panic!("{tex}"));
+            // a real raster with ink in it (the MathJax fallback is rasterised here too)
+            let frame = m.image.as_bytes(0).expect("one frame");
+            assert!(frame.chunks_exact(4).any(|p| p[3] > 0), "{tex}: empty image");
         }
     }
 }

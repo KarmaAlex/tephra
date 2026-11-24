@@ -119,6 +119,10 @@ pub struct Editor {
     pub(crate) geometry: HashMap<u64, LeafGeometry>,
     /// Remembered x for vertical motion.
     goal_x: Option<Pixels>,
+    /// The head offset when it sits at the end of a soft-wrapped row rather than the start of
+    /// the next (`CaretAffinity::Upstream`): set by clicks and Up/Down, cleared by every other
+    /// selection change or edit. Only used while the head is still at this offset.
+    pub(crate) upstream_head: Option<usize>,
     /// IME composition range (byte offsets).
     marked: Option<Range<usize>>,
     /// Scroll the caret into view on the next frame.
@@ -195,6 +199,7 @@ impl Editor {
             extensions: crate::atoms::extensions(),
             geometry: HashMap::new(),
             goal_x: None,
+            upstream_head: None,
             marked: None,
             autoscroll: false,
             dragging: false,
@@ -345,6 +350,7 @@ impl Editor {
         }
         api::apply_edit(&mut self.doc, &mut self.tabstops, range, text, kind);
         self.goal_x = None;
+        self.upstream_head = None;
         self.autoscroll = true;
         self.schedule_save(cx);
         cx.notify();
@@ -356,6 +362,7 @@ impl Editor {
         if !keep_goal {
             self.goal_x = None;
         }
+        self.upstream_head = None;
         self.marked = None;
         self.autoscroll = true;
         cx.notify();

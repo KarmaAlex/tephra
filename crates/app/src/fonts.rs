@@ -17,30 +17,30 @@ use gpui_kit::*;
 
 /// IBM Plex Sans — UI and editor text (sans). All weights the app uses: 400/500/600/700
 /// plus italics.
-const SANS: &[Cow<'static, [u8]>] = &[
-    Cow::Borrowed(include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf").as_slice()),
-    Cow::Borrowed(include_bytes!("../assets/fonts/IBMPlexSans-Italic.ttf").as_slice()),
-    Cow::Borrowed(include_bytes!("../assets/fonts/IBMPlexSans-Medium.ttf").as_slice()),
-    Cow::Borrowed(include_bytes!("../assets/fonts/IBMPlexSans-MediumItalic.ttf").as_slice()),
-    Cow::Borrowed(include_bytes!("../assets/fonts/IBMPlexSans-SemiBold.ttf").as_slice()),
-    Cow::Borrowed(include_bytes!("../assets/fonts/IBMPlexSans-SemiBoldItalic.ttf").as_slice()),
-    Cow::Borrowed(include_bytes!("../assets/fonts/IBMPlexSans-Bold.ttf").as_slice()),
-    Cow::Borrowed(include_bytes!("../assets/fonts/IBMPlexSans-BoldItalic.ttf").as_slice()),
+const SANS: &[&[u8]] = &[
+    include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf"),
+    include_bytes!("../assets/fonts/IBMPlexSans-Italic.ttf"),
+    include_bytes!("../assets/fonts/IBMPlexSans-Medium.ttf"),
+    include_bytes!("../assets/fonts/IBMPlexSans-MediumItalic.ttf"),
+    include_bytes!("../assets/fonts/IBMPlexSans-SemiBold.ttf"),
+    include_bytes!("../assets/fonts/IBMPlexSans-SemiBoldItalic.ttf"),
+    include_bytes!("../assets/fonts/IBMPlexSans-Bold.ttf"),
+    include_bytes!("../assets/fonts/IBMPlexSans-BoldItalic.ttf"),
 ];
 
 /// DejaVu Sans Mono — code blocks and other monospace text (gpui-component's Linux default).
-const MONO: &[Cow<'static, [u8]>] = &[
-    Cow::Borrowed(include_bytes!("../assets/fonts/DejaVuSansMono.ttf").as_slice()),
-    Cow::Borrowed(include_bytes!("../assets/fonts/DejaVuSansMono-Bold.ttf").as_slice()),
-    Cow::Borrowed(include_bytes!("../assets/fonts/DejaVuSansMono-Oblique.ttf").as_slice()),
-    Cow::Borrowed(include_bytes!("../assets/fonts/DejaVuSansMono-BoldOblique.ttf").as_slice()),
+const MONO: &[&[u8]] = &[
+    include_bytes!("../assets/fonts/DejaVuSansMono.ttf"),
+    include_bytes!("../assets/fonts/DejaVuSansMono-Bold.ttf"),
+    include_bytes!("../assets/fonts/DejaVuSansMono-Oblique.ttf"),
+    include_bytes!("../assets/fonts/DejaVuSansMono-BoldOblique.ttf"),
 ];
 
 /// DejaVu Sans — glyph fallback for symbols missing from the families above (GPUI's
 /// fallback stack ends in "Noto Sans" / "DejaVu Sans" on Linux).
-const FALLBACK: &[Cow<'static, [u8]>] = &[
-    Cow::Borrowed(include_bytes!("../assets/fonts/DejaVuSans.ttf").as_slice()),
-    Cow::Borrowed(include_bytes!("../assets/fonts/DejaVuSans-Bold.ttf").as_slice()),
+const FALLBACK: &[&[u8]] = &[
+    include_bytes!("../assets/fonts/DejaVuSans.ttf"),
+    include_bytes!("../assets/fonts/DejaVuSans-Bold.ttf"),
 ];
 
 /// The family names the theme is set to, after the embedded fonts are registered.
@@ -51,12 +51,15 @@ pub const MONO_FAMILY: &str = "DejaVu Sans Mono";
 /// `gpui_kit::init` (whose mono-font probe only replaces the *default* family, so an
 /// explicit one set here is left alone).
 pub fn load(cx: &mut App) {
-    let mut fonts = Vec::new();
-    fonts.extend_from_slice(SANS);
-    fonts.extend_from_slice(MONO);
-    fonts.extend_from_slice(FALLBACK);
+    let fonts = files().map(Cow::Borrowed).collect();
     cx.text_system().add_fonts(fonts).expect("embedded fonts are valid");
     let theme = cx.global_mut::<gpui_kit::component::theme::Theme>();
     theme.font_family = SANS_FAMILY.into();
     theme.mono_font_family = MONO_FAMILY.into();
+}
+
+/// Every embedded font file (also handed to Typst, so PDF export finds the same families on a
+/// machine that doesn't have them installed).
+pub fn files() -> impl Iterator<Item = &'static [u8]> {
+    SANS.iter().chain(MONO).chain(FALLBACK).copied()
 }

@@ -68,7 +68,10 @@ impl Element for EditorElement {
     fn prepaint(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, _: Bounds<Pixels>, child: &mut AnyElement, window: &mut Window, cx: &mut App) -> Option<Bounds<Pixels>> {
         let prepaint_start = std::time::Instant::now();
         let decorations = std::mem::take(&mut self.decorations);
-        let (_, geometry) = collect_leaf_geometry(decorations, || child.prepaint(window, cx));
+        let (_, mut geometry) = collect_leaf_geometry(decorations, || child.prepaint(window, cx));
+        // nested Markdown renders (plugin blocks) report their read-only leaves too: keep only
+        // the editor's own, so hit-testing and caret placement never land on nested text
+        geometry.retain(|k, _| *k < super::projection::NESTED_KEY_BASE);
         let scroll = self.scroll.clone();
         self.editor.update(cx, |e, _| {
             e.perf.prepaint_start = Some(prepaint_start);

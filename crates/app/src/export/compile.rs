@@ -38,12 +38,19 @@ pub struct Output {
     pub ms: (f64, f64, f64),
 }
 
-/// Fonts: Typst's embedded ones plus the system's, scanned once (~300 ms the first time).
+/// Fonts: Typst's embedded ones, the app's (the UI families, see `crate::fonts`), plus the
+/// system's, scanned once (~300 ms the first time).
 fn fonts() -> &'static FontStore {
     static F: OnceLock<FontStore> = OnceLock::new();
     F.get_or_init(|| {
         let mut f = FontStore::new();
         f.extend(typst_kit::fonts::embedded());
+        f.extend(crate::fonts::files().flat_map(|data| {
+            Font::iter(Bytes::new(data)).map(|font| {
+                let info = font.info().clone();
+                (font, info)
+            })
+        }));
         f.extend(typst_kit::fonts::system());
         f
     })
