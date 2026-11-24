@@ -156,6 +156,10 @@ pub struct Editor {
     /// Hover preview of a link (target, mouse position, rendered snippet source + numbers).
     hover: Option<HoverPreview>,
     hover_pending: Option<String>,
+    /// Plugin caret popup (math preview) for (doc version, caret, plugin generation).
+    caret_popup: ((u64, usize, u64), Option<crate::plugins::CaretPopup>),
+    /// The caret popup was drawn in the last frame (UI tests).
+    caret_popup_drawn: bool,
     /// Link suggestions after `[[` (see `assist`).
     pub(crate) suggest: Option<SuggestState>,
     /// `[[` position whose suggestions were dismissed with Escape.
@@ -219,6 +223,8 @@ impl Editor {
             text_rc: (u64::MAX, Rc::from("")),
             hover: None,
             hover_pending: None,
+            caret_popup: ((u64::MAX, 0, 0), None),
+            caret_popup_drawn: false,
             suggest: None,
             suggest_dismissed: None,
             suggest_key: (u64::MAX, 0),
@@ -865,6 +871,60 @@ impl Editor {
         Some(preview::card(md, &h.snippet, h.numbers.clone(), h.at, window, cx))
     }
 
+    /// The plugin popup that follows the caret (the inline math preview), if any: asked again
+    /// only when the text, the caret or the plugins change; drawn while the editor has focus.
+    fn render_caret_popup(&mut self, md: &render::MarkdownRenderer, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.mode == ViewMode::Reading || self.plain || !self.focus.is_focused(window) {
+            return None;
+        }
+        let head = self.doc.selection().head;
+        let host = cx.try_global::<PluginHost>()?;
+        let key = (self.doc.version(), head, host.generation);
+        if self.caret_popup.0 != key {
+            let providers: Vec<_> = host.reg.caret_popups.iter().map(|(_, p)| p.clone()).collect();
+            let found = if providers.is_empty() {
+                None
+            } else {
+                if self.text_rc.0 != self.doc.version() {
+                    self.text_rc = (self.doc.version(), self.doc.text().into());
+                }
+                let text = self.text_rc.1.clone();
+                providers.iter().find_map(|p| p.popup(&text, head))
+            };
+            self.caret_popup = (key, found);
+        }
+        let p = self.caret_popup.1.clone()?;
+        // geometry of the last frame: the formula's start (x) and the caret's line (y)
+        let start = self.caret_bounds(p.anchor.start)?;
+        let caret = self.caret_bounds(head).unwrap_or(start);
+        let theme = cx.theme().clone();
+        let body = md.render(&p.markdown, window, cx);
+        let card = div()
+            .id("caret-popup")
+            .max_w(crate::ui::r(640.))
+            .px_3()
+            .py_1()
+            .bg(theme.popover)
+            .text_color(theme.popover_foreground)
+            .border_1()
+            .border_color(theme.border)
+            .rounded(px(6.))
+            .shadow_md()
+            .child(body);
+        // attached to the formula's lines (start to caret), flipped to the other side if it
+        // doesn't fit in the window
+        let top = start.top().min(caret.top());
+        let target = Bounds::from_corners(point(start.left(), top), point(start.left() + px(1.), start.bottom().max(caret.bottom())));
+        let gap = px(4.);
+        let (anchor, corner, dy) = if p.above { (Anchor::BottomLeft, Anchor::TopLeft, -gap) } else { (Anchor::TopLeft, Anchor::BottomLeft, gap) };
+        Some(deferred(anchored().anchor(anchor).attach(target, corner).offset(point(px(0.), dy)).child(card)).with_priority(1).into_any_element())
+    }
+
+    /// For UI tests: the Markdown of the caret popup drawn in the last frame.
+    pub(crate) fn debug_caret_popup(&self) -> Option<String> {
+        self.caret_popup.1.as_ref().filter(|_| self.caret_popup_drawn).map(|p| p.markdown.clone())
+    }
+
     /// Callout labels from plugins (numbering), recomputed when the text or plugins change.
     fn callout_numbers(&mut self, cx: &App) -> Rc<HashMap<usize, String>> {
         let host = cx.try_global::<PluginHost>();
@@ -1229,6 +1289,8 @@ impl Render for Editor {
         let content = div().w_full().max_w(crate::ui::r(760.)).mx_auto().px_8().py_6().flex().flex_col().children(children);
         let suggest_popup = self.render_suggest(cx);
         let hover_popup = self.render_hover(&md, window, cx);
+        let caret_popup = if hover_popup.is_some() || suggest_popup.is_some() { None } else { self.render_caret_popup(&md, window, cx) };
+        self.caret_popup_drawn = caret_popup.is_some();
         let editor = cx.entity();
         let menu_editor = editor.downgrade();
         let status = self.status.clone();
@@ -1260,6 +1322,7 @@ impl Render for Editor {
             )
             .children(suggest_popup)
             .children(hover_popup)
+            .children(caret_popup)
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(|e, ev: &MouseDownEvent, window, cx| {

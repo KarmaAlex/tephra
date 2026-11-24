@@ -433,3 +433,21 @@ pub fn auto_delete_dollar(e: &mut EditorApi, s: &Settings, text: &str) -> bool {
     e.replace(p - 1..p + 1, "", EditKind::Delete);
     true
 }
+
+/// Latex Suite's math preview, for inline formulas: the `$…$` the caret `head` is in, as
+/// Markdown that renders on its own (`\|` in a table cell read as `|`, as the editor renders
+/// it), and the formula's source range. None outside inline math or for an empty formula
+/// (math blocks show their own preview). Inline math never spans lines.
+pub fn inline_math_preview(text: &str, head: usize) -> Option<(String, Range<usize>)> {
+    use obsidilight_core::markdown::{parse_blocks, BlockKind};
+    let m = crate::editor::api::math_at(text, head)?;
+    if m.display {
+        return None;
+    }
+    let mut tex = text[m.inner.clone()].to_string();
+    if parse_blocks(text).iter().any(|b| b.kind == BlockKind::Table && b.range.start <= m.outer.start && m.outer.end <= b.range.end) {
+        tex = tex.replace("\\|", "|");
+    }
+    let tex = tex.trim();
+    (!tex.is_empty()).then(|| (format!("${tex}$"), m.outer))
+}

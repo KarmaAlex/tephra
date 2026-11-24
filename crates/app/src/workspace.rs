@@ -20,6 +20,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use obsidilight_core::index::{is_note, is_sync_conflict};
 use obsidilight_core::links::link_path;
+use obsidilight_core::sort::{sort_files, sort_folders, FileTimes, SortOrder};
 
 use crate::editor::{Editor, EditorEvent};
 use crate::file_drag::{self, TreeDrag};
@@ -176,6 +177,10 @@ pub struct Workspace {
     pub recent: Vec<String>,
     /// Files shown in the tree after the last rebuild (for UI tests).
     pub tree_files: Vec<String>,
+    /// The file list's order (saved as `fileSortOrder` in the app settings).
+    pub sort: SortOrder,
+    /// Every row of the tree in order, folders as `path/` (for UI tests).
+    pub tree_order: Vec<String>,
     /// While something is dragged: the file-list rows drawn last frame (bounds, tree id).
     drag_rows: Rc<RefCell<Vec<(Bounds<Pixels>, String)>>>,
     /// The folder a drop would move into ("" = the vault root), drawn highlighted.
@@ -232,6 +237,8 @@ impl Workspace {
             view_args: HashMap::new(),
             recent: Vec::new(),
             tree_files: Vec::new(),
+            sort: initial_sort_order(&root, cx),
+            tree_order: Vec::new(),
             drag_rows: Rc::default(),
             drop_dest: None,
             drag_hover: None,
@@ -603,27 +610,66 @@ impl Workspace {
             }
             d.files.push(f.clone());
         }
-        fn items(d: &Dir, prefix: &str, expanded: &HashSet<String>) -> Vec<TreeItem> {
-            // Obsidian's default order: folders first, then files, A to Z ignoring case
-            let mut dirs: Vec<_> = d.dirs.iter().collect();
-            dirs.sort_by_key(|(n, _)| n.to_lowercase());
+        /// The name a file is shown (and sorted) by: notes without `.md`.
+        fn label(f: &str) -> &str {
+            let name = f.rsplit('/').next().unwrap_or(f);
+            if is_note(name) { &name[..name.len() - 3] } else { name }
+        }
+        // folders first, then files, in the chosen order (Obsidian's file explorer)
+        fn items(d: &Dir, prefix: &str, expanded: &HashSet<String>, order: SortOrder, vroot: &Path, shown: &mut Vec<String>) -> Vec<TreeItem> {
+            let mut names: Vec<String> = d.dirs.keys().cloned().collect();
+            sort_folders(&mut names, order);
             let mut files = d.files.clone();
-            files.sort_by_key(|f| f.rsplit('/').next().unwrap_or(f).to_lowercase());
+            sort_files(&mut files, order, |f| label(f), |f| FileTimes::of(&vroot.join(f)));
             let mut out = Vec::new();
-            for (name, sub) in dirs {
+            for name in names {
+                let sub = &d.dirs[&name];
                 let id = if prefix.is_empty() { name.clone() } else { format!("{prefix}/{name}") };
-                out.push(TreeItem::new(format!("dir:{id}"), name.clone()).expanded(expanded.contains(&format!("dir:{id}"))).children(items(sub, &id, expanded)));
+                shown.push(format!("{id}/"));
+                out.push(TreeItem::new(format!("dir:{id}"), name.clone()).expanded(expanded.contains(&format!("dir:{id}"))).children(items(sub, &id, expanded, order, vroot, shown)));
             }
             for f in files {
-                let name = f.rsplit('/').next().unwrap_or(&f);
-                let label = if is_note(name) { name[..name.len() - 3].to_string() } else { name.to_string() };
-                out.push(TreeItem::new(f.clone(), label));
+                shown.push(f.clone());
+                out.push(TreeItem::new(f.clone(), label(&f).to_string()));
             }
             out
         }
-        let list = items(&root, "", &self.expanded);
+        let mut shown = Vec::new();
+        let list = items(&root, "", &self.expanded, self.sort, &vroot, &mut shown);
+        self.tree_order = shown;
         self.tree.update(cx, |t, cx| t.set_items(list, cx));
         self.select_active_in_tree(cx);
+    }
+
+    /// The "Change sort order" button of the file list, with Obsidian's six orders.
+    fn render_sort_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
+        let weak = cx.entity().downgrade();
+        let current = self.sort;
+        let button = crate::ui::icon_button("sort-files", gpui_kit::assets::IconName::ArrowUpNarrowWide).tooltip(format!("Change sort order ({})", current.label()));
+        div()
+            .relative()
+            .child(button.dropdown_menu(move |mut menu, _, _| {
+                for (i, o) in SortOrder::ALL.into_iter().enumerate() {
+                    if i > 0 && i % 2 == 0 {
+                        menu = menu.separator();
+                    }
+                    let weak = weak.clone();
+                    menu = menu.item(PopupMenuItem::new(o.label()).checked(o == current).on_click(move |_, _, cx| {
+                        let _ = weak.update(cx, |ws, cx| ws.set_sort(o, cx));
+                    }));
+                }
+                menu
+            }))
+            .children(crate::script::probe(|| "sort-files".into(), cx))
+    }
+
+    /// Changes the file list's order and remembers it.
+    pub(crate) fn set_sort(&mut self, order: SortOrder, cx: &mut Context<Self>) {
+        self.sort = order;
+        crate::app_settings::AppSettings::set(cx, "fileSortOrder", serde_json::Value::from(order.id()));
+        self.rebuild_tree(cx);
+        cx.notify();
     }
 
     /// Expands or collapses a folder row (`dir:<path>`). The tree's own click toggle only
@@ -998,6 +1044,9 @@ impl Workspace {
                 let rel = self.rel(p);
                 let old = self.vault.borrow().index.text(&rel).map(String::from);
                 self.vault.borrow_mut().index.refresh(&rel);
+                if self.sort.uses_times() {
+                    self.rebuild_tree(cx); // the note's modified time moved it
+                }
                 let new = editor.read(cx).doc.text();
                 for l in Self::listeners(cx) {
                     l.modified(&rel, old.as_deref(), &new, false, cx);
@@ -1527,7 +1576,7 @@ impl Workspace {
             }
         }
         let after = self.vault.borrow().index.files().count();
-        if before != after || rels.iter().any(|r| !root.join(r).exists()) {
+        if before != after || self.sort.uses_times() || rels.iter().any(|r| !root.join(r).exists()) {
             self.rebuild_tree(cx);
         }
         // links may now resolve differently: repaint editors
@@ -1696,9 +1745,14 @@ impl Workspace {
         let drop_bg = cx.theme().primary.opacity(0.12);
         v_flex()
             .size_full()
-            .child(h_flex().px_3().py_2().justify_between().child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("Files")).child(
-                crate::ui::icon_button("new-note", IconName::Plus).tooltip("New note (Ctrl+N)").on_click(cx.listener(|ws, _, w, cx| ws.new_note_in("", w, cx))),
-            ))
+            .child(
+                h_flex().px_3().py_2().justify_between().child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("Files")).child(
+                    h_flex()
+                        .gap_0p5()
+                        .child(crate::ui::icon_button("new-note", IconName::Plus).tooltip("New note (Ctrl+N)").on_click(cx.listener(|ws, _, w, cx| ws.new_note_in("", w, cx))))
+                        .child(self.render_sort_button(cx)),
+                ),
+            )
             .child({
                 let root_target = self.menu_target.clone();
                 // right-click on empty space (below the items, or the strip at the bottom):
@@ -2045,4 +2099,27 @@ impl Render for TreeChip {
             .child(self.label.clone());
         div().pl(self.offset.x + px(14.)).pt(self.offset.y + px(6.)).child(chip)
     }
+}
+
+/// The file list's order: ours (`fileSortOrder` in the app settings), else the one Obsidian's
+/// file explorer uses in this vault (`.obsidian/workspace.json`, read only), else A to Z.
+fn initial_sort_order(root: &Path, cx: &App) -> SortOrder {
+    if let Some(o) = crate::app_settings::AppSettings::value(cx, "fileSortOrder").and_then(|v| v.as_str().and_then(SortOrder::from_id)) {
+        return o;
+    }
+    fn find(v: &serde_json::Value) -> Option<SortOrder> {
+        match v {
+            serde_json::Value::Object(m) => {
+                if m.get("type").and_then(|t| t.as_str()) == Some("file-explorer") {
+                    if let Some(o) = m.get("state").and_then(|s| s.get("state").or(Some(s))).and_then(|s| s.get("sortOrder")).and_then(|o| o.as_str()).and_then(SortOrder::from_id) {
+                        return Some(o);
+                    }
+                }
+                m.values().find_map(find)
+            }
+            serde_json::Value::Array(a) => a.iter().find_map(find),
+            _ => None,
+        }
+    }
+    std::fs::read_to_string(root.join(".obsidian/workspace.json")).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()).and_then(|v| find(&v)).unwrap_or_default()
 }

@@ -8,6 +8,10 @@
 //!   scroll <dy>               state                   shot <path.png>     quit
 //!   resize <w> <h>             ws-root (the open vault, or none)
 //!   bounds <key>              where a probed element is drawn (see [`probe`])
+//!   popup                      the caret popup (inline math preview) of the active editor
+//!   plugin-set <id> <key> <json>   change a plugin setting (the plugin reloads)
+//!   ws-sort <order>            file list order (Obsidian's ids: alphabetical, byModifiedTime…)
+//!   ws-order                   the file list's rows in display order
 //!   clickk <key> [dx] [dy]     click a probed element's centre (plus an offset)
 //!   rclickk <key> [dx] [dy]    right-click it (context menus)
 //!   fonts                      theme font families + embedded-family resolution
@@ -382,6 +386,33 @@ pub fn start(editor: Option<Entity<Editor>>, ws: Option<WeakEntity<crate::worksp
                         println!("NUMBERS {:?}", n.into_iter().map(|(_, l)| l).collect::<Vec<_>>());
                         println!("HOVER {:?}", e.debug_hover());
                     });
+                }
+                "popup" => {
+                    // popup: the caret popup (inline math preview) as of the last frame
+                    let Some(active) = ws.update(cx, |ws, _| ws.active_editor()).ok().flatten().or_else(|| weak.upgrade()) else {
+                        println!("NO-EDITOR {cmd}");
+                        continue;
+                    };
+                    let _ = active.update(cx, |e, _| println!("POPUP {:?}", e.debug_caret_popup()));
+                }
+                "plugin-set" => {
+                    // plugin-set <id> <key> <json value>: change a plugin setting (reloads it)
+                    let mut it = rest.splitn(3, ' ');
+                    let (id, key, val) = (it.next().unwrap_or(""), it.next().unwrap_or(""), it.next().unwrap_or("null"));
+                    let val: serde_json::Value = serde_json::from_str(val).unwrap_or(serde_json::Value::Null);
+                    cx.update(|cx| crate::plugins::PluginHost::set_setting(cx, id, key, val));
+                }
+                "ws-sort" => {
+                    // ws-sort <order id>: change the file list's order (as the sort menu does)
+                    if let Some(o) = obsidilight_core::sort::SortOrder::from_id(rest.trim()) {
+                        let _ = ws.update(cx, |ws, cx| ws.set_sort(o, cx));
+                    } else {
+                        println!("BAD-SORT {rest}");
+                    }
+                }
+                "ws-order" => {
+                    // ws-order: every file-list row in display order (folders end with `/`)
+                    let _ = ws.update(cx, |ws, _| println!("ORDER {} {:?}", ws.sort.id(), ws.tree_order));
                 }
                 "ws-right" => {
                     let _ = ws.update(cx, |ws, cx| ws.show_right_sidebar(true, cx));

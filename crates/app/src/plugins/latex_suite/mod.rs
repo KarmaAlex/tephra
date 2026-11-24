@@ -1,6 +1,7 @@
 //! LaTeX snippets (replaces Latex Suite 1.14, MIT — see `NOTICE` in this folder): snippets from
 //! the vault's snippets file (Latex Suite syntax, function snippets run in QuickJS), tabstops,
-//! tabout, auto-fraction, matrix shortcuts, auto-enlarge brackets, auto-delete `$`.
+//! tabout, auto-fraction, matrix shortcuts, auto-enlarge brackets, auto-delete `$`, and the
+//! math preview for inline formulas.
 //!
 //! Default settings come from `.obsidian/plugins/obsidian-latex-suite/data.json` (read only);
 //! changes are saved in `.obsidilight/plugins/latex-suite.json`.
@@ -358,6 +359,20 @@ impl Engine {
 
 struct Hook(Engine);
 
+/// The inline math preview (Latex Suite's `mathPreviewEnabled`).
+struct MathPreview {
+    above: bool,
+}
+
+impl CaretPopupProvider for MathPreview {
+    fn popup(&self, text: &str, head: usize) -> Option<CaretPopup> {
+        let (markdown, anchor) = features::inline_math_preview(text, head)?;
+        // the formula is about to be edited: unfinished TeX falls back to MathJax
+        crate::math::warm_mathjax();
+        Some(CaretPopup { markdown, anchor, above: self.above })
+    }
+}
+
 impl EditorHook for Hook {
     fn on_char(&self, e: &mut EditorApi, ch: &str) -> bool {
         self.0.on_char(e, ch)
@@ -398,6 +413,8 @@ impl LatexSuite {
             toggle("taboutExitEquationOnlyOnEOL", "Leave equations only at the end", "Tabout leaves an equation only from its end.", true),
             toggle("autoEnlargeBrackets", "Auto-enlarge brackets", "Brackets around \\sum, \\frac… become \\left( \\right).", true),
             toggle("autoEnlargeBracketsSpace", "Space inside enlarged brackets", "", true),
+            toggle("mathPreviewEnabled", "Inline math preview", "While the caret is in an inline formula ($…$), show it rendered in a popup (math blocks always show theirs under the source).", true),
+            toggle("mathPreviewPositionIsAbove", "Preview above the formula", "Off: below the line.", true),
             text("wordDelimiters", "Word delimiters", "Characters that delimit words for snippets with the w option.", "., +-\\n\t:;!?\\/{}[]()=~$'\"|`<>*^%#@&"),
             text("matrixShortcutsEnvNames", "Matrix environments", "Comma-separated.", "pmatrix, cases, align, gather, bmatrix, Bmatrix, vmatrix, Vmatrix, array, matrix, aligned"),
             text("taboutClosingSymbols", "Tabout closing symbols", "Comma-separated.", "), ], \\rbrack, \\}, \\rbrace, \\rangle, \\rvert, \\rVert, \\rfloor, \\rceil, \\urcorner, }"),
@@ -422,7 +439,7 @@ impl LatexSuite {
                 id: "latex-suite",
                 name: "LaTeX snippets",
                 version: "0.1.0",
-                description: "Latex Suite-compatible snippets, tabstops, tabout, auto-fraction, matrix shortcuts and auto-enlarged brackets.",
+                description: "Latex Suite-compatible snippets, tabstops, tabout, auto-fraction, matrix shortcuts, auto-enlarged brackets and the inline math preview.",
                 enabled_by_default: true,
                 settings: all,
                 code_languages: &[],
@@ -457,6 +474,10 @@ impl Plugin for LatexSuite {
             }),
         });
         reg.editor_hook(Rc::new(Hook(engine)));
+        let flag = |k: &str| settings.get(k).and_then(Value::as_bool).unwrap_or(true);
+        if flag("mathPreviewEnabled") {
+            reg.caret_popup(Rc::new(MathPreview { above: flag("mathPreviewPositionIsAbove") }));
+        }
     }
 }
 

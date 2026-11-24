@@ -215,3 +215,53 @@ fn inline_math_snippet_brackets_and_fractions() {
     assert_eq!(run(&e, "a |", "mk(sum 1/k<Tab>)/k<Tab>"), "a ${}\\frac{\\sum \\frac{1}{k}}{k}|{}$");
     assert_eq!(run(&e, "a |", "mk(sum 1/k<Tab>)/k<Tab><Tab>"), "a ${}\\frac{\\sum \\frac{1}{k}}{k}{}$|");
 }
+
+#[test]
+fn inline_math_preview_finds_the_formula_under_the_caret() {
+    use features::inline_math_preview as prev;
+    let t = "text $a+b$ more $$x$$ end\n";
+    let at = |s: &str| t.find(s).unwrap();
+    // inside, at either edge of the inner text
+    assert_eq!(prev(t, at("a+b")), Some(("$a+b$".to_string(), at("$a+b$")..at("$a+b$") + 5)));
+    assert_eq!(prev(t, at("+b")).map(|p| p.0), Some("$a+b$".into()));
+    assert_eq!(prev(t, at("$ more")).map(|p| p.0), Some("$a+b$".into()));
+    // outside math, before the opening `$`, and in inline display math
+    assert_eq!(prev(t, at("text")), None);
+    assert_eq!(prev(t, at("$a+b$")), None);
+    assert_eq!(prev(t, at("x$$")), None);
+    // math blocks have their own preview
+    let b = "$$\nx^2\n$$\n";
+    assert_eq!(prev(b, b.find("x^2").unwrap()), None);
+    // empty formulas: nothing to show
+    let e = "a $ $ b $$ c";
+    assert_eq!(prev(e, 3), None);
+}
+
+#[test]
+fn inline_math_preview_in_callouts_and_table_cells() {
+    use features::inline_math_preview as prev;
+    let c = "> [!thm] T\n> > where $a + b$ holds\n";
+    assert_eq!(prev(c, c.find("a +").unwrap()).map(|p| p.0), Some("$a + b$".into()));
+    let t = "| x | y |\n|---|---|\n| $\\|v\\|$ | 2 |\n";
+    assert_eq!(prev(t, t.find("v").unwrap()).map(|p| p.0), Some("$|v|$".into()));
+}
+
+#[test]
+fn math_preview_setting_registers_and_unregisters_the_popup() {
+    use crate::plugins::{Plugin as _, Registrar, Registry};
+    let home = std::env::var_os("HOME").unwrap_or_default();
+    for (on, want) in [(true, 1), (false, 0)] {
+        let mut ls = LatexSuite::new(&Path::new(&home).join("dev/vault-fixture"));
+        let mut m = fixture_settings();
+        m.insert("mathPreviewEnabled".into(), Value::Bool(on));
+        let mut reg = Registry::default();
+        ls.on_load(&m, &mut Registrar { plugin: "latex-suite", reg: &mut reg });
+        assert_eq!(reg.caret_popups.len(), want, "mathPreviewEnabled = {on}");
+        if on {
+            let p = reg.caret_popups[0].1.popup("x $y$", 3).expect("popup in inline math");
+            assert_eq!((p.markdown.as_str(), p.anchor.clone()), ("$y$", 2..5));
+        }
+        reg.remove_plugin("latex-suite");
+        assert_eq!(reg.count("latex-suite"), 0);
+    }
+}

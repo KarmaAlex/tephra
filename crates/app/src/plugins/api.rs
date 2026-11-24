@@ -202,6 +202,24 @@ pub trait TextDecorator {
     }
 }
 
+/// A small card drawn next to the caret (Latex Suite's math preview): `markdown` rendered with
+/// the note's renderer, placed at the start of `anchor` (document byte offsets), above or below
+/// the caret's line.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CaretPopup {
+    pub markdown: String,
+    pub anchor: Range<usize>,
+    pub above: bool,
+}
+
+/// Shows a popup that follows the caret while editing (live preview and source mode; never in
+/// reading view). Asked only when the text or the selection changes; the first provider (in
+/// load order) that answers wins.
+pub trait CaretPopupProvider {
+    /// `head` = the caret (the moving end of the selection).
+    fn popup(&self, text: &str, head: usize) -> Option<CaretPopup>;
+}
+
 /// An entry of the editor's right-click menu computed when it opens.
 #[derive(Clone)]
 pub struct MenuEntry {
@@ -481,6 +499,7 @@ pub struct Registry {
     pub toolbars: Vec<(PluginId, ToolbarSlot)>,
     pub hover_policies: Vec<(PluginId, Rc<dyn HoverPolicy>)>,
     pub tab_views: Vec<(PluginId, TabViewType)>,
+    pub caret_popups: Vec<(PluginId, Rc<dyn CaretPopupProvider>)>,
 }
 
 impl Registry {
@@ -501,6 +520,7 @@ impl Registry {
         self.toolbars.retain(|(p, _)| *p != id);
         self.hover_policies.retain(|(p, _)| *p != id);
         self.tab_views.retain(|(p, _)| *p != id);
+        self.caret_popups.retain(|(p, _)| *p != id);
     }
 
     /// How many registrations a plugin currently holds (tests: unload must leave zero).
@@ -521,6 +541,7 @@ impl Registry {
             + self.toolbars.iter().filter(|(p, _)| *p == id).count()
             + self.hover_policies.iter().filter(|(p, _)| *p == id).count()
             + self.tab_views.iter().filter(|(p, _)| *p == id).count()
+            + self.caret_popups.iter().filter(|(p, _)| *p == id).count()
     }
 
     /// Whether hovering `target` from `source` previews it.
@@ -600,5 +621,8 @@ impl Registrar<'_> {
     }
     pub fn hover_policy(&mut self, p: Rc<dyn HoverPolicy>) {
         self.reg.hover_policies.push((self.plugin, p));
+    }
+    pub fn caret_popup(&mut self, p: Rc<dyn CaretPopupProvider>) {
+        self.reg.caret_popups.push((self.plugin, p));
     }
 }

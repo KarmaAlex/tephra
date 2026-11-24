@@ -35,7 +35,18 @@ impl MarkdownPlugin for MathPlugin {
         let m = node.data::<MathAtom>()?;
         let font_px = f32::from(context.font_size()) * if m.display { 1.1 } else { 1.0 };
         let color = context.text_style().color;
-        match crate::math::render(&m.tex, m.display, font_px, color, window.scale_factor()) {
+        // a frame waits for the MathJax fallback this long at most (usual: 0.5–3 ms)
+        const BUDGET: std::time::Duration = std::time::Duration::from_millis(3);
+        let typeset = match crate::math::render_within(&m.tex, m.display, font_px, color, window.scale_factor(), Some(BUDGET)) {
+            crate::math::Typeset::Done(out) => out,
+            crate::math::Typeset::Pending => {
+                // still typesetting on its thread: the source, muted, until a later frame has it
+                window.request_animation_frame();
+                let src = if m.display { format!("$${}$$", m.tex) } else { format!("${}$", m.tex) };
+                return Some(InlineElement::new(div().text_color(cx.theme().muted_foreground).child(SharedString::from(src))));
+            }
+        };
+        match typeset {
             Some(img_) => {
                 let el = img(ImageSource::Render(img_.image.clone())).w(px(img_.width)).h(px(img_.height));
                 if m.display {
