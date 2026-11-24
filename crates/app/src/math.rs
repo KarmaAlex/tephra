@@ -5,12 +5,29 @@
 use std::collections::HashMap;
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
 
-use gpui_kit::{Hsla, Image, ImageFormat, Rgba};
+use gpui_kit::{Hsla, Image, ImageFormat, RenderImage, Rgba};
+
+/// The rasterised formula. `Render` is already decoded, so GPUI paints it in the same frame
+/// (an `Arc<Image>` is decoded asynchronously and would blink a frame when first shown).
+#[derive(Clone)]
+pub enum MathImg {
+    Render(Arc<RenderImage>),
+    Image(Arc<Image>),
+}
+
+impl MathImg {
+    pub fn into_source(self) -> gpui_kit::ImageSource {
+        match self {
+            MathImg::Render(r) => gpui_kit::ImageSource::Render(r),
+            MathImg::Image(i) => gpui_kit::ImageSource::Image(i),
+        }
+    }
+}
 
 /// A rendered formula, sized in logical pixels.
 #[derive(Clone)]
 pub struct MathImage {
-    pub image: Arc<Image>,
+    pub image: MathImg,
     pub width: f32,
     pub height: f32,
     /// Distance from the top to the baseline.
@@ -51,6 +68,11 @@ pub fn render(tex: &str, display: bool, font_px: f32, color: Hsla, scale: f32) -
     }
     let out = ratex(tex, display, font_px, rgba, scale).or_else(|| mathjax(tex, display, font_px, rgba));
     if let Ok(mut c) = cache().lock() {
+        // decoded images are raw RGBA, much bigger than the PNG bytes this cache used to hold:
+        // bound it so a whole-vault browsing session can't grow it without limit
+        if c.len() >= 1024 {
+            c.clear();
+        }
         c.insert(key, out.clone());
     }
     out
@@ -79,7 +101,16 @@ fn ratex(tex: &str, display: bool, font_px: f32, rgba: Rgba, scale: f32) -> Opti
     let width = (list.width as f32 * font_px + 2.0 * pad).ceil();
     let height = ((list.height + list.depth) as f32 * font_px + 2.0 * pad).ceil();
     let baseline = pad + list.height as f32 * font_px;
-    Some(MathImage { image: Arc::new(Image::from_bytes(ImageFormat::Png, png)), width, height, baseline })
+    // Decode now and hand GPUI a RenderImage: an `Arc<Image>` is decoded asynchronously, so a
+    // freshly rendered formula would paint nothing for a frame (the flicker while typing).
+    let img = image::load_from_memory_with_format(&png, image::ImageFormat::Png).ok()?.into_rgba8();
+    let (w, h) = img.dimensions();
+    let mut buf = img.into_raw();
+    for px in buf.chunks_exact_mut(4) {
+        px.swap(0, 2); // RGBA -> BGRA, what RenderImage expects
+    }
+    let frame = image::Frame::new(image::RgbaImage::from_raw(w, h, buf)?);
+    Some(MathImage { image: MathImg::Render(Arc::new(RenderImage::new(vec![frame]))), width, height, baseline })
 }
 
 // ---- MathJax fallback (QuickJS worker thread, created on first use) -----------------
@@ -145,7 +176,7 @@ fn mathjax(tex: &str, display: bool, font_px: f32, rgba: Rgba) -> Option<MathIma
         .unwrap_or(0.0);
     let hex = format!("#{:02x}{:02x}{:02x}", (rgba.r * 255.0) as u8, (rgba.g * 255.0) as u8, (rgba.b * 255.0) as u8);
     let svg = replace_attr(&replace_attr(&svg, "width", &format!("{w:.1}")), "height", &format!("{h:.1}")).replace("currentColor", &hex);
-    Some(MathImage { image: Arc::new(Image::from_bytes(ImageFormat::Svg, svg.into_bytes())), width: w, height: h, baseline: h + va * ex })
+    Some(MathImage { image: MathImg::Image(Arc::new(Image::from_bytes(ImageFormat::Svg, svg.into_bytes()))), width: w, height: h, baseline: h + va * ex })
 }
 
 #[cfg(test)]
@@ -158,7 +189,10 @@ mod tests {
         let a = render("\\frac{a}{b}", false, 16.0, hsla(0., 0., 0., 1.), 1.0).expect("render");
         assert!(a.width > 5.0 && a.height > 10.0 && a.baseline > 0.0 && a.baseline < a.height);
         let b = render("\\frac{a}{b}", false, 16.0, hsla(0., 0., 0., 1.), 1.0).unwrap();
-        assert!(Arc::ptr_eq(&a.image, &b.image));
+        match (&a.image, &b.image) {
+            (MathImg::Render(x), MathImg::Render(y)) => assert!(Arc::ptr_eq(x, y)),
+            _ => panic!("cache hit returned a different image"),
+        }
     }
 
     #[test]

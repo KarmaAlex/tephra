@@ -2,7 +2,7 @@
 
 use std::ops::Range;
 
-use gpui_kit::base::text::editor_host::Caret;
+use gpui_kit::base::text::editor_host::{Caret, LeafGeometry};
 use gpui_kit::*;
 use obsidilight_core::{EditKind, Selection};
 
@@ -14,6 +14,34 @@ pub enum Bias {
     Nearest,
     Down,
     Up,
+}
+
+/// Leaf byte index for a window point: the visual line whose box contains `p.y` (found by
+/// binary search over caret positions, which are non-decreasing in y), then the nearest
+/// caret on that line by x. Snapping y to the line first keeps a click past the right edge
+/// of a wrapped row on that row's end instead of the next row.
+fn index_at(g: &LeafGeometry, p: Point<Pixels>) -> usize {
+    let b = g.bounds();
+    let py = f32::from(p.y).clamp(f32::from(b.top()) + 1.0, f32::from(b.bottom()) - 1.0);
+    let len = g.len();
+    if len == 0 {
+        return 0;
+    }
+    let caret_y = |i: usize| f32::from(g.position_for_caret(Caret::new(i)).y);
+    let mut lo = 0;
+    let mut hi = len;
+    while lo < hi {
+        let mid = (lo + hi + 1) / 2;
+        if caret_y(mid) <= py {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    let line_top = caret_y(lo);
+    let lh = f32::from(g.line_height());
+    let y = if py < line_top + lh { line_top + lh * 0.5 } else { py };
+    g.index_for_position(point(p.x, px(y)))
 }
 
 impl Editor {
@@ -49,9 +77,7 @@ impl Editor {
         }
         let (_, _, key) = best?;
         let g = &self.geometry[&key];
-        let b = g.bounds();
-        let y = p.y.clamp(b.top() + px(1.), b.bottom() - px(1.));
-        let idx = g.index_for_position(point(p.x, y));
+        let idx = index_at(g, p);
         Some(self.proj.leaf(key)?.to_src(idx))
     }
 
@@ -59,18 +85,20 @@ impl Editor {
     /// both edges of a short link's text map outside the link once its markers are hidden).
     pub fn char_under(&self, p: Point<Pixels>) -> Option<usize> {
         let (key, g) = self.geometry.iter().find(|(_, g)| g.bounds().contains(&p))?;
-        let idx = g.index_for_position(p);
+        let idx = index_at(g, p);
         let caret = g.position_for_caret(Caret::new(idx));
         let before = p.x < caret.x;
         let off = self.proj.leaf(*key)?.src_of_char(idx, before)?;
         Some(self.doc.clamp(off))
     }
 
-    /// Caret rectangle for a document offset (window coordinates).
+    /// Caret rectangle for a document offset (window coordinates). At a soft wrap the caret
+    /// paints at the end of the upper line (`position_for_index`), so clicking past the end
+    /// of a line keeps the caret on that line instead of the next one.
     pub fn caret_bounds(&self, offset: usize) -> Option<Bounds<Pixels>> {
         let (key, idx) = self.proj.locate(offset)?;
         let g = self.geometry.get(&key)?;
-        let at = g.position_for_caret(Caret::new(idx));
+        let at = g.position_for_index(idx);
         Some(Bounds::new(at, size(px(2.), g.caret_height())))
     }
 
@@ -79,8 +107,19 @@ impl Editor {
         let s = self.doc.selection();
         let Some(caret) = self.caret_bounds(s.head) else { return };
         let x = *self.goal_x.get_or_insert(caret.left());
-        // half a line past the caret (the next visual line), or most of a viewport for page up/down
-        let step = if page { self.scroll.bounds().size.height.max(caret.size.height) * 0.9 } else { caret.size.height * 0.5 };
+        // half a visual line past the caret: the leaf's line height, not the caret's height
+        // (code/math lines are taller than their caret, and the old step stayed on the line)
+        let line_h = self
+            .proj
+            .locate(s.head)
+            .and_then(|(k, _)| self.geometry.get(&k))
+            .map(|g| f32::from(g.line_height()))
+            .unwrap_or(f32::from(caret.size.height));
+        let step = if page {
+            self.scroll.bounds().size.height.max(caret.size.height) * 0.9
+        } else {
+            px(line_h.max(f32::from(caret.size.height)) * 0.5)
+        };
         let y = if dir > 0 { caret.bottom() + step } else { caret.top() - step };
         let bias = if dir > 0 { Bias::Down } else { Bias::Up };
         let head = match self.hit_test(point(x, y), bias) {
@@ -115,7 +154,6 @@ pub fn on_mouse_down(e: &mut Editor, ev: &MouseDownEvent, window: &mut Window, c
     e.dragging = true;
     e.set_selection(sel, false, cx);
 }
-
 pub fn on_mouse_move(e: &mut Editor, ev: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Editor>) {
     if !e.dragging || ev.pressed_button != Some(MouseButton::Left) {
         e.on_hover(ev.position, ev.modifiers.secondary(cx), cx);
