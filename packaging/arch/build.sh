@@ -8,22 +8,21 @@ VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 BIN=${BIN:-target/release/obsidilight}
 [[ -x $BIN ]] || { echo "missing $BIN -- run: make build" >&2; exit 1; }
 W=target/pkg/arch
-rm -rf "$W" && mkdir -p "$W/obsidilight-$VERSION" dist
+rm -rf "$W" && mkdir -p "$W" dist
 
-# source tarball: binary + desktop entry + icon + licenses
-S=$W/obsidilight-$VERSION
-cp "$BIN" "$S/obsidilight"
-cp packaging/common/obsidilight.desktop packaging/common/obsidilight.png LICENSE "$S/"
-cp crates/app/assets/fonts/LICENSE-IBMPlexSans.txt crates/app/assets/fonts/LICENSE-DejaVu.txt "$S/"
-tar -C "$W" -I 'zstd -T0 -q' -cf "$W/obsidilight-$VERSION-linux-x86_64.tar.zst" "obsidilight-$VERSION"
-rm -rf "$S"
-
-sum=$(sha256sum "$W/obsidilight-$VERSION-linux-x86_64.tar.zst" | cut -d' ' -f1)
-sed -e "s/^pkgver=.*/pkgver=$VERSION/" -e "s/^sha256sums=.*/sha256sums=('$sum')/" \
+# makepkg sources: binary + desktop entry + icon + licenses, next to a copy of the PKGBUILD
+cp "$BIN" "$W/obsidilight"
+cp packaging/common/obsidilight.desktop packaging/common/obsidilight.png LICENSE "$W/"
+cp crates/app/assets/fonts/LICENSE-IBMPlexSans.txt crates/app/assets/fonts/LICENSE-DejaVu.txt "$W/"
+sums=$(cd "$W" && sha256sum obsidilight obsidilight.desktop obsidilight.png LICENSE \
+    LICENSE-IBMPlexSans.txt LICENSE-DejaVu.txt | awk '{printf "%s\x27%s\x27", (NR > 1 ? " " : ""), $1}')
+sed -e "s/^pkgver=.*/pkgver=$VERSION/" -e "s/^sha256sums=.*/sha256sums=($sums)/" \
     packaging/arch/PKGBUILD > "$W/PKGBUILD"
 
 # --nodeps: this only repacks a binary, the runtime deps need not be installed on the build host
 (cd "$W" && PKGDEST="$PWD/../../../dist" makepkg -f --nodeps --noconfirm)
 pkg=$(cd "$W" && PKGDEST="$PWD/../../../dist" makepkg --packagelist)
 pacman -Qip "$pkg" | grep -E '^(Name|Version|Depends On|Installed Size)'
-ls -l "$pkg"
+echo
+echo "Package: ${pkg#"$PWD/"}"
+echo "Install: sudo pacman -U $(basename "$pkg")   (copy only this file; nothing in target/ is installable)"

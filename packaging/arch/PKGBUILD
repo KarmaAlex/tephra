@@ -1,9 +1,10 @@
 # Maintainer: KarmaAlex
 # Binary package: repacks the release binary built in the repo (it embeds its JS bundles and
 # UI fonts, so it is self-contained apart from the system libraries below).
-# Don't run makepkg here by hand: `make arch` (packaging/arch/build.sh) builds the binary, stages
-# the source tarball, sets pkgver from Cargo.toml, fills in the checksum and runs makepkg in
-# target/pkg/arch. Output: dist/obsidilight-<pkgver>-<pkgrel>-x86_64.pkg.tar.zst
+# Don't run makepkg here by hand: `make arch` (packaging/arch/build.sh) builds the binary, copies
+# the source files next to a copy of this PKGBUILD in target/pkg/arch, sets pkgver from Cargo.toml,
+# fills in the checksums and runs makepkg there.
+# Output (the only file to install): dist/obsidilight-<pkgver>-<pkgrel>-x86_64.pkg.tar.zst
 pkgname=obsidilight
 pkgver=0.1.0
 pkgrel=3
@@ -22,11 +23,13 @@ optdepends=('vulkan-driver: hardware-accelerated rendering (e.g. vulkan-radeon, 
             'hunspell-en_us: spell checking (any hunspell dictionary works)'
             'noto-fonts-emoji: emoji glyphs')
 options=('!strip' '!debug')
-source=("obsidilight-${pkgver}-linux-x86_64.tar.zst")
-sha256sums=('SKIP')
+# plain files, no source tarball: a `<name>-<ver>-...tar.zst` next to the real package was too
+# easy to mistake for it (pacman -U on it fails with "missing package metadata")
+source=('obsidilight' 'obsidilight.desktop' 'obsidilight.png'
+        'LICENSE' 'LICENSE-IBMPlexSans.txt' 'LICENSE-DejaVu.txt')
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')  # filled in by build.sh
 
 package() {
-  cd "obsidilight-${pkgver}"
   install -Dm755 obsidilight "$pkgdir/usr/bin/obsidilight"
   install -Dm644 obsidilight.desktop "$pkgdir/usr/share/applications/obsidilight.desktop"
   install -Dm644 obsidilight.png "$pkgdir/usr/share/icons/hicolor/64x64/apps/obsidilight.png"

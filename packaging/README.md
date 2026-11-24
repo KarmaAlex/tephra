@@ -30,14 +30,20 @@ the licenses.
 
 ## Arch Linux — `packaging/arch/`
 
-`build.sh` stages a tarball of the release binary + `.desktop` + icon + licenses in
-`target/pkg/arch/`. It writes `pkgver` (from Cargo.toml) and the checksum into a copy of `PKGBUILD`
-and runs makepkg there. Nothing needs to be edited by hand; bump `pkgrel` in `PKGBUILD` only to
+`build.sh` copies the release binary, `.desktop`, icon and licenses into `target/pkg/arch/`.
+It writes `pkgver` (from Cargo.toml) and the checksums into a copy of `PKGBUILD` and runs makepkg
+there. Nothing needs to be edited by hand; bump `pkgrel` in `PKGBUILD` only to
 re-release the same version. Runtime dependencies and what each one is for: `arch/DEPENDENCIES.txt`.
 
+Copy **only** `dist/obsidilight-<ver>-<rel>-x86_64.pkg.tar.zst` to the target machine and install it:
+
 ```sh
-sudo pacman -U dist/obsidilight-*-x86_64.pkg.tar.zst
+sudo pacman -U obsidilight-*-x86_64.pkg.tar.zst
 ```
+
+Nothing under `target/` is installable. (An earlier version staged an
+`obsidilight-<ver>-linux-x86_64.tar.zst` there. `pacman -U` on that file fails with
+"missing package metadata", because it is a plain tarball and not a package.)
 
 ## Debian / Ubuntu — `packaging/debian/`
 
