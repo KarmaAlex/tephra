@@ -14,6 +14,7 @@ mod editor;
 mod embeds;
 mod export;
 mod file_drag;
+mod fonts;
 mod fuzzy;
 mod hotkeys;
 mod image_view;
@@ -52,6 +53,7 @@ fn main() {
     let title: SharedString = root.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default().into();
     gpui_kit::application().with_assets(icons::AppAssets).run(move |cx| {
         gpui_kit::init(cx);
+        fonts::load(cx);
         editor::render::register_languages();
         editor::bind_keys(cx);
         workspace::bind_keys(cx);

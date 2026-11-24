@@ -10,6 +10,7 @@
 //!   bounds <key>              where a probed element is drawn (see [`probe`])
 //!   clickk <key> [dx] [dy]     click a probed element's centre (plus an offset)
 //!   rclickk <key> [dx] [dy]    right-click it (context menus)
+//!   fonts                      theme font families + embedded-family resolution
 //!   dragk <from-key> <to-key> [dy] [ms] [shot.png]   drag from one probed element's centre to
 //!                             another's (dy: offset from the target's centre); then hold the
 //!                             button `ms` before releasing, and/or take a screenshot
@@ -454,6 +455,17 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                         let tabs: Vec<String> = ws.tabs.iter().map(|t| tab_name(t, &root, cx)).collect();
                         println!("TABS active={} {:?}", ws.active, tabs);
                     });
+                }
+                "fonts" => {
+                    // fonts: the theme's families, and whether the embedded families resolved
+                    let (sans, mono, names) = cx.update(|cx| {
+                        let t = cx.global::<gpui_kit::component::theme::Theme>();
+                        (t.font_family.to_string(), t.mono_font_family.to_string(), cx.text_system().all_font_names())
+                    });
+                    println!("FONTS sans={sans} mono={mono}");
+                    for f in [crate::fonts::SANS_FAMILY, crate::fonts::MONO_FAMILY, "DejaVu Sans"] {
+                        println!("FONT {f} {}", names.iter().any(|n| n == f));
+                    }
                 }
                 "ws-focus" => {
                     // ws-focus [fullscreen]: toggle focus mode, optionally also full screen
