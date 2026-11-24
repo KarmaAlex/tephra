@@ -88,7 +88,7 @@ Windows or in a VM.
 
 ## Shared files — `packaging/common/`
 
-`obsidilight.desktop` (menu entry; `Exec=obsidilight %f`, so a launch from the menu opens a
-folder picker) and `obsidilight.png` (64×64 icon). The Windows icon
+`obsidilight.desktop` (menu entry; `Exec=obsidilight %f`, so a launch from the menu reopens the
+last vault, or shows the welcome page) and `obsidilight.png` (64×64 icon). The Windows icon
 `crates/app/assets/obsidilight.ico` is generated from the PNG:
 `magick packaging/common/obsidilight.png -define icon:auto-resize=256,64,48,32,16 crates/app/assets/obsidilight.ico`.

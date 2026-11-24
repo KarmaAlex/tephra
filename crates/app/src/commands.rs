@@ -9,6 +9,7 @@ use gpui_kit::*;
 use crate::editor::ViewMode;
 use crate::plugins::api::{Action, ActionCtx, Command};
 use crate::plugins::PluginHost;
+use crate::vaults::OpenAs;
 use crate::workspace::Workspace;
 
 /// Plugin id under which the app's commands are registered.
@@ -47,6 +48,10 @@ pub fn register_core(cx: &mut App) {
         ("close-pane", "Close current pane", None, ws_cmd(|ws, w, cx| ws.close_pane(w, cx))),
         ("focus-mode", "Toggle focus mode", None, ws_cmd(|ws, w, cx| ws.toggle_focus_mode(false, w, cx))),
         ("fullscreen-focus-mode", "Toggle fullscreen focus mode", Some("f11"), ws_cmd(|ws, w, cx| ws.toggle_focus_mode(true, w, cx))),
+        ("create-vault", "Create new vault", None, Rc::new(|a: &mut ActionCtx| crate::vaults::create_vault_dialog(a.window, a.cx))),
+        ("open-folder-as-vault", "Open folder as vault", None, Rc::new(|a: &mut ActionCtx| crate::vaults::pick_and_open(OpenAs::Vault, a.window, a.cx))),
+        ("open-folder", "Open folder", None, Rc::new(|a: &mut ActionCtx| crate::vaults::pick_and_open(OpenAs::Folder, a.window, a.cx))),
+        ("open-vault-manager", "Open vault manager", None, Rc::new(|a: &mut ActionCtx| crate::welcome::open(a.cx))),
         ("open-settings", "Open settings", Some("ctrl-,"), Rc::new(|a: &mut ActionCtx| crate::settings_ui::open(a.window, a.cx))),
         ("save", "Save current file", Some("ctrl-s"), editor_cmd(|e, cx| e.save(cx))),
         ("toggle-reading", "Toggle reading view", Some("ctrl-e"), editor_cmd(|e, cx| e.toggle_mode(ViewMode::Reading, cx))),

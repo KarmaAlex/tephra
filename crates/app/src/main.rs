@@ -4,7 +4,8 @@
 //!   obsidilight <vault-folder | path/to/note.md>
 //! Env: OBSIDILIGHT_BENCH=1 runs the typing benchmark, prints `REPORT {json}` and exits.
 //!      OBSIDILIGHT_SCRIPT=<file> replays scripted input (see script.rs).
-//! Without an argument (app menu, double-clicked .exe) a folder picker asks for the vault.
+//! Without an argument (app menu, double-clicked .exe) the last opened vault opens again; when
+//! there is none (first start, or it was deleted), the welcome page (see welcome.rs).
 
 // Release builds on Windows are GUI-subsystem apps: no console window behind the editor.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
@@ -30,7 +31,9 @@ mod script;
 mod settings_ui;
 mod theme;
 mod ui;
+mod vaults;
 mod watcher;
+mod welcome;
 mod workspace;
 
 use std::path::PathBuf;
@@ -48,7 +51,7 @@ fn main() {
         return;
     }
     if std::env::args_os().nth(1).is_some_and(|a| a == "--help" || a == "-h") {
-        println!("usage: obsidilight [vault-folder | note.md]\n(without an argument a folder picker asks for the vault)");
+        println!("usage: obsidilight [vault-folder | note.md]\n(without an argument the last opened vault, else the welcome page)");
         return;
     }
     let arg = std::env::args_os().nth(1).map(PathBuf::from);
@@ -60,19 +63,11 @@ fn main() {
         workspace::bind_keys(cx);
         match arg {
             Some(arg) => open_vault(arg, t0, cx),
-            // started from the application menu / by double-clicking the .exe: ask for the vault
-            None => {
-                let picked = cx.prompt_for_paths(PathPromptOptions { files: false, directories: true, multiple: false, prompt: Some("Open vault".into()) });
-                cx.spawn(async move |cx| match picked.await {
-                    Ok(Ok(Some(paths))) if !paths.is_empty() => cx.update(|cx| open_vault(paths[0].clone(), t0, cx)),
-                    Ok(Err(e)) => {
-                        eprintln!("could not show the folder picker: {e}\nusage: obsidilight <vault-folder | note.md>");
-                        cx.update(|cx| cx.quit());
-                    }
-                    _ => cx.update(|cx| cx.quit()),
-                })
-                .detach();
-            }
+            // started from the application menu / by double-clicking the .exe: the last vault
+            None => match vaults::Known::load().startup_vault() {
+                Some(last) => open_vault(last, t0, cx),
+                None => welcome::open(cx),
+            },
         }
     });
 }
@@ -82,6 +77,9 @@ fn open_vault(arg: PathBuf, t0: Instant, cx: &mut App) {
     let arg = std::fs::canonicalize(&arg).unwrap_or(arg);
     let root = embeds::Vault::root_for(&arg);
     let note = arg.is_file().then(|| arg.clone());
+    if root.is_dir() {
+        vaults::record_opened(&root);
+    }
     let title: SharedString = root.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default().into();
     app_settings::AppSettings::init(cx, &root);
     plugins::PluginHost::init(cx, &root);
@@ -101,12 +99,10 @@ fn open_vault(arg: PathBuf, t0: Instant, cx: &mut App) {
         theme::apply(Some(window), cx);
         let ws = cx.new(|cx| workspace::Workspace::new(root, window, cx));
         window.on_next_frame(move |_, _| println!("READY {:.1}", t0.elapsed().as_secs_f64() * 1000.0));
-        if let Some(note) = note {
-            let editor = ws.update(cx, |ws, cx| ws.open_path(note, false, window, cx));
-            script::start(editor.clone(), ws.downgrade(), window, cx);
-            if std::env::var_os("OBSIDILIGHT_BENCH").is_some() {
-                bench::start(editor, window, cx);
-            }
+        let editor = note.map(|note| ws.update(cx, |ws, cx| ws.open_path(note, false, window, cx)));
+        script::start(editor.clone(), Some(ws.downgrade()), window, cx);
+        if let Some(editor) = editor.filter(|_| std::env::var_os("OBSIDILIGHT_BENCH").is_some()) {
+            bench::start(editor, window, cx);
         }
         ws
     });

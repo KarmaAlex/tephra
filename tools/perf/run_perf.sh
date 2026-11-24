@@ -10,6 +10,8 @@ RUNS="${RUNS:-3}"
 OUT="reports/perf-$(date +%Y%m%d-%H%M%S).jsonl"
 SCRATCH="${SCRATCH:-${TMPDIR:-/tmp}/obsidilight-perf}"
 mkdir -p reports "$SCRATCH"
+# keep the fixture from becoming the last opened vault in your real config (src/vaults.rs)
+export OBSIDILIGHT_CONFIG_DIR="$SCRATCH/config"
 MESA=/usr/share/glvnd/egl_vendor.d/50_mesa.json
 tag() { python3 -c "import json,sys; d=json.load(sys.stdin); d.pop('log_tail',None); d['label']=sys.argv[1]; print(json.dumps(d))" "$1"; }
 

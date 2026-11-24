@@ -363,6 +363,7 @@ impl Workspace {
             .border_r_1()
             .border_color(theme.border)
             .bg(theme.sidebar)
+            .child(self.render_file_menu(cx))
             .child(crate::ui::icon_button("ribbon-files", gpui_kit::assets::IconName::PanelLeft).tooltip("Left sidebar (Ctrl+Shift+B)").on_click(cx.listener(|ws, _, _, cx| {
                 ws.sidebar = !ws.sidebar;
                 ws.save_layout();
@@ -384,6 +385,43 @@ impl Workspace {
                 })))
             })
             .child(crate::ui::icon_button("ribbon-settings", gpui_kit::assets::IconName::Settings).tooltip("Settings (Ctrl+,)").on_click(|_, window, cx| crate::settings_ui::open(window, cx)))
+    }
+
+    /// The File menu (top of the ribbon): notes, vaults, settings.
+    fn render_file_menu(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        use crate::vaults::{self, OpenAs};
+        use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
+        let weak = cx.entity().downgrade();
+        let current = self.vault.borrow().root.clone();
+        let button = crate::ui::icon_button("ribbon-file-menu", IconName::Menu).tooltip("File");
+        let menu = button.dropdown_menu(move |menu, window, cx| {
+            let weak = weak.clone();
+            // other vaults opened recently (each opens in a new window)
+            let recent: Vec<PathBuf> = vaults::Known::load().recent.into_iter().filter(|p| *p != current && p.is_dir()).take(10).collect();
+            let mut menu = menu
+                .min_w(px(220.))
+                .item(PopupMenuItem::new("New note").on_click(move |_, window, cx| {
+                    let _ = weak.update(cx, |ws, cx| ws.new_note_in("", window, cx));
+                }))
+                .separator()
+                .item(PopupMenuItem::new("Create new vault…").on_click(|_, window, cx| vaults::create_vault_dialog(window, cx)))
+                .item(PopupMenuItem::new("Open folder as vault…").on_click(|_, window, cx| vaults::pick_and_open(OpenAs::Vault, window, cx)))
+                .item(PopupMenuItem::new("Open folder…").on_click(|_, window, cx| vaults::pick_and_open(OpenAs::Folder, window, cx)));
+            if !recent.is_empty() {
+                menu = menu.submenu("Open recent", window, cx, move |mut m, _, _| {
+                    for p in &recent {
+                        let label = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| p.display().to_string());
+                        let p = p.clone();
+                        m = m.item(PopupMenuItem::new(label).on_click(move |_, window, cx| vaults::open(p.clone(), OpenAs::Folder, window, cx)));
+                    }
+                    m
+                });
+            }
+            menu.item(PopupMenuItem::new("Vault manager…").on_click(|_, _, cx| crate::welcome::open(cx)))
+                .separator()
+                .item(PopupMenuItem::new("Settings").on_click(|_, window, cx| crate::settings_ui::open(window, cx)))
+        });
+        div().relative().child(menu).children(crate::script::probe(|| "ribbon:file-menu".into(), cx))
     }
 
     /// Plugin views on one side.

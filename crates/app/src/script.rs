@@ -6,7 +6,7 @@
 //!   wait <ms>                 key <keystroke> [n]     type <text>
 //!   click <x> <y> [count]     drag <x1> <y1> <x2> <y2>
 //!   scroll <dy>               state                   shot <path.png>     quit
-//!   resize <w> <h>
+//!   resize <w> <h>             ws-root (the open vault, or none)
 //!   bounds <key>              where a probed element is drawn (see [`probe`])
 //!   clickk <key> [dx] [dy]     click a probed element's centre (plus an offset)
 //!   rclickk <key> [dx] [dy]    right-click it (context menus)
@@ -80,12 +80,30 @@ fn tab_name(t: &crate::workspace::Tab, root: &std::path::Path, cx: &App) -> Stri
     }
 }
 
-pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>, window: &mut Window, cx: &mut App) {
+/// The window a running script drives, and its workspace and editor (if it has them).
+#[derive(Clone)]
+struct Target {
+    window: AnyWindowHandle,
+    editor: WeakEntity<Editor>,
+    ws: WeakEntity<crate::workspace::Workspace>,
+}
+impl Global for Target {}
+
+/// Runs the script on `window`. Called again while it runs (the welcome page opened a vault),
+/// the script carries on in the new window.
+pub fn start(editor: Option<Entity<Editor>>, ws: Option<WeakEntity<crate::workspace::Workspace>>, window: &mut Window, cx: &mut App) {
     let Ok(script) = std::env::var("OBSIDILIGHT_SCRIPT").map(std::fs::read_to_string) else { return };
     let Ok(script) = script else { return };
+    let running = cx.has_global::<Target>();
+    cx.set_global(Target {
+        window: window.window_handle(),
+        editor: editor.map(|e| e.downgrade()).unwrap_or_else(WeakEntity::new_invalid),
+        ws: ws.unwrap_or_else(WeakEntity::new_invalid),
+    });
+    if running {
+        return;
+    }
     cx.set_global(Probes::default());
-    let handle = window.window_handle();
-    let weak = editor.downgrade();
     cx.spawn(async move |cx| {
         cx.background_executor().timer(Duration::from_millis(800)).await;
         for raw in script.lines() {
@@ -93,6 +111,7 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
+            let Target { window: handle, editor: weak, ws } = cx.update(|cx| cx.global::<Target>().clone());
             let (cmd, rest) = line.split_once(' ').unwrap_or((line, ""));
             let num = |i: usize| rest.split_whitespace().nth(i).and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0);
             match cmd {
@@ -139,7 +158,10 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                 "moveat" => {
                     // moveat <offset> [ctrl]: hover just right of where a document offset is drawn
                     let off = num(0) as usize;
-                    let active = ws.update(cx, |ws, _| ws.active_editor()).ok().flatten().unwrap_or_else(|| editor.clone());
+                    let Some(active) = ws.update(cx, |ws, _| ws.active_editor()).ok().flatten().or_else(|| weak.upgrade()) else {
+                        println!("NO-EDITOR {cmd}");
+                        continue;
+                    };
                     let Some(b) = active.update(cx, |e, _| e.caret_bounds(off)) else {
                         println!("MOVEAT {off}: not on screen");
                         continue;
@@ -162,7 +184,10 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                 "clickat" => {
                     // clickat <offset> [ctrl]: click just right of where a document offset is drawn
                     let off = num(0) as usize;
-                    let active = ws.update(cx, |ws, _| ws.active_editor()).ok().flatten().unwrap_or_else(|| editor.clone());
+                    let Some(active) = ws.update(cx, |ws, _| ws.active_editor()).ok().flatten().or_else(|| weak.upgrade()) else {
+                        println!("NO-EDITOR {cmd}");
+                        continue;
+                    };
                     let at = active.update(cx, |e, _| e.caret_bounds(off));
                     let Some(b) = at else {
                         println!("CLICKAT {off}: not on screen");
@@ -295,7 +320,10 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                         Some((n, d)) => (n.to_string(), d.trim().parse::<i64>().unwrap_or(0)),
                         None => (rest.to_string(), 0),
                     };
-                    let active = ws.update(cx, |ws, _| ws.active_editor()).ok().flatten().unwrap_or_else(|| editor.clone());
+                    let Some(active) = ws.update(cx, |ws, _| ws.active_editor()).ok().flatten().or_else(|| weak.upgrade()) else {
+                        println!("NO-EDITOR {cmd}");
+                        continue;
+                    };
                     let _ = active.update(cx, |e, cx| {
                         if let Some(off) = e.doc.text().find(&needle) {
                             let line = (e.doc.line_of(off) as i64 + delta).max(0) as usize;
@@ -333,7 +361,10 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                     });
                 }
                 "suggest" => {
-                    let active = ws.update(cx, |ws, _| ws.active_editor()).ok().flatten().unwrap_or_else(|| editor.clone());
+                    let Some(active) = ws.update(cx, |ws, _| ws.active_editor()).ok().flatten().or_else(|| weak.upgrade()) else {
+                        println!("NO-EDITOR {cmd}");
+                        continue;
+                    };
                     let _ = active.update(cx, |e, _| match &e.suggest {
                         Some(s) => println!("SUGGEST sel={} {:?}", s.selected, s.items.iter().map(|i| i.label.clone()).collect::<Vec<_>>()),
                         None => println!("SUGGEST none"),
@@ -341,7 +372,10 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                 }
                 "numbers" => {
                     // numbers: plugin callout labels of the active note, and the hover preview
-                    let active = ws.update(cx, |ws, _| ws.active_editor()).ok().flatten().unwrap_or_else(|| editor.clone());
+                    let Some(active) = ws.update(cx, |ws, _| ws.active_editor()).ok().flatten().or_else(|| weak.upgrade()) else {
+                        println!("NO-EDITOR {cmd}");
+                        continue;
+                    };
                     let _ = active.update(cx, |e, cx| {
                         let mut n: Vec<(usize, String)> = e.debug_numbers(cx).into_iter().collect();
                         n.sort();
@@ -448,6 +482,13 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                         }
                         println!("TEXTS {}", out.join(" | "));
                     });
+                }
+                "ws-root" => {
+                    // ws-root: the open vault's folder (none: the welcome page)
+                    match ws.update(cx, |ws, _| ws.vault.borrow().root.clone()) {
+                        Ok(root) => println!("ROOT {}", root.display()),
+                        Err(_) => println!("ROOT none"),
+                    }
                 }
                 "ws-tabs" => {
                     let _ = ws.update(cx, |ws, cx| {

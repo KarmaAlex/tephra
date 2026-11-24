@@ -232,6 +232,9 @@ fn read_sheet(p: &Path) -> Option<Sheet> {
 /// Installed themes: `.obsidian/themes/<name>/theme.css` (and the older `<name>.css`).
 fn installed_themes(root: &Path) -> BTreeMap<String, PathBuf> {
     let mut out = BTreeMap::new();
+    if root.as_os_str().is_empty() {
+        return out;
+    }
     for e in std::fs::read_dir(root.join(".obsidian/themes")).into_iter().flatten().flatten() {
         let p = e.path();
         let name = e.file_name().to_string_lossy().to_string();
@@ -246,6 +249,9 @@ fn installed_themes(root: &Path) -> BTreeMap<String, PathBuf> {
 
 /// Snippets in `.obsidian/snippets` by name (without `.css`).
 pub fn installed_snippets(root: &Path) -> BTreeMap<String, PathBuf> {
+    if root.as_os_str().is_empty() {
+        return BTreeMap::new();
+    }
     std::fs::read_dir(root.join(".obsidian/snippets"))
         .into_iter()
         .flatten()
@@ -259,6 +265,9 @@ pub fn installed_snippets(root: &Path) -> BTreeMap<String, PathBuf> {
 
 /// Your Obsidian appearance settings (defaults for ours).
 fn obsidian_appearance(root: &Path) -> serde_json::Map<String, Value> {
+    if root.as_os_str().is_empty() {
+        return Default::default();
+    }
     crate::plugins::templates::obsidian_core_settings(root, "appearance.json")
 }
 
@@ -415,6 +424,12 @@ pub fn init(cx: &mut App, root: &Path) {
     let generation = cx.try_global::<ThemeCss>().map_or(1, |t| t.generation + 1);
     let t = ThemeCss::load(root, &css_theme(cx, root), &enabled_snippets(cx, root), generation);
     cx.set_global(t);
+}
+
+/// Obsidian's default theme alone, before any vault is open (the welcome page). The empty
+/// root reads nothing (not the current directory).
+pub fn init_default(cx: &mut App) {
+    init(cx, Path::new(""));
 }
 
 pub fn reload(cx: &mut App) {
