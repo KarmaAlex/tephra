@@ -588,6 +588,15 @@ impl Workspace {
         self.select_active_in_tree(cx);
     }
 
+    /// Expands or collapses a folder row (`dir:<path>`). The tree's own click toggle only
+    /// fires for folders with children (`TreeItem::is_folder`), so empty folders toggle here.
+    fn toggle_dir(&mut self, id: &str, cx: &mut Context<Self>) {
+        if !self.expanded.remove(id) {
+            self.expanded.insert(id.to_string());
+        }
+        self.rebuild_tree(cx);
+    }
+
     fn select_active_in_tree(&mut self, cx: &mut Context<Self>) {
         let rel = match self.tabs.get(self.active) {
             Some(Tab::Note(e)) => self.rel(&e.read(cx).path),
@@ -656,6 +665,9 @@ impl Workspace {
     /// Opens any vault file: images in an image tab, everything else in an editor (Markdown
     /// for notes, plain text for other files). Returns the editor, if one was opened.
     pub fn open_file(&mut self, path: PathBuf, new_tab: bool, window: &mut Window, cx: &mut Context<Self>) -> Option<Entity<Editor>> {
+        if path.is_dir() {
+            return None; // a folder is never opened as a note
+        }
         if !crate::embeds::is_image(&path) {
             return Some(self.open_path(path, new_tab, window, cx));
         }
@@ -1666,7 +1678,10 @@ impl Workspace {
                     tree(&self.tree, move |ix, entry, _selected, _w, cx| {
                         let item = entry.item();
                         let id = item.id.to_string();
-                        let folder = entry.is_folder();
+                        // `TreeEntry::is_folder()` only means "has children", so an empty
+                        // folder would read as a file here; the `dir:` id prefix is what
+                        // actually marks a folder row (see `rebuild_tree`).
+                        let folder = id.starts_with("dir:") || entry.is_folder();
                         let conflict = !folder && is_sync_conflict(&id);
                         let icon = if folder {
                             if entry.is_expanded() { IconName::FolderOpen } else { IconName::Folder }
@@ -1685,6 +1700,8 @@ impl Workspace {
                         let highlighted = dest.as_deref().is_some_and(|d| file_drag::in_dest(&id, d));
                         let rows = rows.clone();
                         let row_id = id.clone();
+                        let toggle_weak = weak.clone();
+                        let toggle_id = id.clone();
                         let row = h_flex()
                             .gap_1p5()
                             .text_size(crate::ui::r(13.))
@@ -1734,10 +1751,18 @@ impl Workspace {
                                     });
                                 })
                             })
+                            // the tree expands/collapses folders with children on click by
+                            // itself; an empty folder has none, so toggle it here
+                            .when(folder && !entry.is_folder(), |li| {
+                                li.on_click(move |_, _, cx| {
+                                    let _ = toggle_weak.update(cx, |ws, cx| ws.toggle_dir(&toggle_id, cx));
+                                })
+                            })
                     })
                     .context_menu(move |_ix, entry, menu, _w, cx| {
                         let id = entry.item().id.to_string();
-                        let folder = entry.is_folder();
+                        // as in the row above: the `dir:` prefix marks a folder row, even an empty one
+                        let folder = id.starts_with("dir:") || entry.is_folder();
                         let rel = id.strip_prefix("dir:").unwrap_or(&id).to_string();
                         *target.borrow_mut() = Some((rel.clone(), folder));
                         let mut menu = menu

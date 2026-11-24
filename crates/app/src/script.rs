@@ -9,6 +9,7 @@
 //!   resize <w> <h>
 //!   bounds <key>              where a probed element is drawn (see [`probe`])
 //!   clickk <key> [dx] [dy]     click a probed element's centre (plus an offset)
+//!   rclickk <key> [dx] [dy]    right-click it (context menus)
 //!   dragk <from-key> <to-key> [dy] [ms] [shot.png]   drag from one probed element's centre to
 //!                             another's (dy: offset from the target's centre); then hold the
 //!                             button `ms` before releasing, and/or take a screenshot
@@ -212,6 +213,22 @@ pub fn start(editor: Entity<Editor>, ws: WeakEntity<crate::workspace::Workspace>
                         w.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position: p, ..Default::default() }), cx);
                         w.dispatch_event(PlatformInput::MouseDown(MouseDownEvent { button: MouseButton::Left, position: p, click_count: 1, ..Default::default() }), cx);
                         w.dispatch_event(PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position: p, click_count: 1, ..Default::default() }), cx);
+                    });
+                }
+                "rclickk" => {
+                    let mut parts = rest.split_whitespace();
+                    let k = parts.next().unwrap_or("");
+                    let dx = parts.next().and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0);
+                    let dy = parts.next().and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0);
+                    let Some(b) = cx.update(|cx| cx.global::<Probes>().0.get(k).copied()) else {
+                        println!("RCLICKK {k}: not on screen");
+                        continue;
+                    };
+                    let p = point(b.center().x + px(dx), b.center().y + px(dy));
+                    let _ = handle.update(cx, |_, w, cx| {
+                        w.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position: p, ..Default::default() }), cx);
+                        w.dispatch_event(PlatformInput::MouseDown(MouseDownEvent { button: MouseButton::Right, position: p, click_count: 1, ..Default::default() }), cx);
+                        w.dispatch_event(PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Right, position: p, click_count: 1, ..Default::default() }), cx);
                     });
                 }
                 "dragk" => {
