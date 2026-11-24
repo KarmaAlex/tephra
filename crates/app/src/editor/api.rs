@@ -38,26 +38,34 @@ pub struct TabstopSession {
 
 impl TabstopSession {
     /// Maps every range through a replacement of `at..at+removed` by `inserted` bytes.
-    /// Ranges are inclusive at both ends (typing at a tabstop's edge extends it).
+    /// Ranges are inclusive at both ends (typing at a tabstop's edge extends it), like CM6's
+    /// inclusive marks: a pure insertion at an end grows the range, but a replacement that
+    /// starts at a range's end leaves the range alone (auto-enlarge turning the `)` right after
+    /// an empty tabstop into ` \right)` must not pull that text into the tabstop).
+    ///
+    /// A range with an end strictly inside the replaced span is dropped (CM6's `TrackDel`):
+    /// auto-fraction rewriting `\sum \frac{1}{k}` into `\frac{…}{}` must not leave the inner
+    /// fraction's tabstops stretched over the new text, where Tab would later jump back to them.
+    /// A group that loses all its ranges stays in place (indices are stable) but is skipped.
     pub fn map(&mut self, at: usize, removed: usize, inserted: usize) {
         let end = at + removed;
         let map_pos = |p: usize, is_end: bool| -> usize {
-            if p < at || (p == at && !is_end) {
+            if p < at || (p == at && (!is_end || removed > 0)) {
                 p
-            } else if p >= end {
-                p + inserted - removed
-            } else if is_end {
-                at + inserted // inside the replaced span
             } else {
-                at
+                p + inserted - removed // p >= end: strictly inside is dropped below
             }
         };
+        let deleted = |p: usize| at < p && p < end;
         for g in &mut self.groups {
-            for r in g.ranges.iter_mut() {
+            g.ranges.retain_mut(|r| {
+                if deleted(r.start) || deleted(r.end) {
+                    return false;
+                }
                 let s = map_pos(r.start, false);
-                let e = map_pos(r.end, true).max(s);
-                *r = s..e;
-            }
+                *r = s..map_pos(r.end, true).max(s);
+                true
+            });
         }
     }
 
@@ -65,10 +73,12 @@ impl TabstopSession {
         self.groups.get(self.index)
     }
 
-    /// The selection moved: re-derive the current group. False = the session is over.
+    /// The selection moved: re-derive the current group. False = the session is over (the
+    /// selection left every group, or entered the last one still in the text).
     pub fn on_selection(&mut self, sel: &Range<usize>) -> bool {
         self.index = self.groups.iter().position(|g| g.contains(sel)).unwrap_or(self.groups.len());
-        !(self.groups.len() <= 1 || self.index + 1 >= self.groups.len())
+        let last = self.groups.iter().rposition(|g| !g.ranges.is_empty()).unwrap_or(0);
+        !(self.groups.len() <= 1 || self.index >= last)
     }
 }
 
@@ -227,7 +237,7 @@ impl<'a> EditorApi<'a> {
         loop {
             i += if backwards { -1 } else { 1 };
             let Some(g) = (i >= 0).then(|| s.groups.get(i as usize)).flatten() else { return false };
-            if g.embed {
+            if g.embed || g.ranges.is_empty() {
                 continue;
             }
             let r = g.ranges[0].clone();
@@ -326,8 +336,11 @@ mod tests {
         assert_eq!(ranges(&s), vec![5..7, 12..14]);
         s.map(0, 2, 0); // delete before everything
         assert_eq!(ranges(&s), vec![3..5, 10..12]);
-        s.map(11, 3, 1); // replace across the end of the second
-        assert_eq!(ranges(&s)[1], 10..12);
+        s.map(5, 1, 8); // replacing the text right after an empty-ended range: it stays put
+        assert_eq!(ranges(&s), vec![3..5, 17..19]);
+        s.map(18, 3, 1); // replace across the end of the second: it is dropped (TrackDel)
+        assert!(s.groups[1].ranges.is_empty());
+        assert!(!s.on_selection(&(3..3)), "the first group is now the last live one: session over");
     }
 
     #[test]

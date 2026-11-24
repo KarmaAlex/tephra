@@ -389,7 +389,7 @@ impl LatexSuite {
             SettingSpec { key: "snippetsFileLocation", label: "Snippets file", description: "Vault-relative path of a Latex Suite snippets file (empty = built-in defaults).", kind: SettingKind::Text, default: Value::from(file) },
             toggle("snippetsEnabled", "Snippets", "Expand snippets while typing.", true),
             toggle("removeSnippetWhitespace", "Trim snippet whitespace in inline math", "Remove trailing spaces of expansions inside $…$.", true),
-            toggle("autoDelete$", "Auto-delete $", "Backspace in an empty $|$ removes both dollars.", true),
+            toggle("autoDelete$", "Auto-delete $", "Backspace in an empty $|$ (or ${}|{}$) removes the whole formula.", true),
             toggle("autofractionEnabled", "Auto-fraction", "Typing / in math turns the previous term into a fraction.", true),
             text("autofractionSymbol", "Fraction command", "Used by auto-fraction.", "\\frac"),
             text("autofractionBreakingChars", "Fraction breaking characters", "Characters that end the numerator.", "+-=\t"),

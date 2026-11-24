@@ -5,7 +5,6 @@ state
 type xsr
 state
 key tab
-key tab
 state
 key enter
 type dm

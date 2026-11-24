@@ -183,3 +183,35 @@ fn snippet_keys_reach_the_headless_backend() {
     h.select(Selection::caret(0));
     assert_eq!(h.marked(), "|abc");
 }
+
+#[test]
+fn inline_math_snippet_brackets_and_fractions() {
+    // the vault's own snippets for these keys, so the test runs without the fixture
+    let e = engine_with(
+        r#"export default [
+        {trigger: "mk", replacement: "${}$0{}$", options: "tA"},
+        {trigger: "(", replacement: "($0)$1", options: "mA"},
+        {trigger: "sum", replacement: "\\sum", options: "mA"},
+    ]"#,
+    );
+    // backspace in an empty inline formula removes all of it
+    assert_eq!(run(&e, "a |", "mk<BS>"), "a |");
+    assert_eq!(run(&e, "a |", "mkx<BS><BS>"), "a |");
+    // Tab at the end leaves the formula, past the trailing {}
+    assert_eq!(run(&e, "a |", "mkx<Tab>"), "a ${}x{}$|");
+    assert_eq!(run(&e, "$$\nx^{|}\n$$", "<Tab>"), "$$\nx^{}|\n$$", "a {{}} around the caret is still left");
+    // auto-fraction leaves the leading {} alone
+    assert_eq!(run(&e, "a |", "mkab/"), "a ${}\\frac{ab}{|}{}$");
+    // enlarged brackets: Tab leaves the fraction, then the brackets, then the formula
+    assert_eq!(run(&e, "a |", "mk(1-1/k<Tab>"), "a ${}\\left( 1-\\frac{1}{k}| \\right){}$");
+    assert_eq!(run(&e, "a |", "mk(1-1/k<Tab><Tab>"), "a ${}\\left( 1-\\frac{1}{k} \\right)|{}$");
+    assert_eq!(run(&e, "a |", "mk(1-1/k<Tab><Tab><Tab>"), "a ${}\\left( 1-\\frac{1}{k} \\right){}$|");
+    // typing ) before an enlarged \right) steps over it
+    assert_eq!(run(&e, "a |", "mk(sum 1/k<Tab>)"), "a ${}\\left( \\sum \\frac{1}{k} \\right)|{}$");
+    // \left( … \right) around a numerator goes, like ( … )
+    assert_eq!(run(&e, "a |", "mk(sum 1/k<Tab><Tab>/"), "a ${}\\frac{\\sum \\frac{1}{k}}{|}{}$");
+    assert_eq!(run(&e, "$$\n\\left( a \\right)\\left( b \\right)|\n$$", "/"), "$$\n\\frac{\\left( a \\right)\\left( b \\right)}{|}\n$$", "two groups keep theirs");
+    // and Tab keeps going forward, never back into the replaced fraction's tabstops
+    assert_eq!(run(&e, "a |", "mk(sum 1/k<Tab>)/k<Tab>"), "a ${}\\frac{\\sum \\frac{1}{k}}{k}|{}$");
+    assert_eq!(run(&e, "a |", "mk(sum 1/k<Tab>)/k<Tab><Tab>"), "a ${}\\frac{\\sum \\frac{1}{k}}{k}{}$|");
+}

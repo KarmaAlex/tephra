@@ -91,13 +91,17 @@ pub fn tabout(e: &mut EditorApi, s: &Settings, ctx: &Ctx, text: &str) -> bool {
     let start = tokens.iter().position(|t| t.end > rel).unwrap_or(tokens.len());
     for i in start..tokens.len() {
         let t = &tokens[i];
+        // an empty `{}` after the caret (the end of `${}$0{}$`) encloses nothing to leave
+        if t.text == "}" && i > 0 && tokens[i - 1].text == "{" && tokens[i - 1].start >= rel {
+            continue;
+        }
         let unmatched_right = RIGHT_COMMANDS.contains(&t.text.as_str()) && tokens.get(i + 1).is_none_or(|n| !DELIMITERS.contains(&n.text.as_str()));
         if is_closing_delimiter(&tokens, i, &s.tabout_closing) || unmatched_right {
             e.set_caret(b.inner_start + t.end);
             return true;
         }
     }
-    let at_end = text[pos..b.inner_end].trim().is_empty();
+    let at_end = text[pos..b.inner_end].replace("{}", "").trim().is_empty();
     if !at_end && s.tabout_exit_on_eol {
         return false;
     }
@@ -166,10 +170,16 @@ pub fn reverse_tabout(e: &mut EditorApi, s: &Settings, ctx: &Ctx, text: &str) ->
     false
 }
 
-/// `)`, `]`, `}` typed right before the same character: step over it.
+/// `)`, `]`, `}` typed right before the same character, or `)`/`]` before the ` \right)` /
+/// ` \right]` that auto-enlarge made of it: step over it.
 pub fn tabout_by_close_bracket(e: &mut EditorApi, s: &Settings, ctx: &Ctx, text: &str, key: &str) -> bool {
     let sel = e.selection();
-    if !sel.is_empty() || !matches!(key, ")" | "]" | "}") || !text[sel.head..].starts_with(key) {
+    if !sel.is_empty() || !matches!(key, ")" | "]" | "}") {
+        return false;
+    }
+    let rest = &text[sel.head..];
+    let enlarged = key != "}" && rest.trim_start_matches(' ').strip_prefix("\\right").is_some_and(|r| r.starts_with(key));
+    if !rest.starts_with(key) && !enlarged {
         return false;
     }
     tabout(e, s, ctx, text)
@@ -182,6 +192,21 @@ fn greek_space() -> &'static Regex {
     RE.get_or_init(|| {
         Regex::new("(alpha|beta|gamma|Gamma|delta|Delta|epsilon|varepsilon|zeta|eta|theta|Theta|iota|kappa|lambda|Lambda|mu|nu|omicron|xi|Xi|pi|Pi|rho|sigma|Sigma|tau|upsilon|Upsilon|varphi|phi|Phi|chi|psi|Psi|omega|Omega) ([^ ])").expect("regex")
     })
+}
+
+/// A numerator wrapped in one pair of parentheses, `( … )` or `\left( … \right)`, loses them.
+fn strip_parens(num: &str) -> &str {
+    if num.starts_with('(') && num.ends_with(')') && find_matching_bracket(num, 0, "(", ")", false) == Some(num.len() - 1) {
+        return &num[1..num.len() - 1];
+    }
+    if let Some(inner) = num.strip_prefix("\\left(").and_then(|r| r.strip_suffix("\\right)")) {
+        // the `(` must match the final `)`, not close before it: `\left(a\right)+\left(b\right)`
+        let open = "\\left".len();
+        if find_matching_bracket(num, open, "(", ")", false) == Some(num.len() - 1) {
+            return inner.trim();
+        }
+    }
+    num
 }
 
 pub fn autofraction(e: &mut EditorApi, s: &Settings, ctx: &Ctx, text: &str) -> bool {
@@ -218,13 +243,14 @@ pub fn autofraction(e: &mut EditorApi, s: &Settings, ctx: &Ctx, text: &str) -> b
             i -= 1;
         }
     }
+    // empty groups in front (the `{}` of the `${}$0{}$` inline-math snippet) stay outside
+    while text[start..to].starts_with("{}") {
+        start += 2;
+    }
     if start == to {
         return false;
     }
-    let mut num = &text[start..to];
-    if num.starts_with('(') && num.ends_with(')') && find_matching_bracket(num, 0, "(", ")", false) == Some(num.len() - 1) {
-        num = &num[1..num.len() - 1];
-    }
+    let num = strip_parens(&text[start..to]);
     let template = if num.is_empty() { format!("{}{{$0}}{{$1}}$2", s.autofraction_symbol) } else { format!("{}{{{}}}{{$1}}$2", s.autofraction_symbol, num.replace('$', "\u{E001}")) };
     let mut ins = super::snippets::expand_tabstops(&template);
     ins.text = ins.text.replace('\u{E001}', "$");
@@ -385,7 +411,7 @@ pub fn enlarge_brackets(e: &mut EditorApi, s: &Settings) -> bool {
 
 // ---- auto-delete $ -------------------------------------------------------------------------
 
-/// Backspace inside an empty `$|$` deletes both dollars.
+/// Backspace inside an empty `$|$` (or `${}|{}$`) deletes the whole formula.
 pub fn auto_delete_dollar(e: &mut EditorApi, s: &Settings, text: &str) -> bool {
     let sel = e.selection();
     if !s.auto_delete_dollar || !sel.is_empty() {
@@ -393,6 +419,11 @@ pub fn auto_delete_dollar(e: &mut EditorApi, s: &Settings, text: &str) -> bool {
     }
     let p = sel.head;
     let b = text.as_bytes();
+    // the empty `${}|{}$` the inline-math snippet leaves
+    if text[..p].ends_with("${}") && text[p..].starts_with("{}$") && !text[..p - 3].ends_with('$') && !text[p + 3..].starts_with('$') {
+        e.replace(p - 3..p + 3, "", EditKind::Delete);
+        return true;
+    }
     if p == 0 || p >= b.len() || b[p - 1] != b'$' || b[p] != b'$' {
         return false;
     }
