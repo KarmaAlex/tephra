@@ -1,0 +1,14 @@
+# Builds obsidilight + its .deb on Debian, so the binary links against Debian's (older) glibc
+# instead of the build host's: an Arch-built binary needs GLIBC_2.44 and runs on no Debian/Ubuntu.
+# Default base: Debian 12 bookworm. The binary ends up needing glibc >= 2.35 (computed into
+# Depends: by dpkg-shlibdeps), so it installs on Debian 12+, Ubuntu 22.04+ and derivatives.
+# Override with  make deb DEB_IMAGE=<image>  to build on another Debian/Ubuntu base.
+ARG BASE_IMAGE=docker.io/library/debian:bookworm
+FROM ${BASE_IMAGE}
+ARG RUST_TOOLCHAIN=stable
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        ca-certificates curl build-essential pkg-config dpkg-dev \
+        libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libfontconfig-dev \
+    && rm -rf /var/lib/apt/lists/*
+ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:$PATH
+RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain ${RUST_TOOLCHAIN}

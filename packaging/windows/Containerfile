@@ -1,0 +1,11 @@
+# Cross-compiles obsidilight for Windows (x86_64-pc-windows-gnu) from Linux.
+#   mingw-w64-gcc    C/C++ cross compiler + linker for the -sys crates (QuickJS, tree-sitter)
+#   vkd3d            its vkd3d-compiler is an open-source HLSL -> DXBC compiler; it stands in
+#                    for the Windows SDK's fxc.exe when precompiling GPUI's DirectX shaders
+FROM docker.io/library/archlinux:latest
+ARG RUST_TOOLCHAIN=stable
+RUN pacman -Syu --noconfirm --needed base-devel mingw-w64-gcc vkd3d rustup zip \
+    && pacman -Scc --noconfirm
+ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:$PATH
+RUN rustup toolchain install ${RUST_TOOLCHAIN} --profile minimal --target x86_64-pc-windows-gnu \
+    && rustup default ${RUST_TOOLCHAIN}

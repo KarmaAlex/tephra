@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Obsidilight
+GenericName=Markdown Notes
+Comment=Lightweight Obsidian-compatible notes app
+Exec=obsidilight %f
+Icon=obsidilight
+Terminal=false
+Categories=Office;TextEditor;
+Keywords=notes;markdown;obsidian;vault;
+MimeType=text/markdown;
+StartupWMClass=obsidilight

@@ -25,7 +25,9 @@ use crate::editor::Editor;
 
 /// Folders searched for `<lang>.aff` + `<lang>.dic`.
 pub fn search_dirs(vault: &Path, extra: &str) -> Vec<PathBuf> {
-    let mut v: Vec<PathBuf> = extra.split([',', ':']).map(str::trim).filter(|s| !s.is_empty()).map(PathBuf::from).collect();
+    // ':' separates like $PATH on Unix; on Windows it is part of "C:\..." so only ',' / ';'
+    let seps: &[char] = if cfg!(windows) { &[',', ';'] } else { &[',', ':'] };
+    let mut v: Vec<PathBuf> = extra.split(seps).map(str::trim).filter(|s| !s.is_empty()).map(PathBuf::from).collect();
     v.push(vault.join(".obsidilight/dictionaries"));
     if let Some(p) = std::env::var_os("DICPATH") {
         v.extend(std::env::split_paths(&p));

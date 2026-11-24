@@ -1,0 +1,15 @@
+{
+  "name": "obsidilight-js-bundles",
+  "private": true,
+  "type": "module",
+  "description": "Builds the JS bundles the app embeds (include_str!) and runs in QuickJS",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "@codemirror/state": "6.7.6",
+    "@lezer/markdown": "1.8.1",
+    "esbuild": "0.28.2",
+    "mathjax-full": "3.2.1"
+  }
+}

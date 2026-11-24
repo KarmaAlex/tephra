@@ -1,0 +1,34 @@
+# Maintainer: KarmaAlex
+# Binary package: repacks the release binary built in the repo (it embeds its JS bundles and
+# UI fonts, so it is self-contained apart from the system libraries below).
+# Don't run makepkg here by hand: `make arch` (packaging/arch/build.sh) builds the binary, stages
+# the source tarball, sets pkgver from Cargo.toml, fills in the checksum and runs makepkg in
+# target/pkg/arch. Output: dist/obsidilight-<pkgver>-<pkgrel>-x86_64.pkg.tar.zst
+pkgname=obsidilight
+pkgver=0.1.0
+pkgrel=3
+pkgdesc='Lightweight Obsidian-compatible notes app (GPUI)'
+arch=('x86_64')
+license=('MIT' 'OFL-1.1' 'Bitstream-Vera')
+# runtime deps resolved from `ldd` + dlopen'd libs (libEGL/libvulkan/libwayland-*).
+# The fonts the app renders with (IBM Plex Sans, DejaVu Sans Mono, DejaVu Sans fallback)
+# are EMBEDDED in the binary (crates/app/assets/fonts), so text weighting is identical on
+# every machine; ttf-ibm-plex/ttf-dejavu are listed too, as system-side glyph fallback for
+# characters outside the embedded fonts (symbols, emoji come from other packages).
+depends=('glibc' 'gcc-libs' 'libxcb' 'libxkbcommon' 'libxkbcommon-x11' 'libglvnd'
+         'vulkan-icd-loader' 'wayland' 'ttf-ibm-plex' 'ttf-dejavu')
+optdepends=('vulkan-driver: hardware-accelerated rendering (e.g. vulkan-radeon, vulkan-intel, nvidia-utils)'
+            'xdg-desktop-portal: folder picker when started without a vault (from the app menu)'
+            'hunspell-en_us: spell checking (any hunspell dictionary works)'
+            'noto-fonts-emoji: emoji glyphs')
+options=('!strip' '!debug')
+source=("obsidilight-${pkgver}-linux-x86_64.tar.zst")
+sha256sums=('SKIP')
+
+package() {
+  cd "obsidilight-${pkgver}"
+  install -Dm755 obsidilight "$pkgdir/usr/bin/obsidilight"
+  install -Dm644 obsidilight.desktop "$pkgdir/usr/share/applications/obsidilight.desktop"
+  install -Dm644 obsidilight.png "$pkgdir/usr/share/icons/hicolor/64x64/apps/obsidilight.png"
+  install -Dm644 -t "$pkgdir/usr/share/licenses/$pkgname" LICENSE LICENSE-IBMPlexSans.txt LICENSE-DejaVu.txt
+}

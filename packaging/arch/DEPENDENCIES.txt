@@ -1,0 +1,39 @@
+obsidilight 0.1.0 — Arch Linux (x86_64) runtime requirements
+=============================================================
+
+The package obsidilight-<version>-<pkgrel>-x86_64.pkg.tar.zst (from dist/) declares these as
+dependencies, so `pacman -U` resolves them automatically from the repos.
+If the target laptop is offline or deps are missing, install them manually:
+
+    sudo pacman -S glibc gcc-libs libxcb libxkbcommon libxkbcommon-x11 \
+        libglvnd vulkan-icd-loader wayland ttf-ibm-plex ttf-dejavu
+
+What each one is for (from ldd + dlopen'd libraries):
+
+    glibc, gcc-libs      C runtime (libc.so.6, libgcc_s.so.1, libm.so.6)
+    libxcb               X11 transport (libxcb.so.1; pulls in libxau, libxdmcp)
+    libxkbcommon         keyboard handling (libxkbcommon.so.0)
+    libxkbcommon-x11     X11 xkb extension (libxkbcommon-x11.so.0, libxcb-xkb.so.1)
+    libglvnd             libEGL.so.1 (dlopen'd by the GPU layer)
+    vulkan-icd-loader    libvulkan.so.1 (dlopen'd; needs a Vulkan ICD, e.g. mesa)
+    wayland              libwayland-client.so.0 / libwayland-egl.so.1 (dlopen'd)
+    ttf-ibm-plex         system copy of the fonts the app embeds (glyph fallback)
+    ttf-dejavu           same, for DejaVu Sans / DejaVu Sans Mono
+
+FONTS: the fonts the app actually renders with are EMBEDDED in the binary
+(IBM Plex Sans 400–700 + italics, DejaVu Sans Mono, DejaVu Sans fallback —
+see crates/app/assets/fonts/), so text and its weighting are identical on
+every machine; the font packages above are only a system-side fallback for
+glyphs outside those fonts (emoji etc. need e.g. noto-fonts-emoji).
+
+A working X11 or Wayland session is required to run the app (it is a GPUI
+desktop app). A Vulkan driver (e.g. `mesa`) is needed for hardware rendering;
+without one it falls back to software rendering.
+
+Install the app on the target laptop:
+
+    sudo pacman -U obsidilight-*-x86_64.pkg.tar.zst
+
+Run it:
+
+    obsidilight /path/to/your/vault        # or: obsidilight /path/to/note.md

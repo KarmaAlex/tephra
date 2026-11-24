@@ -43,7 +43,8 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 /// Where app data goes: `$OBSIDILIGHT_DATA_DIR`; inside the (throwaway) vault for scripted UI
-/// tests; else `$XDG_DATA_HOME/obsidilight` (`~/.local/share/obsidilight`).
+/// tests; else `$XDG_DATA_HOME/obsidilight` (`~/.local/share/obsidilight`), on Windows
+/// `%LOCALAPPDATA%\obsidilight`.
 pub fn data_dir(vault: &Path) -> PathBuf {
     if let Some(d) = std::env::var_os("OBSIDILIGHT_DATA_DIR") {
         return PathBuf::from(d);
@@ -51,7 +52,11 @@ pub fn data_dir(vault: &Path) -> PathBuf {
     if std::env::var_os("OBSIDILIGHT_SCRIPT").is_some() || std::env::var_os("OBSIDILIGHT_BENCH").is_some() {
         return vault.join(".obsidilight/test-data");
     }
-    let base = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join(".local/share"));
+    let env_dir = |k: &str| std::env::var_os(k).map(PathBuf::from).filter(|p| p.is_absolute());
+    // Windows has no $HOME/XDG: %LOCALAPPDATA%\obsidilight (machine-local, not roamed)
+    let base = if cfg!(windows) { env_dir("LOCALAPPDATA").or_else(|| env_dir("APPDATA")) } else { None }
+        .or_else(|| env_dir("XDG_DATA_HOME"))
+        .unwrap_or_else(|| env_dir("HOME").or_else(|| env_dir("USERPROFILE")).unwrap_or_else(std::env::temp_dir).join(".local/share"));
     base.join("obsidilight")
 }
 

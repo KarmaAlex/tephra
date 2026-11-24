@@ -4,6 +4,10 @@
 //!   obsidilight <vault-folder | path/to/note.md>
 //! Env: OBSIDILIGHT_BENCH=1 runs the typing benchmark, prints `REPORT {json}` and exits.
 //!      OBSIDILIGHT_SCRIPT=<file> replays scripted input (see script.rs).
+//! Without an argument (app menu, double-clicked .exe) a folder picker asks for the vault.
+
+// Release builds on Windows are GUI-subsystem apps: no console window behind the editor.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod app_settings;
 mod atoms;
@@ -43,50 +47,71 @@ fn main() {
         }
         return;
     }
-    let Some(arg) = std::env::args_os().nth(1).map(PathBuf::from) else {
-        eprintln!("usage: obsidilight <vault-folder | note.md>");
-        std::process::exit(2);
-    };
-    let arg = std::fs::canonicalize(&arg).unwrap_or(arg);
-    let root = embeds::Vault::root_for(&arg);
-    let note = arg.is_file().then(|| arg.clone());
-    let title: SharedString = root.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default().into();
+    if std::env::args_os().nth(1).is_some_and(|a| a == "--help" || a == "-h") {
+        println!("usage: obsidilight [vault-folder | note.md]\n(without an argument a folder picker asks for the vault)");
+        return;
+    }
+    let arg = std::env::args_os().nth(1).map(PathBuf::from);
     gpui_kit::application().with_assets(icons::AppAssets).run(move |cx| {
         gpui_kit::init(cx);
         fonts::load(cx);
         editor::render::register_languages();
         editor::bind_keys(cx);
         workspace::bind_keys(cx);
-        app_settings::AppSettings::init(cx, &root);
-        plugins::PluginHost::init(cx, &root);
-        hotkeys::install(cx);
-        cx.set_global(embeds::VaultRoot(root.clone()));
-        theme::init(cx, &root);
-        theme::apply(None, cx);
-        let opts = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size(px(1280.), px(860.)), cx))),
-            titlebar: Some(TitlebarOptions { title: Some(title), ..Default::default() }),
-            app_id: Some("obsidilight".into()),
-            ..Default::default()
-        };
-        let result = gpui_kit::open_window(opts, cx, move |window, cx| {
-            // follow the system's light/dark switch (when the base theme is "system")
-            window.observe_window_appearance(|window, cx| theme::apply(Some(window), cx)).detach();
-            theme::apply(Some(window), cx);
-            let ws = cx.new(|cx| workspace::Workspace::new(root, window, cx));
-            window.on_next_frame(move |_, _| println!("READY {:.1}", t0.elapsed().as_secs_f64() * 1000.0));
-            if let Some(note) = note {
-                let editor = ws.update(cx, |ws, cx| ws.open_path(note, false, window, cx));
-                script::start(editor.clone(), ws.downgrade(), window, cx);
-                if std::env::var_os("OBSIDILIGHT_BENCH").is_some() {
-                    bench::start(editor, window, cx);
-                }
+        match arg {
+            Some(arg) => open_vault(arg, t0, cx),
+            // started from the application menu / by double-clicking the .exe: ask for the vault
+            None => {
+                let picked = cx.prompt_for_paths(PathPromptOptions { files: false, directories: true, multiple: false, prompt: Some("Open vault".into()) });
+                cx.spawn(async move |cx| match picked.await {
+                    Ok(Ok(Some(paths))) if !paths.is_empty() => cx.update(|cx| open_vault(paths[0].clone(), t0, cx)),
+                    Ok(Err(e)) => {
+                        eprintln!("could not show the folder picker: {e}\nusage: obsidilight <vault-folder | note.md>");
+                        cx.update(|cx| cx.quit());
+                    }
+                    _ => cx.update(|cx| cx.quit()),
+                })
+                .detach();
             }
-            ws
-        });
-        if let Err(e) = result {
-            eprintln!("could not open window: {e}");
-            std::process::exit(1);
         }
     });
+}
+
+/// Opens the main window on a vault folder, or on the vault containing a note (which is opened).
+fn open_vault(arg: PathBuf, t0: Instant, cx: &mut App) {
+    let arg = std::fs::canonicalize(&arg).unwrap_or(arg);
+    let root = embeds::Vault::root_for(&arg);
+    let note = arg.is_file().then(|| arg.clone());
+    let title: SharedString = root.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default().into();
+    app_settings::AppSettings::init(cx, &root);
+    plugins::PluginHost::init(cx, &root);
+    hotkeys::install(cx);
+    cx.set_global(embeds::VaultRoot(root.clone()));
+    theme::init(cx, &root);
+    theme::apply(None, cx);
+    let opts = WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size(px(1280.), px(860.)), cx))),
+        titlebar: Some(TitlebarOptions { title: Some(title), ..Default::default() }),
+        app_id: Some("obsidilight".into()),
+        ..Default::default()
+    };
+    let result = gpui_kit::open_window(opts, cx, move |window, cx| {
+        // follow the system's light/dark switch (when the base theme is "system")
+        window.observe_window_appearance(|window, cx| theme::apply(Some(window), cx)).detach();
+        theme::apply(Some(window), cx);
+        let ws = cx.new(|cx| workspace::Workspace::new(root, window, cx));
+        window.on_next_frame(move |_, _| println!("READY {:.1}", t0.elapsed().as_secs_f64() * 1000.0));
+        if let Some(note) = note {
+            let editor = ws.update(cx, |ws, cx| ws.open_path(note, false, window, cx));
+            script::start(editor.clone(), ws.downgrade(), window, cx);
+            if std::env::var_os("OBSIDILIGHT_BENCH").is_some() {
+                bench::start(editor, window, cx);
+            }
+        }
+        ws
+    });
+    if let Err(e) = result {
+        eprintln!("could not open window: {e}");
+        std::process::exit(1);
+    }
 }

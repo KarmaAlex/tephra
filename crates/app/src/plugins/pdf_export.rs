@@ -451,7 +451,7 @@ impl ExportView {
         let State::Done(out, _) = &self.state else { return };
         let bytes = out.pdf.clone();
         self.remember(cx);
-        let dir = std::env::var_os("HOME").map(PathBuf::from).map(|h| if h.join("Documents").is_dir() { h.join("Documents") } else { h }).unwrap_or_else(|| PathBuf::from("."));
+        let dir = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).map(|h| if h.join("Documents").is_dir() { h.join("Documents") } else { h }).unwrap_or_else(|| PathBuf::from("."));
         let rx = cx.prompt_for_new_path(&dir, Some(&format!("{}.pdf", self.title)));
         window
             .spawn(cx, async move |cx| {
