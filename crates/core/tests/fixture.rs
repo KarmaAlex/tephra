@@ -1,6 +1,7 @@
 //! Runs against a local vault fixture, never a real vault.
-//! Skips (passes) when no fixture is present. Path: $VAULT or ~/dev/vault-fixture.
-//! Reports only counts and paths, never note content.
+//! The fixture-wide tests skip (pass) when no fixture is present. Path: $VAULT or
+//! ~/dev/vault-fixture. The last test builds its own tiny vault (with callouts) and always
+//! runs. Reports only counts and paths, never note content.
 
 use std::path::{Path, PathBuf};
 
@@ -229,4 +230,61 @@ fn index_build_and_rename_plans() {
             assert!(edited_notes.contains(bl.source.as_str()), "{old}: backlink in {} not updated", bl.source);
         }
     }
+}
+
+/// A tiny generated vault with callouts, embeds and links, so those are checked exactly even
+/// when no external fixture is present. Runs in a temp dir; nothing else is touched.
+#[test]
+fn synthetic_vault_indexes_callouts_embeds_and_renames() {
+    use tephra_core::index::{apply_edits, parse_note, VaultIndex};
+    use tephra_core::links::Resolver;
+    let root = std::env::temp_dir().join(format!("tephra-synthetic-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join(".obsidian")).unwrap();
+    std::fs::create_dir_all(root.join("Sub")).unwrap();
+    std::fs::write(root.join("A.md"), "# Title\nsee [[B#Sec|here]], ![[img.png]] and ![[B]], plus [[Missing]] #tag\n> [!thm|x=1] Theorem\n> body ^blk\n").unwrap();
+    std::fs::write(root.join("Sub/B.md"), "## Sec\n[[A]]\n> [!note] Remark\n> text\n").unwrap();
+    std::fs::write(root.join("img.png"), "PNG").unwrap();
+
+    let idx = VaultIndex::build(&root);
+    let notes: Vec<_> = idx.notes().collect();
+    assert_eq!(notes.len(), 2);
+    let a = idx.note("A.md").unwrap();
+    // callouts are indexed with kind, meta, title and block id
+    assert_eq!(a.callouts.len(), 1);
+    assert_eq!((a.callouts[0].kind.as_str(), a.callouts[0].meta.as_str(), a.callouts[0].title.as_str()), ("thm", "x=1", "Theorem"));
+    assert_eq!(a.block_ids, vec![("blk".to_string(), 3)]);
+    assert_eq!(a.tags, vec!["tag"]);
+    let b = idx.note("Sub/B.md").unwrap();
+    assert_eq!(b.callouts.len(), 1);
+    assert_eq!((b.callouts[0].kind.as_str(), b.callouts[0].title.as_str()), ("note", "Remark"));
+    assert_eq!(notes.iter().map(|n| n.callouts.len()).sum::<usize>(), 2, "every callout counted exactly once");
+    // links and embeds resolve (an embed is a link with embed: true)
+    let r: Vec<_> = a.links.iter().map(|l| (l.target.as_str(), l.resolved.as_deref())).collect();
+    assert_eq!(r, vec![("B#Sec", Some("Sub/B.md")), ("img.png", Some("img.png")), ("B", Some("Sub/B.md")), ("Missing", None)]);
+    // both the link and the embed point at B
+    assert_eq!(idx.backlinks("Sub/B.md").len(), 2);
+    assert!(idx.backlinks("Sub/B.md").iter().all(|b| b.source == "A.md"));
+
+    // a rename plan rewrites every link (and embed) that pointed at the moved file
+    let old = "Sub/B.md";
+    let new = "Sub/Renamed.md";
+    let plan = idx.rename_plan(&[(old.into(), new.into())]);
+    let after = Resolver::new(idx.files().map(|f| if *f == old { new } else { f }));
+    for edit in &plan {
+        let src = if edit.note == new { old.to_string() } else { edit.note.clone() };
+        let text = std::fs::read_to_string(root.join(&src)).unwrap();
+        let edited = apply_edits(&text, &edit.edits);
+        let before = idx.note(&src).unwrap();
+        let now = parse_note(&edit.note, &edited);
+        assert_eq!(now.links.len(), before.links.len());
+        for (b, a) in before.links.iter().zip(&now.links) {
+            let want = b.resolved.as_ref().map(|r| if *r == old { new.to_string() } else { r.clone() });
+            assert_eq!(after.resolve(&a.target, &edit.note), want, "link {:?} in {}", a.target, edit.note);
+        }
+    }
+    let edited_notes: std::collections::HashSet<&str> = plan.iter().map(|e| e.note.as_str()).collect();
+    assert!(edited_notes.contains("A.md"), "the backlink source got an edit");
+
+    let _ = std::fs::remove_dir_all(&root);
 }

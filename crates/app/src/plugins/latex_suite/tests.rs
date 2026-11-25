@@ -101,9 +101,14 @@ fn builtin_defaults_expand() {
     assert_eq!(run(&e, "a |", "mk"), "a ${}|{}$");
     assert_eq!(run(&e, "|", "dm"), "$$\n|\n$$");
     assert_eq!(run(&e, "> |", "dm"), "> \n> $$\n> |\n> $$", "callout prefix kept on new lines");
-    // plain and regex snippets
+    // plain, regex and function snippets
     assert_eq!(run(&e, &m("|"), "@a"), m("\\alpha|"));
     assert_eq!(run(&e, &m("|"), "xsr"), m("x^{2}|"));
+    // auto-subscript: a plain variable and a Greek macro
+    assert_eq!(run(&e, &m("|"), "x3"), m("x_{3}|"));
+    assert_eq!(run(&e, &m("|"), "@a3"), m("\\alpha_{3}|"));
+    // a JavaScript function replacement
+    assert_eq!(run(&e, &m("|"), "iden2"), m("\\begin{pmatrix}\n1 & 0 \\\\\n0 & 1\n\\end{pmatrix}|"));
     // typing a macro is left alone; an unknown continuation gets a space
     assert_eq!(run(&e, &m("|"), "\\alp"), m("\\alp|"));
     assert_eq!(run(&e, &m("|"), "\\tox"), m("\\to x|"));
@@ -112,6 +117,18 @@ fn builtin_defaults_expand() {
     assert_eq!(run(&e, &m("|"), "sq"), m("\\sqrt{ | }"));
     assert_eq!(run(&e, &m("|"), "dint"), m("\\int_{[0]}^{1}  \\, dx "));
     assert_eq!(run(&e, &m("|"), "dint<Tab>"), m("\\int_{0}^{[1]}  \\, dx "));
+    // mirrored placeholders: one tabstop repeated in the replacement, all showing its default
+    assert_eq!(run(&e, &m("|"), "tayl"), m("[f](x + h) = f(x) + f'(x)h + f''(x) \\frac{h^{2}}{2!} + \\dots"), "mirrored placeholder");
+    // non-automatic snippet on Tab
+    assert_eq!(run(&e, &m("|"), "par<Tab>"), m("\\frac{ \\partial [y] }{ \\partial x } "));
+    // environments: a regex with a capture, then matrix shortcuts (Tab adds a cell, Enter a row, Shift+Enter leaves)
+    assert_eq!(run(&e, &m("|"), "pmat"), m("\\begin{pmatrix}\n|\n\\end{pmatrix}"));
+    assert_eq!(run(&e, &m("|"), "pmat<Tab>b<CR>c"), m("\\begin{pmatrix}\n & b \\\\\n & c|\n\\end{pmatrix}"));
+    assert_eq!(run(&e, &m("|"), "pmat<S-CR>"), m("\\begin{pmatrix}\n\n\\end{pmatrix}|"));
+    // visual snippet on a selection
+    assert_eq!(run(&e, &m("[x+y]"), "U"), m("\\underbrace{ x+y }_{ | }"));
+    // inline math: tabstops inside $…$
+    assert_eq!(run(&e, "$x|$", "lim"), "$x\\lim_{ [n] \\to \\infty }$");
 }
 
 #[test]
