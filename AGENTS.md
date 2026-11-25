@@ -57,7 +57,8 @@ crates/app     tephra — the GPUI app
                             process (`--export-worker`), MathJax SVG for math, preview
                             pages rasterised to PNG
                theme.rs     themes/snippets: GPUI has no CSS engine, so only Obsidian's CSS
-                            *variables* apply (global, class-scoped, --callout-color)
+                            *variables* apply (global, class-scoped, --callout-color) —
+                            see docs/themes.md
 tools/js-bundles   builds the embedded MathJax-SVG and headless-CM6 bundles (Node, esbuild)
 tools/perf         `make perf` harness: proctree.py (process-tree memory), run_perf.sh,
                    obsidian_run.mjs (Obsidian baseline, isolated profile)
@@ -68,7 +69,8 @@ themes/            the bundled Tephra theme (dark/light variants follow the base
 ```
 
 **Plugin system.** Every feature — including the "core" ones like search, backlinks and the
-outline — is a bundled plugin on one API (`crates/app/src/plugins/api.rs`): a `Plugin` trait
+outline — is a bundled plugin on one API (`crates/app/src/plugins/api.rs`; see
+[docs/plugins.md](docs/plugins.md) for the full guide): a `Plugin` trait
 with `on_load`/`on_unload`, a `Registrar` that records every registration so unloading is
 total, and registration points for markdown post-processors, code-block renderers (with
 nested Markdown rendering and a Typst export hook), callout renderers, editor hooks,
@@ -101,6 +103,13 @@ on every machine.
   typing benchmark.
 - **Package:** `make arch` / `make deb` / `make windows` / `make dist` — outputs in `dist/`,
   see `packaging/README.md` (Debian and Windows build in containers via podman).
+- **Plugins and themes:** when the user wants to create or modify a plugin, work from
+  [docs/plugins.md](docs/plugins.md) (the API, the registration points, how to add a bundled
+  plugin — reference `crates/app/src/plugins/api.rs` and `mod.rs`). When the user wants to
+  create or modify a theme or snippet, work from [docs/themes.md](docs/themes.md) (what CSS
+  applies, where themes are loaded from, how to write one — reference
+  `crates/app/src/theme.rs`). Keep both docs current when the plugin API or the theming
+  rules change.
 - **Style:** small commits with clear messages; run the tests before every commit. Comments
   explain why, not what. When a vault's real content and an assumption in the code
   disagree, the vault (Obsidian compatibility) wins. Keep this file current.
