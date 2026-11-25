@@ -74,7 +74,7 @@ impl MarkdownPlugin for ImagePlugin {
     fn parse(&self, _: &markdown_ast::Node, _: &MarkdownParseContext<'_>) -> Option<MarkdownNode> {
         None
     }
-    fn render_inline(&self, node: &MarkdownNode, _: &InlineRenderContext, _: &mut Window, cx: &mut App) -> Option<InlineElement> {
+    fn render_inline(&self, node: &MarkdownNode, _: &InlineRenderContext, window: &mut Window, cx: &mut App) -> Option<InlineElement> {
         let a = node.data::<ImageAtom>()?;
         let Some(path) = a.path.clone() else {
             return Some(InlineElement::new(div().text_color(cx.theme().danger).child(SharedString::from(format!("![[{}]] — not found", a.name)))));
@@ -84,11 +84,23 @@ impl MarkdownPlugin for ImagePlugin {
         let (w, h) = a.size.map(|(w, h)| (w as f32 * scale, h as f32 * scale)).unwrap_or((320.0 * scale, 200.0 * scale));
         let max = CONTENT_WIDTH.with(|c| c.get()).clamp(120.0, MAX_IMAGE_WIDTH * scale);
         let scale = (max / w).min(1.0);
-        // whole pixels: gpui-kit rejects an object whose baseline exceeds its measured height
-        let (w, h) = ((w * scale).round(), (h * scale).round());
+        // whole device pixels, so the baseline (= the bottom) never exceeds the measured height
+        let (w, h) = (device_snap(w * scale, window), device_snap(h * scale, window));
         // decoded lazily by GPUI's image cache when first painted
-        Some(InlineElement::new(img(path).w(px(w)).h(px(h)).object_fit(ObjectFit::Contain)).with_baseline(px(h)))
+        let el = img(path).w(px(w)).h(px(h)).object_fit(ObjectFit::Contain);
+        Some(InlineElement::new(el).with_baseline(px(h)))
     }
+}
+
+/// `v` logical pixels rounded down to whole *device* pixels, a height GPUI's layout keeps
+/// exactly (it rounds every box to device pixels). gpui-base drops an inline object whose
+/// baseline exceeds its measured height and draws its U+FFFC placeholder text instead (an "OBJ"
+/// box): at a fractional scale a whole logical-pixel height comes back shorter, e.g. 201 px at
+/// 125 % -> 251.25 device px -> 251 -> 200.8, so an object with its baseline at its bottom
+/// (images, superscripts) must have a height that survives the round trip.
+fn device_snap(v: f32, window: &Window) -> f32 {
+    let s = window.scale_factor();
+    (v * s).floor().max(1.0) / s
 }
 
 /// `<sup>` / `<sub>`: three-quarter size text, raised or lowered (GPUI text has no baseline
@@ -106,13 +118,13 @@ impl MarkdownPlugin for SupSubPlugin {
         let a = node.data::<SupSubAtom>()?;
         let style = context.text_style();
         let fs = f32::from(context.font_size()) * 0.75;
-        let h = (fs * 1.3).round();
+        let h = device_snap((fs * 1.3).round(), window);
         let run = TextRun { len: a.text.len(), font: style.font(), color: style.color, background_color: None, underline: None, strikethrough: None };
         let w = window.text_system().shape_line(a.text.clone().into(), px(fs), &[run], None).width;
         let el = div().w(w.ceil() + px(1.)).h(px(h)).text_size(px(fs)).line_height(px(h)).text_color(style.color).child(SharedString::from(a.text.clone()));
         // the object's baseline: at its bottom, the small text sits a third of a line above the
         // text's baseline; near its top, it hangs below
-        let baseline = if a.sup { h } else { (h * 0.45).round() };
+        let baseline = if a.sup { h } else { (h * 0.45).round().min(h) };
         Some(InlineElement::new(el).with_baseline(px(baseline)))
     }
 }

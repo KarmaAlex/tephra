@@ -5051,6 +5051,7 @@ dependencies = [
  "embed-resource",
  "gpui-kit",
  "image",
+ "log",
  "notify",
  "obsidilight-core",
  "ratex-layout",

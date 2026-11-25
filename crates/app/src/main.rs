@@ -23,6 +23,7 @@ mod fonts;
 mod fuzzy;
 mod hotkeys;
 mod image_view;
+mod logging;
 mod icons;
 mod math;
 mod moment;
@@ -54,6 +55,7 @@ fn main() {
         println!("usage: obsidilight [vault-folder | note.md]\n(without an argument the last opened vault, else the welcome page)");
         return;
     }
+    logging::init();
     let arg = std::env::args_os().nth(1).map(PathBuf::from);
     gpui_kit::application().with_assets(icons::AppAssets).run(move |cx| {
         gpui_kit::init(cx);
