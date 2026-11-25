@@ -34,7 +34,7 @@ key enter
 wait 1500
 quit
 SCRIPT
-OUT=$(OBSIDILIGHT_SCRIPT="$TMP/t.script" timeout 30 target/release/obsidilight "$TMP/n.md" | grep -E "^STATE")
+OUT=$(TEPHRA_SCRIPT="$TMP/t.script" timeout 30 target/release/tephra "$TMP/n.md" | grep -E "^STATE")
 echo "$OUT"
 grep -qF 'text="**word|** here"' <<<"$OUT" || { echo "ui-toolbar: bold"; exit 1; }
 grep -qF 'text="## **word** here|"' <<<"$OUT" || { echo "ui-toolbar: heading"; exit 1; }

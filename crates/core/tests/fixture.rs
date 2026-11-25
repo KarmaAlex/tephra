@@ -4,9 +4,9 @@
 
 use std::path::{Path, PathBuf};
 
-use obsidilight_core::file::{self, SaveOutcome};
-use obsidilight_core::markdown::{find_math, parse_blocks, parse_inline, BlockKind, Inline, InlineKind};
-use obsidilight_core::Document;
+use tephra_core::file::{self, SaveOutcome};
+use tephra_core::markdown::{find_math, parse_blocks, parse_inline, BlockKind, Inline, InlineKind};
+use tephra_core::Document;
 
 fn fixture() -> Option<PathBuf> {
     let p = std::env::var_os("VAULT")
@@ -46,7 +46,7 @@ fn roundtrip_blocks_and_math_over_fixture() {
         eprintln!("fixture not found; skipping");
         return;
     };
-    let tmp = std::env::temp_dir().join(format!("obsidilight-fixture-{}", std::process::id()));
+    let tmp = std::env::temp_dir().join(format!("tephra-fixture-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).unwrap();
     let ns = notes(&root);
     assert!(ns.len() >= 200, "expected the full fixture, found {} notes", ns.len());
@@ -142,7 +142,7 @@ fn every_embed_resolves() {
             for e in found {
                 total += 1;
                 let target = e.link_target(&text);
-                if obsidilight_core::links::resolve_link(target, &refs, &rel).is_none() {
+                if tephra_core::links::resolve_link(target, &refs, &rel).is_none() {
                     missing.push(format!("{rel}: line {}", text[..e.range.start].matches('\n').count() + 1));
                 }
             }
@@ -157,8 +157,8 @@ fn every_embed_resolves() {
 /// same (moved) file. Runs in memory; the fixture is not modified.
 #[test]
 fn index_build_and_rename_plans() {
-    use obsidilight_core::index::{apply_edits, parse_note, VaultIndex};
-    use obsidilight_core::links::Resolver;
+    use tephra_core::index::{apply_edits, parse_note, VaultIndex};
+    use tephra_core::links::Resolver;
     let Some(root) = fixture() else { return };
     let t = std::time::Instant::now();
     // (block ids referenced by same-note links must be found)

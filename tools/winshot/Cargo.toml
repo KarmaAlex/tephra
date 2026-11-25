@@ -1,6 +1,6 @@
 [package]
 name = "winshot"
-description = "Captures one window (by process id) through KWin, for obsidilight's UI checks"
+description = "Captures one window (by process id) through KWin, for tephra's UI checks"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

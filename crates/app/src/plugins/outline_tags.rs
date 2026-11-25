@@ -11,8 +11,8 @@ use std::rc::Rc;
 use gpui_kit::component::{h_flex, v_flex, ActiveTheme as _};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use obsidilight_core::markdown::{parse_blocks, BlockKind};
-use obsidilight_core::Selection;
+use tephra_core::markdown::{parse_blocks, BlockKind};
+use tephra_core::Selection;
 use serde_json::{Map, Value};
 
 use super::api::*;
@@ -130,7 +130,7 @@ pub fn tag_rows(tags: &[(String, usize)], by_count: bool) -> Vec<(usize, String,
             }
             full.push_str(seg);
             let f = full.clone();
-            node = node.kids.entry(obsidilight_core::search::fold(seg)).or_insert_with(|| Node { name: seg.to_string(), full: f, ..Default::default() });
+            node = node.kids.entry(tephra_core::search::fold(seg)).or_insert_with(|| Node { name: seg.to_string(), full: f, ..Default::default() });
             node.count += n;
         }
     }

@@ -191,17 +191,17 @@ pub fn build(rel: &str, text: &str, page: &Page, cx: &App) -> Option<Job> {
         while !text.is_char_boundary(cut) {
             cut -= 1;
         }
-        obsidilight_core::index::cssclasses(&text[..cut])
+        tephra_core::index::cssclasses(&text[..cut])
     };
     let look = look_for(&classes, cx);
     let e = Emitter::new(Ctx { numbers: &numbers, link_label: &link_label, style: &style, code: &code, code_note: &code_note, callout_body: &callout_body, body_end: &body_end, embed: &embed });
     let body = e.blocks(text, 0);
     let title = Path::new(rel).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
     // the title as a heading, unless the note starts with that H1 already
-    let own_h1 = obsidilight_core::markdown::parse_blocks(text)
+    let own_h1 = tephra_core::markdown::parse_blocks(text)
         .into_iter()
-        .find(|b| matches!(b.kind, obsidilight_core::markdown::BlockKind::Heading { .. }))
-        .is_some_and(|b| b.kind == (obsidilight_core::markdown::BlockKind::Heading { level: 1 }) && text[b.content.clone()].trim() == title);
+        .find(|b| matches!(b.kind, tephra_core::markdown::BlockKind::Heading { .. }))
+        .is_some_and(|b| b.kind == (tephra_core::markdown::BlockKind::Heading { level: 1 }) && text[b.content.clone()].trim() == title);
     // the title as Obsidian's inline title: an H1, half a line above the note
     let heading = if page.title && !own_h1 { format!("#heading(level: 1)[{}]\n\n#v(0.5em)\n\n", lit(&title)) } else { String::new() };
     let source = format!("{}\n{heading}{body}\n", prelude(&title, page, &look));
@@ -391,7 +391,7 @@ impl ExportView {
             self.state = State::Failed("the note could not be read".into());
             return;
         };
-        if let Ok(dir) = std::env::var("OBSIDILIGHT_TYPST_OUT") {
+        if let Ok(dir) = std::env::var("TEPHRA_TYPST_OUT") {
             let _ = std::fs::write(Path::new(&dir).join("main.typ"), &job.source);
         }
         self.state = State::Working;
@@ -403,12 +403,12 @@ impl ExportView {
                 if v.generation != g {
                     return; // an option changed meanwhile: a newer job is on its way
                 }
-                let script = std::env::var_os("OBSIDILIGHT_SCRIPT").is_some();
+                let script = std::env::var_os("TEPHRA_SCRIPT").is_some();
                 v.state = match res {
                     Ok(out) => {
                         if script {
                             println!("PDF pages={} bytes={} math_ms={:.0} compile_ms={:.0} pdf_ms={:.0} warnings={:?}", out.pages.len(), out.pdf.len(), out.ms.0, out.ms.1, out.ms.2, out.warnings);
-                            if let Ok(p) = std::env::var("OBSIDILIGHT_PDF_OUT") {
+                            if let Ok(p) = std::env::var("TEPHRA_PDF_OUT") {
                                 let _ = std::fs::write(p, &out.pdf);
                             }
                         }

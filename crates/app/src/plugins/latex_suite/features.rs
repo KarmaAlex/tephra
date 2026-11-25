@@ -3,7 +3,7 @@
 
 use std::ops::Range;
 
-use obsidilight_core::{EditKind, Selection};
+use tephra_core::{EditKind, Selection};
 use regex::Regex;
 
 use super::context::{Bounds, Ctx, EnvName};
@@ -439,7 +439,7 @@ pub fn auto_delete_dollar(e: &mut EditorApi, s: &Settings, text: &str) -> bool {
 /// it), and the formula's source range. None outside inline math or for an empty formula
 /// (math blocks show their own preview). Inline math never spans lines.
 pub fn inline_math_preview(text: &str, head: usize) -> Option<(String, Range<usize>)> {
-    use obsidilight_core::markdown::{parse_blocks, BlockKind};
+    use tephra_core::markdown::{parse_blocks, BlockKind};
     let m = crate::editor::api::math_at(text, head)?;
     if m.display {
         return None;

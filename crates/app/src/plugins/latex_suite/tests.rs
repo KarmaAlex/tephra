@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::editor::api::{Backend as _, Headless};
-use obsidilight_core::Selection;
+use tephra_core::Selection;
 
 /// The vault's own snippets file (read only; the test is skipped when the fixture is absent).
 fn fixture_snippets() -> Option<String> {

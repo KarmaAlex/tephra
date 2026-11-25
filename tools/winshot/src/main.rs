@@ -18,11 +18,11 @@ use std::time::Duration;
 
 use zbus::zvariant::{OwnedValue, Value};
 
-const NAME: &str = "dev.obsidilight.WinShot";
+const NAME: &str = "dev.tephra.WinShot";
 
 struct Receiver(mpsc::Sender<String>);
 
-#[zbus::interface(name = "dev.obsidilight.WinShot")]
+#[zbus::interface(name = "dev.tephra.WinShot")]
 impl Receiver {
     fn found(&self, id: String) {
         let _ = self.0.send(id);

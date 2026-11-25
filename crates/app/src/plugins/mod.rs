@@ -1,8 +1,8 @@
 //! Plugin host: the bundled plugins, which are enabled, their settings, and the registry of
 //! everything loaded plugins registered. State lives in the vault, next to (never inside)
 //! `.obsidian/`:
-//!   .obsidilight/plugins.json        {"enabled": ["latex-suite", …]}
-//!   .obsidilight/plugins/<id>.json   that plugin's settings
+//!   .tephra/plugins.json        {"enabled": ["latex-suite", …]}
+//!   .tephra/plugins/<id>.json   that plugin's settings
 
 pub mod academic_notes;
 pub mod api;
@@ -43,11 +43,11 @@ pub struct PluginHost {
     loaded: HashSet<&'static str>,
     pub reg: Registry,
     settings: HashMap<String, Map<String, Value>>,
-    /// `<vault>/.obsidilight`; None in tests that must not write.
+    /// `<vault>/.tephra`; None in tests that must not write.
     dir: Option<PathBuf>,
     /// Bumped whenever registrations change, so views re-render/re-project.
     pub generation: u64,
-    /// Your hotkeys by command id (`.obsidilight/hotkeys.json`); a command without an entry
+    /// Your hotkeys by command id (`.tephra/hotkeys.json`); a command without an entry
     /// keeps its default, an empty list means no hotkey.
     hotkeys: HashMap<String, Vec<String>>,
 }
@@ -98,7 +98,7 @@ fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
     if let Some(d) = path.parent() {
         std::fs::create_dir_all(d)?;
     }
-    let tmp = path.with_extension("json.obsidilight-tmp");
+    let tmp = path.with_extension("json.tephra-tmp");
     std::fs::write(&tmp, text)?;
     std::fs::rename(&tmp, path)
 }
@@ -143,9 +143,9 @@ impl PluginHost {
 
     /// Installs the host for this window's vault and loads the enabled plugins.
     pub fn init(cx: &mut App, vault_root: &Path) {
-        let mut host = Self::new(Some(vault_root.join(".obsidilight")), bundled(vault_root));
+        let mut host = Self::new(Some(vault_root.join(".tephra")), bundled(vault_root));
         let ids: Vec<&'static str> = host.plugins.iter().map(|p| p.manifest().id).filter(|id| host.enabled.contains(*id)).collect();
-        let timing = std::env::var_os("OBSIDILIGHT_TIMING").is_some();
+        let timing = std::env::var_os("TEPHRA_TIMING").is_some();
         for id in ids {
             let t = std::time::Instant::now();
             host.load_plugin(id);

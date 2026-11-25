@@ -8,19 +8,19 @@ VAULT="${VAULT:-$HOME/dev/vault-fixture}"
 NOTE="${NOTE:-AICoNDA primo anno/Primo semestre/Distributed computing/The MST problem.md}"
 RUNS="${RUNS:-3}"
 OUT="reports/perf-$(date +%Y%m%d-%H%M%S).jsonl"
-SCRATCH="${SCRATCH:-${TMPDIR:-/tmp}/obsidilight-perf}"
+SCRATCH="${SCRATCH:-${TMPDIR:-/tmp}/tephra-perf}"
 mkdir -p reports "$SCRATCH"
 # keep the fixture from becoming the last opened vault in your real config (src/vaults.rs)
-export OBSIDILIGHT_CONFIG_DIR="$SCRATCH/config"
+export TEPHRA_CONFIG_DIR="$SCRATCH/config"
 MESA=/usr/share/glvnd/egl_vendor.d/50_mesa.json
 tag() { python3 -c "import json,sys; d=json.load(sys.stdin); d.pop('log_tail',None); d['label']=sys.argv[1]; print(json.dumps(d))" "$1"; }
 
 # the app itself (M1a+): idle memory, start-up, and the typing benchmark (never saves)
-if [[ -x target/release/obsidilight ]]; then
+if [[ -x target/release/tephra ]]; then
   for i in $(seq "$RUNS"); do
-    python3 tools/perf/proctree.py --settle 6 -- target/release/obsidilight "$VAULT/$NOTE" | tag obsidilight-idle >> "$OUT"
+    python3 tools/perf/proctree.py --settle 6 -- target/release/tephra "$VAULT/$NOTE" | tag tephra-idle >> "$OUT"
   done
-  OBSIDILIGHT_BENCH=1 python3 tools/perf/proctree.py --report --timeout 90 -- target/release/obsidilight "$VAULT/$NOTE" | tag obsidilight-bench >> "$OUT"
+  TEPHRA_BENCH=1 python3 tools/perf/proctree.py --report --timeout 90 -- target/release/tephra "$VAULT/$NOTE" | tag tephra-bench >> "$OUT"
 fi
 if [[ "${SPIKES:-0}" == 1 && -x spikes/tauri/src-tauri/target/release/spike-tauri ]]; then
   for i in $(seq "$RUNS"); do

@@ -10,7 +10,7 @@ mkdir -p "$TMP/Algoritmi"
 printf '# Grafi\n## Cammini minimi\n' > "$TMP/Algoritmi/Grafi.md"
 printf 'x\n' > "$TMP/Algoritmi/Alberi.md"
 : > "$TMP/n.md"
-OUT=$(OBSIDILIGHT_SCRIPT=tests/ui/assist.script timeout 60 target/release/obsidilight "$TMP/n.md" | grep -E "STATE|SUGGEST")
+OUT=$(TEPHRA_SCRIPT=tests/ui/assist.script timeout 60 target/release/tephra "$TMP/n.md" | grep -E "STATE|SUGGEST")
 echo "$OUT"
 expect() { grep -qF -- "$1" <<<"$OUT" || { echo "ui-assist: FAILED, expected $1"; exit 1; }; }
 expect_re() { grep -qE -- "$1" <<<"$OUT" || { echo "ui-assist: FAILED, expected /$1/"; exit 1; }; }

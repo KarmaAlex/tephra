@@ -6,7 +6,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use obsidilight_core::index::VaultIndex;
+use tephra_core::index::VaultIndex;
 
 pub type SharedVault = Rc<RefCell<Vault>>;
 

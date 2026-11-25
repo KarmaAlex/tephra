@@ -14,9 +14,9 @@ use std::rc::Rc;
 use gpui_kit::component::{h_flex, v_flex, ActiveTheme as _};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use obsidilight_core::index::{is_note, parse_note, VaultIndex};
-use obsidilight_core::links::link_path;
-use obsidilight_core::search::{fold, Expr, Term};
+use tephra_core::index::{is_note, parse_note, VaultIndex};
+use tephra_core::links::link_path;
+use tephra_core::search::{fold, Expr, Term};
 use serde_json::{Map, Value};
 
 use super::api::*;
@@ -248,7 +248,7 @@ impl Plugin for Backlinks {
                     if stale {
                         let idx = &vault.borrow().index;
                         let g = linked(idx, &rel);
-                        if std::env::var_os("OBSIDILIGHT_SCRIPT").is_some() {
+                        if std::env::var_os("TEPHRA_SCRIPT").is_some() {
                             println!("BACKLINKS {rel} linked={:?}", g.iter().map(|(p, m)| (p.as_str(), m.len())).collect::<Vec<_>>());
                         }
                         *c = Some((key.clone(), Rc::new(g), None));
@@ -331,7 +331,7 @@ impl Plugin for OutgoingLinks {
                     if c.as_ref().is_none_or(|(k, _)| *k != key) {
                         let text = ed.read(cx).doc.text();
                         let o = outgoing(&vault.borrow().index, &rel, &text);
-                        if std::env::var_os("OBSIDILIGHT_SCRIPT").is_some() {
+                        if std::env::var_os("TEPHRA_SCRIPT").is_some() {
                             println!("OUTGOING {rel} {:?}", o.iter().map(|l| (l.0.as_str(), l.1)).collect::<Vec<_>>());
                         }
                         *c = Some((key, Rc::new(o)));
@@ -387,7 +387,7 @@ impl Plugin for OutgoingLinks {
 #[cfg(test)]
 mod tests {
     use super::{linked, outgoing, unlinked};
-    use obsidilight_core::index::VaultIndex;
+    use tephra_core::index::VaultIndex;
 
     fn vault(files: &[(&str, &str)]) -> (std::path::PathBuf, VaultIndex) {
         let root = std::env::temp_dir().join(format!("ol-links-{}-{}", std::process::id(), files.len()));

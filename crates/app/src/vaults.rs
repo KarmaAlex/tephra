@@ -2,9 +2,9 @@
 //! app starts without an argument) and the recently opened ones (the welcome page lists them).
 //! Also the three ways to get a vault: open a folder, open a folder as a vault, create a vault.
 //!
-//! Saved in `$OBSIDILIGHT_CONFIG_DIR/vaults.json`; else `$XDG_CONFIG_HOME/obsidilight/vaults.json`
-//! (`~/.config/obsidilight`), on Windows `%APPDATA%\obsidilight`. Scripted UI tests and the
-//! benchmark never touch the real file: without `$OBSIDILIGHT_CONFIG_DIR` they save nothing.
+//! Saved in `$TEPHRA_CONFIG_DIR/vaults.json`; else `$XDG_CONFIG_HOME/tephra/vaults.json`
+//! (`~/.config/tephra`), on Windows `%APPDATA%\tephra`. Scripted UI tests and the
+//! benchmark never touch the real file: without `$TEPHRA_CONFIG_DIR` they save nothing.
 //!
 //! The app holds one vault per process (its settings, plugins and theme are globals), so a
 //! vault opened from a window that already has one opens in a new window (a new process), as
@@ -34,20 +34,20 @@ pub struct Known {
     pub recent: Vec<PathBuf>,
 }
 
-/// Where the list is saved (None: nowhere, in scripted runs without `$OBSIDILIGHT_CONFIG_DIR`).
+/// Where the list is saved (None: nowhere, in scripted runs without `$TEPHRA_CONFIG_DIR`).
 pub fn state_file() -> Option<PathBuf> {
-    if let Some(d) = std::env::var_os("OBSIDILIGHT_CONFIG_DIR") {
+    if let Some(d) = std::env::var_os("TEPHRA_CONFIG_DIR") {
         return Some(PathBuf::from(d).join("vaults.json"));
     }
-    if std::env::var_os("OBSIDILIGHT_SCRIPT").is_some() || std::env::var_os("OBSIDILIGHT_BENCH").is_some() {
+    if std::env::var_os("TEPHRA_SCRIPT").is_some() || std::env::var_os("TEPHRA_BENCH").is_some() {
         return None;
     }
     let env_dir = |k: &str| std::env::var_os(k).map(PathBuf::from).filter(|p| p.is_absolute());
-    // Windows: %APPDATA%\obsidilight (roamed, like other per-user settings)
+    // Windows: %APPDATA%\tephra (roamed, like other per-user settings)
     let base = if cfg!(windows) { env_dir("APPDATA") } else { None }
         .or_else(|| env_dir("XDG_CONFIG_HOME"))
         .or_else(|| env_dir("HOME").or_else(|| env_dir("USERPROFILE")).map(|h| h.join(".config")))?;
-    Some(base.join("obsidilight").join("vaults.json"))
+    Some(base.join("tephra").join("vaults.json"))
 }
 
 impl Known {
@@ -74,7 +74,7 @@ impl Known {
         if let Some(d) = file.parent() {
             std::fs::create_dir_all(d)?;
         }
-        let tmp = file.with_extension("json.obsidilight-tmp");
+        let tmp = file.with_extension("json.tephra-tmp");
         std::fs::write(&tmp, self.to_json())?;
         std::fs::rename(&tmp, file)
     }
@@ -244,11 +244,11 @@ pub fn open(path: PathBuf, how: OpenAs, window: &mut Window, cx: &mut App) {
 
 /// Starts another copy of the app on `root`. Scripted UI tests only print what they'd open.
 fn open_in_new_window(root: &Path) -> std::io::Result<()> {
-    if std::env::var_os("OBSIDILIGHT_SCRIPT").is_some() {
+    if std::env::var_os("TEPHRA_SCRIPT").is_some() {
         println!("NEW-WINDOW {}", root.display());
         return Ok(());
     }
-    let mut child = std::process::Command::new(std::env::current_exe()?).arg(root).env_remove("OBSIDILIGHT_BENCH").spawn()?;
+    let mut child = std::process::Command::new(std::env::current_exe()?).arg(root).env_remove("TEPHRA_BENCH").spawn()?;
     // reap it when it exits (no zombie while this window stays open)
     std::thread::spawn(move || {
         let _ = child.wait();
@@ -378,7 +378,7 @@ mod tests {
 
     #[test]
     fn startup_vault_must_exist() {
-        let dir = std::env::temp_dir().join(format!("obsidilight-vaults-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("tephra-vaults-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let mut k = Known::default();
         k.opened(&dir);
@@ -389,7 +389,7 @@ mod tests {
 
     #[test]
     fn creating_a_vault() {
-        let loc = std::env::temp_dir().join(format!("obsidilight-create-{}", std::process::id()));
+        let loc = std::env::temp_dir().join(format!("tephra-create-{}", std::process::id()));
         std::fs::create_dir_all(&loc).unwrap();
         let l = loc.to_string_lossy().to_string();
         for bad in ["", "  ", ".hidden", "..", "a/b", "a\\b", "what?"] {

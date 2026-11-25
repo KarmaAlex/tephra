@@ -1,6 +1,6 @@
 //! The settings window (Ctrl+, or the ribbon gear): a Plugins page with on/off toggles, then one
 //! page per enabled plugin, generated from its manifest's settings schema plus any custom
-//! sections it registered. Changes apply immediately and are saved in `.obsidilight/`.
+//! sections it registered. Changes apply immediately and are saved in `.tephra/`.
 
 use gpui_kit::component::setting::{NumberFieldOptions, SettingField, SettingGroup, SettingItem, SettingPage, Settings};
 use gpui_kit::component::WindowExt as _;
@@ -11,7 +11,7 @@ use crate::plugins::{PluginHost, SettingKind};
 
 pub fn open(window: &mut Window, cx: &mut App) {
     window.open_dialog(cx, |dialog, _, cx| {
-        dialog.title("Settings").w(crate::ui::p(cx, 880.)).child(div().h(crate::ui::r(580.)).child(Settings::new("obsidilight-settings").pages(pages(cx).into_iter().map(|(_, p)| p))))
+        dialog.title("Settings").w(crate::ui::p(cx, 880.)).child(div().h(crate::ui::r(580.)).child(Settings::new("tephra-settings").pages(pages(cx).into_iter().map(|(_, p)| p))))
     });
 }
 
@@ -23,7 +23,7 @@ pub fn open_at(title: &str, window: &mut Window, cx: &mut App) {
     static OPENED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let n = OPENED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     window.open_dialog(cx, move |dialog, _, cx| {
-        let settings = Settings::new(SharedString::from(format!("obsidilight-settings-{n}"))).pages(pages(cx).into_iter().map(|(_, p)| p)).default_selected_index(SelectIndex { page_ix, group_ix: None });
+        let settings = Settings::new(SharedString::from(format!("tephra-settings-{n}"))).pages(pages(cx).into_iter().map(|(_, p)| p)).default_selected_index(SelectIndex { page_ix, group_ix: None });
         dialog.title("Settings").w(crate::ui::p(cx, 880.)).child(div().h(crate::ui::r(580.)).child(settings))
     });
 }
@@ -113,8 +113,12 @@ fn appearance_page(cx: &App) -> SettingPage {
         crate::app_settings::AppSettings::set(cx, key, v);
         crate::theme::reload(cx);
     };
+    let bundled: Vec<&str> = crate::theme::BUILTIN_THEMES.iter().map(|(n, _)| *n).collect();
     let mut themes: Vec<(SharedString, SharedString)> = vec![("".into(), "Default".into())];
-    themes.extend(t.themes.iter().map(|n| (SharedString::from(n.clone()), SharedString::from(n.clone()))));
+    themes.extend(t.themes.iter().map(|n| {
+        let label = if bundled.contains(&n.as_str()) { format!("{n} (built-in)") } else { n.clone() };
+        (SharedString::from(n.clone()), SharedString::from(label))
+    }));
     let mut items = vec![
         SettingItem::new(
             "Base color scheme",
@@ -150,7 +154,7 @@ fn appearance_page(cx: &App) -> SettingPage {
                 move |v: SharedString, cx: &mut App| set_and_reload("cssTheme", Value::from(v.to_string()), cx),
             ),
         )
-        .description("An Obsidian theme from .obsidian/themes. Its CSS variables apply (colours, fonts, sizes); other rules can't."),
+        .description("Default (Obsidian's own), the built-in Tephra Dark/Light, or a theme from .obsidian/themes. Its CSS variables apply (colours, fonts, sizes); other rules can't."),
     ];
     for r in t.reports.iter().filter(|r| !r.is_theme) {
         let name = r.name.clone();

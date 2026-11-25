@@ -1,9 +1,9 @@
-//! obsidilight: a lightweight, Obsidian-compatible notes app.
+//! Tephra: a lightweight, Obsidian-compatible notes app.
 //!
 //! Opens a vault (file tree + tabs), optionally with one note open:
-//!   obsidilight <vault-folder | path/to/note.md>
-//! Env: OBSIDILIGHT_BENCH=1 runs the typing benchmark, prints `REPORT {json}` and exits.
-//!      OBSIDILIGHT_SCRIPT=<file> replays scripted input (see script.rs).
+//!   tephra <vault-folder | path/to/note.md>
+//! Env: TEPHRA_BENCH=1 runs the typing benchmark, prints `REPORT {json}` and exits.
+//!      TEPHRA_SCRIPT=<file> replays scripted input (see script.rs).
 //! Without an argument (app menu, double-clicked .exe) the last opened vault opens again; when
 //! there is none (first start, or it was deleted), the welcome page (see welcome.rs).
 
@@ -52,7 +52,7 @@ fn main() {
         return;
     }
     if std::env::args_os().nth(1).is_some_and(|a| a == "--help" || a == "-h") {
-        println!("usage: obsidilight [vault-folder | note.md]\n(without an argument the last opened vault, else the welcome page)");
+        println!("usage: tephra [vault-folder | note.md]\n(without an argument the last opened vault, else the welcome page)");
         return;
     }
     logging::init();
@@ -92,7 +92,7 @@ fn open_vault(arg: PathBuf, t0: Instant, cx: &mut App) {
     let opts = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size(px(1280.), px(860.)), cx))),
         titlebar: Some(TitlebarOptions { title: Some(title), ..Default::default() }),
-        app_id: Some("obsidilight".into()),
+        app_id: Some("tephra".into()),
         ..Default::default()
     };
     let result = gpui_kit::open_window(opts, cx, move |window, cx| {
@@ -103,7 +103,7 @@ fn open_vault(arg: PathBuf, t0: Instant, cx: &mut App) {
         window.on_next_frame(move |_, _| println!("READY {:.1}", t0.elapsed().as_secs_f64() * 1000.0));
         let editor = note.map(|note| ws.update(cx, |ws, cx| ws.open_path(note, false, window, cx)));
         script::start(editor.clone(), Some(ws.downgrade()), window, cx);
-        if let Some(editor) = editor.filter(|_| std::env::var_os("OBSIDILIGHT_BENCH").is_some()) {
+        if let Some(editor) = editor.filter(|_| std::env::var_os("TEPHRA_BENCH").is_some()) {
             bench::start(editor, window, cx);
         }
         ws

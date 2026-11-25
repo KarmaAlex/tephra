@@ -1,7 +1,7 @@
 //! Full-text search (HANDOFF §5.4): query syntax and matching. Written before the
 //! implementation (delegated leaf task, see docs/delegation-log.md).
 
-use obsidilight_core::search::{fold, parse_query, search, Expr, FileHit, SearchDoc, Term};
+use tephra_core::search::{fold, parse_query, search, Expr, FileHit, SearchDoc, Term};
 
 fn doc(path: &str, text: &str, tags: &[&str]) -> SearchDoc {
     SearchDoc::new(path, text, tags.iter().map(|t| t.to_string()).collect())

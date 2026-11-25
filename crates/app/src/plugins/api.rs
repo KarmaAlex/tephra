@@ -46,7 +46,7 @@ pub struct PluginManifest {
     pub version: &'static str,
     pub description: &'static str,
     pub enabled_by_default: bool,
-    /// Drives the generated settings tab; values live in `.obsidilight/plugins/<id>.json`.
+    /// Drives the generated settings tab; values live in `.tephra/plugins/<id>.json`.
     pub settings: Vec<SettingSpec>,
     /// Code-block languages this plugin renders; while it is off, the core shows those blocks
     /// as code with a "<name> plugin disabled" note.
@@ -100,7 +100,7 @@ pub struct CalloutStyle {
 pub struct NoteCtx<'a> {
     pub path: &'a str,
     pub text: &'a str,
-    pub index: &'a obsidilight_core::index::VaultIndex,
+    pub index: &'a tephra_core::index::VaultIndex,
 }
 
 pub trait CalloutRenderer {

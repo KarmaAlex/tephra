@@ -10,8 +10,8 @@
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
-use obsidilight_core::markdown::{find_math, parse_blocks, BlockKind};
-use obsidilight_core::{Document, EditKind, Selection};
+use tephra_core::markdown::{find_math, parse_blocks, BlockKind};
+use tephra_core::{Document, EditKind, Selection};
 
 /// One tabstop group: its ranges are edited together (mirrors).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

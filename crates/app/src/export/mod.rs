@@ -4,7 +4,7 @@ pub mod compile;
 pub mod typst;
 
 /// Every note of the fixture converts and compiles (HANDOFF §7 style corpus check).
-/// `cargo test --release -p obsidilight fixture_notes_export -- --ignored` (a few minutes).
+/// `cargo test --release -p tephra fixture_notes_export -- --ignored` (a few minutes).
 #[cfg(test)]
 mod fixture {
     use std::collections::HashMap;

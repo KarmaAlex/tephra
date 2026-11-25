@@ -14,7 +14,7 @@ wait 800
 fonts
 quit
 SCRIPT
-OUT=$(OBSIDILIGHT_SCRIPT="$TMP/f.script" timeout 30 target/release/obsidilight "$TMP/A.md" | grep -E "^(FONTS|FONT)")
+OUT=$(TEPHRA_SCRIPT="$TMP/f.script" timeout 30 target/release/tephra "$TMP/A.md" | grep -E "^(FONTS|FONT)")
 echo "$OUT"
 WANT='FONTS sans=IBM Plex Sans mono=DejaVu Sans Mono
 FONT IBM Plex Sans true

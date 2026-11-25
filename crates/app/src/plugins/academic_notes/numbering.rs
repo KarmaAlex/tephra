@@ -14,7 +14,7 @@
 //!   section; unreferenced ones take no number. `\tag{…}` keeps its own tag and doesn't count.
 //! - References show "fig 1.2", "tab 1.1", "eq:1.2" (the formats in Academic Notes' settings).
 
-use obsidilight_core::markdown::{callouts::flatten, parse_blocks, parse_quote, BlockKind};
+use tephra_core::markdown::{callouts::flatten, parse_blocks, parse_quote, BlockKind};
 
 /// (group, display name, short name for references, numbered?) of a callout type.
 pub fn env(kind: &str) -> Option<(&'static str, &'static str, &'static str, bool)> {
@@ -462,7 +462,7 @@ mod lazy {
     #[test]
     fn lazy_line_belongs_to_the_callout() {
         let t = "## S\n>[!lemma]\n>x\n^lemma1\n\n>[!pf] p\n>y\n";
-        let blocks = obsidilight_core::markdown::parse_blocks(t);
+        let blocks = tephra_core::markdown::parse_blocks(t);
         eprintln!("{:?}", blocks.iter().map(|b| (&b.kind, b.range.clone())).collect::<Vec<_>>());
         let n = super::number(&super::items_of_text(t));
         assert_eq!(super::at_line(&n, 3).map(|n| n.short.as_str()), Some("lem 1.1"));

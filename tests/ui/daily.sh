@@ -38,7 +38,7 @@ ws-tabs
 wait 1200
 quit
 SCRIPT
-OUT=$(OBSIDILIGHT_SCRIPT="$TMP/s.script" timeout 30 target/release/obsidilight "$TMP/A.md" | grep -E "^(TABS|STATE|PICKER)")
+OUT=$(TEPHRA_SCRIPT="$TMP/s.script" timeout 30 target/release/tephra "$TMP/A.md" | grep -E "^(TABS|STATE|PICKER)")
 echo "$OUT"
 grep -qF "TABS active=0 [\"Daily/$TODAY.md\"]" <<<"$OUT" || { echo "ui-daily: today's note not opened"; exit 1; }
 [ "$(cat "$TMP/Daily/$TODAY.md")" = "# $TODAY"$'\n'"Created $(date +%Y)" ] || { echo "ui-daily: daily note text: $(cat "$TMP/Daily/$TODAY.md")"; exit 1; }

@@ -28,7 +28,7 @@ wait 200
 state
 quit
 SCRIPT
-OUT=$(OBSIDILIGHT_SCRIPT="$TMP/t.script" timeout 40 target/release/obsidilight "$TMP/n.md" | grep -E "^(STATE|POS|CLICKAT)")
+OUT=$(TEPHRA_SCRIPT="$TMP/t.script" timeout 40 target/release/tephra "$TMP/n.md" | grep -E "^(STATE|POS|CLICKAT)")
 echo "$OUT"
 fail() { echo "ui-firstline: $1"; exit 1; }
 mapfile -t POS <<<"$(grep -E '^POS 0 ' <<<"$OUT")"

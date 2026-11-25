@@ -38,10 +38,10 @@ end
 NOTE
 LINK=$(python3 -c "print(open('$TMP/n.md').read().find('[[#^lem1]]') + 4)")
 printf 'wait 800\nkey ctrl-end\nwait 300\npos %s\nquit\n' "$LINK" > "$TMP/p.script"
-P=$(OBSIDILIGHT_SCRIPT="$TMP/p.script" timeout 30 target/release/obsidilight "$TMP/n.md" | grep POS)
+P=$(TEPHRA_SCRIPT="$TMP/p.script" timeout 30 target/release/tephra "$TMP/n.md" | grep POS)
 X=$(echo "$P" | awk '{print $3+4}'); Y=$(echo "$P" | awk '{print $4+10}')
 printf 'wait 800\nkey ctrl-end\nwait 300\nmove %s %s\nwait 700\nnumbers\nquit\n' "$X" "$Y" > "$TMP/a.script"
-OUT=$(OBSIDILIGHT_SCRIPT="$TMP/a.script" timeout 30 target/release/obsidilight "$TMP/n.md" | grep -E "NUMBERS|HOVER")
+OUT=$(TEPHRA_SCRIPT="$TMP/a.script" timeout 30 target/release/tephra "$TMP/n.md" | grep -E "NUMBERS|HOVER")
 echo "$OUT"
 grep -qF 'NUMBERS ["Definition 0.1", "Lemma 1.1", "Theorem 1.1", "Algorithm 2.1", "(2.1)", "Figure 2.1"]' <<<"$OUT" || { echo "ui-academic: numbering differs"; exit 1; }
 grep -qF 'HOVER Some("> [!lemma] Bound")' <<<"$OUT" || { echo "ui-academic: no preview of the referenced lemma"; exit 1; }

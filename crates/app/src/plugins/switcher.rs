@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::App;
-use obsidilight_core::index::is_note;
+use tephra_core::index::is_note;
 use serde_json::{Map, Value};
 
 use super::api::*;

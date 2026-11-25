@@ -1,5 +1,5 @@
 [package]
-name = "obsidilight"
+name = "tephra"
 description = "Lightweight Obsidian-compatible notes app (GPUI)"
 version.workspace = true
 edition.workspace = true
@@ -8,7 +8,7 @@ publish.workspace = true
 build = "build.rs"
 
 [dependencies]
-obsidilight-core = { path = "../core" }
+tephra-core = { path = "../core" }
 gpui-kit = { version = "0.10", features = ["tree-sitter-c", "tree-sitter-cpp", "tree-sitter-java", "tree-sitter-javascript", "tree-sitter-yaml", "tree-sitter-python", "tree-sitter-bash", "tree-sitter-sql"] }
 ratex-parser = "0.1.16"
 ratex-layout = "0.1.16"

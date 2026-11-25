@@ -1,8 +1,8 @@
 //! Warnings, errors and panics from the app and GPUI (`log` crate): to stderr, and on Windows
-//! also to `%LOCALAPPDATA%\obsidilight\obsidilight.log` -- a release .exe is a GUI-subsystem
+//! also to `%LOCALAPPDATA%\tephra\tephra.log` -- a release .exe is a GUI-subsystem
 //! app with no console, so without the file they would be lost (e.g. GPUI's image load errors).
-//! The file is rewritten on every start. `OBSIDILIGHT_LOG=<file>` picks another file (any OS);
-//! `OBSIDILIGHT_LOG_LEVEL=info|debug|trace` logs more.
+//! The file is rewritten on every start. `TEPHRA_LOG=<file>` picks another file (any OS);
+//! `TEPHRA_LOG_LEVEL=info|debug|trace` logs more.
 
 use std::io::Write as _;
 use std::path::PathBuf;
@@ -35,12 +35,12 @@ impl log::Log for Logger {
 
 /// Where the log file goes, if anywhere.
 pub fn file_path() -> Option<PathBuf> {
-    if let Some(p) = std::env::var_os("OBSIDILIGHT_LOG") {
+    if let Some(p) = std::env::var_os("TEPHRA_LOG") {
         return Some(PathBuf::from(p));
     }
     if cfg!(windows) {
         let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).filter(|p| p.is_absolute())?;
-        return Some(base.join("obsidilight").join("obsidilight.log"));
+        return Some(base.join("tephra").join("tephra.log"));
     }
     None
 }
@@ -51,7 +51,7 @@ pub fn init() {
         std::fs::create_dir_all(p.parent()?).ok()?;
         std::fs::File::create(&p).ok().map(Mutex::new)
     });
-    let level = match std::env::var("OBSIDILIGHT_LOG_LEVEL").as_deref() {
+    let level = match std::env::var("TEPHRA_LOG_LEVEL").as_deref() {
         Ok("trace") => log::LevelFilter::Trace,
         Ok("debug") => log::LevelFilter::Debug,
         Ok("info") => log::LevelFilter::Info,

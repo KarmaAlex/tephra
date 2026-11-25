@@ -5044,43 +5044,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "obsidilight"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "embed-resource",
- "gpui-kit",
- "image",
- "log",
- "notify",
- "obsidilight-core",
- "ratex-layout",
- "ratex-parser",
- "ratex-render",
- "ratex-types",
- "regex",
- "resvg 0.45.1",
- "rquickjs",
- "serde_json",
- "sha2 0.11.1",
- "spellbook",
- "trash",
- "typst",
- "typst-kit",
- "typst-layout",
- "typst-pdf",
- "typst-svg",
-]
-
-[[package]]
-name = "obsidilight-core"
-version = "0.1.0"
-dependencies = [
- "ropey 1.6.1",
- "unicode-segmentation",
-]
-
-[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7389,6 +7352,43 @@ dependencies = [
  "futf",
  "mac",
  "utf-8",
+]
+
+[[package]]
+name = "tephra"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "embed-resource",
+ "gpui-kit",
+ "image",
+ "log",
+ "notify",
+ "ratex-layout",
+ "ratex-parser",
+ "ratex-render",
+ "ratex-types",
+ "regex",
+ "resvg 0.45.1",
+ "rquickjs",
+ "serde_json",
+ "sha2 0.11.1",
+ "spellbook",
+ "tephra-core",
+ "trash",
+ "typst",
+ "typst-kit",
+ "typst-layout",
+ "typst-pdf",
+ "typst-svg",
+]
+
+[[package]]
+name = "tephra-core"
+version = "0.1.0"
+dependencies = [
+ "ropey 1.6.1",
+ "unicode-segmentation",
 ]
 
 [[package]]

@@ -46,7 +46,7 @@ pub fn note_path(folder: &str, format: &str, day: &NaiveDateTime) -> String {
 }
 
 /// Existing daily notes, oldest first: (date, vault path). Looks ten years back and one ahead.
-pub fn existing(index: &obsidilight_core::index::VaultIndex, folder: &str, format: &str, today: &NaiveDateTime) -> Vec<(NaiveDateTime, String)> {
+pub fn existing(index: &tephra_core::index::VaultIndex, folder: &str, format: &str, today: &NaiveDateTime) -> Vec<(NaiveDateTime, String)> {
     let files: std::collections::HashSet<&String> = index.files().collect();
     let mut out = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -139,7 +139,7 @@ mod tests {
         for n in ["Daily/2026-11-20.md", "Daily/2026-11-23.md", "Daily/2025-01-01.md", "Daily/notes.md", "2026-11-22.md"] {
             std::fs::write(dir.join(n), "").unwrap();
         }
-        let index = obsidilight_core::index::VaultIndex::build(&dir);
+        let index = tephra_core::index::VaultIndex::build(&dir);
         let found: Vec<String> = existing(&index, "Daily", "YYYY-MM-DD", &day).into_iter().map(|(_, p)| p).collect();
         assert_eq!(found, ["Daily/2025-01-01.md", "Daily/2026-11-20.md", "Daily/2026-11-23.md"]);
         let _ = std::fs::remove_dir_all(&dir);

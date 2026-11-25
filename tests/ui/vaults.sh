@@ -11,9 +11,9 @@ trap 'rm -rf "$ROOT"' EXIT
 V="$ROOT/vaults"
 mkdir -p "$V/Existing/.obsidian" "$ROOT/cfg"
 printf '# E\n' > "$V/Existing/E.md"
-export OBSIDILIGHT_CONFIG_DIR="$ROOT/cfg"
+export TEPHRA_CONFIG_DIR="$ROOT/cfg"
 fail() { echo "ui-vaults: $1"; exit 1; }
-run() { OBSIDILIGHT_SCRIPT="$ROOT/s.script" timeout 40 target/release/obsidilight "$@" | grep -E "^(ROOT|NEW-WINDOW|CLICKK|NO-EDITOR)" || true; }
+run() { TEPHRA_SCRIPT="$ROOT/s.script" timeout 40 target/release/tephra "$@" | grep -E "^(ROOT|NEW-WINDOW|CLICKK|NO-EDITOR)" || true; }
 
 # 1. the last vault is gone: welcome page; create a vault there
 printf '{"last": "%s", "recent": ["%s", "%s"]}' "$V/Gone" "$V/Gone" "$V/Existing" > "$ROOT/cfg/vaults.json"

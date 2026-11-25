@@ -1,7 +1,7 @@
 //! Typing assistance (core, like Obsidian): auto-paired brackets and quotes, and link
 //! suggestions after `[[`. Pure functions over text; the editor applies their results.
 
-use obsidilight_core::index::{is_note, VaultIndex};
+use tephra_core::index::{is_note, VaultIndex};
 
 // ---- auto-pairing -------------------------------------------------------------------------
 
@@ -145,9 +145,9 @@ pub fn fence_closer(text: &str, caret: usize, nl: &str) -> Option<String> {
             return None;
         }
     }
-    let opens = obsidilight_core::markdown::parse_blocks(text)
+    let opens = tephra_core::markdown::parse_blocks(text)
         .iter()
-        .any(|b| b.range.start == ls && matches!(b.kind, obsidilight_core::markdown::BlockKind::Code { .. }));
+        .any(|b| b.range.start == ls && matches!(b.kind, tephra_core::markdown::BlockKind::Code { .. }));
     opens.then(|| format!("{nl}{indent}```"))
 }
 

@@ -1,6 +1,6 @@
 //! Settings → Editing toolbar → layout (M8): your toolbar as a list you rearrange by dragging,
 //! next to every command the toolbar can hold. Changes apply to the bar at once and are saved
-//! in `.obsidilight/plugins/editing-toolbar.json`; the Editing Toolbar's own settings in
+//! in `.tephra/plugins/editing-toolbar.json`; the Editing Toolbar's own settings in
 //! `.obsidian/` are only read (they are what "Reset" goes back to).
 //!
 //! Dropping something on a row puts it just before that row; the dashed strips at the end of
@@ -305,7 +305,7 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
         .gap_3()
         .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child("Toolbar layout"))
         .child(div().text_xs().text_color(theme.muted_foreground).child(
-            "Drag the rows to reorder them, or into and out of menus; drag commands in from the right. Saved in .obsidilight; your Editing Toolbar settings in .obsidian stay as they are.",
+            "Drag the rows to reorder them, or into and out of menus; drag commands in from the right. Saved in .tephra; your Editing Toolbar settings in .obsidian stay as they are.",
         ))
         .child(v_flex().gap_1().child(div().text_xs().text_color(theme.muted_foreground).child("Preview")).child(div().p_1().rounded(px(4.)).border_1().border_color(theme.border).child(preview)))
         .child(buttons)

@@ -1,7 +1,7 @@
 //! Hotkeys: every command (the app's and the plugins') runs from its hotkey, through one
 //! keystroke interceptor that sees keys before any other binding, so your hotkeys win over the
 //! editor's keys. You change them in Settings → Hotkeys; they are saved in
-//! `.obsidilight/hotkeys.json` (`{"command-id": ["ctrl-shift-k"]}`; an empty list = none).
+//! `.tephra/hotkeys.json` (`{"command-id": ["ctrl-shift-k"]}`; an empty list = none).
 
 use std::rc::Rc;
 

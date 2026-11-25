@@ -10,8 +10,8 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::path::PathBuf;
 
-use obsidilight_core::markdown::tables::{parse_table, Align};
-use obsidilight_core::markdown::{parse_blocks, parse_inline, BlockKind, Inline, InlineKind};
+use tephra_core::markdown::tables::{parse_table, Align};
+use tephra_core::markdown::{parse_blocks, parse_inline, BlockKind, Inline, InlineKind};
 
 use crate::plugins::CalloutLook;
 
@@ -138,7 +138,7 @@ pub const SYNTAX_THEME_FILE: &str = "syntax_.tmTheme";
 /// for Typst's highlighter: keywords, strings, comments, numbers, functions, types, constants.
 pub const SYNTAX_THEME: &str = r##"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict><key>name</key><string>Obsidilight</string><key>settings</key><array>
+<plist version="1.0"><dict><key>name</key><string>Tephra</string><key>settings</key><array>
 <dict><key>settings</key><dict><key>foreground</key><string>#222222</string><key>background</key><string>#FAFAFA</string></dict></dict>
 <dict><key>scope</key><string>comment, punctuation.definition.comment</string><key>settings</key><dict><key>foreground</key><string>#007FFF</string></dict></dict>
 <dict><key>scope</key><string>string, punctuation.definition.string, constant.character.escape</string><key>settings</key><dict><key>foreground</key><string>#036A07</string></dict></dict>
@@ -498,7 +498,7 @@ impl<'a> Emitter<'a> {
                 }
             }
             InlineKind::Html => {
-                use obsidilight_core::markdown::inline::{html_attr, html_tag_name};
+                use tephra_core::markdown::inline::{html_attr, html_tag_name};
                 let open = &text[n.range.start..n.inner.start];
                 let style = html_attr(open, "style").unwrap_or_default();
                 let col = |v: Option<String>| v.and_then(|c| crate::css::parse_color(&c)).map(|h| {

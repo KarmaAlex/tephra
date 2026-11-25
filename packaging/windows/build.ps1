@@ -1,10 +1,10 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-  Native Windows build of obsidilight (MSVC toolchain), for a clone of the repo on Windows.
+  Native Windows build of Tephra (MSVC toolchain), for a clone of the repo on Windows.
 
 .DESCRIPTION
-  Builds target\release\obsidilight.exe and packs dist\obsidilight-<version>-windows-x86_64.zip.
+  Builds target\release\tephra.exe and packs dist\tephra-<version>-windows-x86_64.zip.
   Run from anywhere:
       powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1
   (or `make windows` if you have GNU make on Windows).
@@ -69,15 +69,15 @@ if (-not (Test-Path "$assets\mathjax-svg.js") -or -not (Test-Path "$assets\cm6-h
 }
 
 # --- build -----------------------------------------------------------------------------------------
-Write-Host '==> cargo build --release -p obsidilight'
-Run cargo build --locked --release -p obsidilight
-$exe = 'target\release\obsidilight.exe'
+Write-Host '==> cargo build --release -p tephra'
+Run cargo build --locked --release -p tephra
+$exe = 'target\release\tephra.exe'
 Write-Host "built $exe"
 if ($NoZip) { return }
 
 # --- zip -------------------------------------------------------------------------------------------
 $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"' | Select-Object -First 1).Matches[0].Groups[1].Value
-$name = "obsidilight-$version-windows-x86_64"
+$name = "tephra-$version-windows-x86_64"
 $stage = "target\pkg\windows\$name"
 if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 New-Item -ItemType Directory -Force $stage, dist | Out-Null

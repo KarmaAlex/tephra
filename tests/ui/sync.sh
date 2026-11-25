@@ -29,7 +29,7 @@ wait 1600
 ws-texts
 quit
 SCRIPT
-OUT=$(OBSIDILIGHT_SCRIPT="$TMP/s.script" timeout 30 target/release/obsidilight "$TMP/A.md" | grep -E "^TEXTS")
+OUT=$(TEPHRA_SCRIPT="$TMP/s.script" timeout 30 target/release/tephra "$TMP/A.md" | grep -E "^TEXTS")
 echo "$OUT"
 # in order; the "d" (unsaved) marks depend on autosave timing, except the last line
 GOT=$(sed 's/d"/"/g' <<<"$OUT")

@@ -4,7 +4,7 @@
 
 use std::ops::Range;
 
-use obsidilight_core::search::fold;
+use tephra_core::search::fold;
 
 fn word_start(t: &str, i: usize) -> bool {
     i == 0 || t[..i].chars().next_back().is_some_and(|c| !c.is_alphanumeric())

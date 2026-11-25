@@ -32,7 +32,7 @@ wait 200
 ws-tabs
 quit
 SCRIPT
-OUT=$(OBSIDILIGHT_SCRIPT="$TMP/s.script" timeout 30 target/release/obsidilight "$TMP/A.md" | grep -E "^(PROJ|TABS)")
+OUT=$(TEPHRA_SCRIPT="$TMP/s.script" timeout 30 target/release/tephra "$TMP/A.md" | grep -E "^(PROJ|TABS)")
 echo "$OUT"
 WANT='PROJ plain=false code_leaf=false blocks=3
 PROJ plain=true code_leaf=true blocks=1

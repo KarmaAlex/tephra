@@ -37,7 +37,7 @@ wait 300
 numbers
 quit
 SCRIPT
-OUT=$(OBSIDILIGHT_SCRIPT="$TMP/s.script" timeout 30 target/release/obsidilight "$TMP/A.md" | grep -E "^(HOVER|PREVIEW|MOVEAT)")
+OUT=$(TEPHRA_SCRIPT="$TMP/s.script" timeout 30 target/release/tephra "$TMP/A.md" | grep -E "^(HOVER|PREVIEW|MOVEAT)")
 echo "$OUT"
 WANT='HOVER None
 HOVER Some("# Bee")

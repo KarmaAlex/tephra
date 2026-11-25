@@ -66,7 +66,7 @@ pub fn save(path: &Path, text: &str, expected: Option<DiskState>) -> io::Result<
     }
     let dir = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
     let name = path.file_name().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no file name"))?;
-    let tmp = dir.join(format!(".{}.obsidilight-tmp-{}", name.to_string_lossy(), std::process::id()));
+    let tmp = dir.join(format!(".{}.tephra-tmp-{}", name.to_string_lossy(), std::process::id()));
     let res = (|| {
         let mut f = fs::File::create(&tmp)?;
         f.write_all(text.as_bytes())?;
@@ -88,7 +88,7 @@ mod tests {
     use super::*;
 
     fn tmpdir(name: &str) -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("obsidilight-test-{}-{}", name, std::process::id()));
+        let d = std::env::temp_dir().join(format!("tephra-test-{}-{}", name, std::process::id()));
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
         d

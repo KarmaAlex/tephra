@@ -8,7 +8,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::{h_flex, ActiveTheme as _};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use obsidilight_core::Selection;
+use tephra_core::Selection;
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -150,7 +150,7 @@ impl MarkdownRenderer {
                 while !t.is_char_boundary(cut) {
                     cut -= 1;
                 }
-                obsidilight_core::index::cssclasses(&t[..cut])
+                tephra_core::index::cssclasses(&t[..cut])
             })
             .unwrap_or_default();
         let (style, body, highlight) = crate::theme::text_style(cx, &classes);

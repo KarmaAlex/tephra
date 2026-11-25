@@ -4,7 +4,7 @@
 //! math preview for inline formulas.
 //!
 //! Default settings come from `.obsidian/plugins/obsidian-latex-suite/data.json` (read only);
-//! changes are saved in `.obsidilight/plugins/latex-suite.json`.
+//! changes are saved in `.tephra/plugins/latex-suite.json`.
 
 pub mod context;
 pub mod features;
@@ -16,7 +16,7 @@ pub mod tex;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use obsidilight_core::EditKind;
+use tephra_core::EditKind;
 use serde_json::{Map, Value};
 
 use super::api::*;

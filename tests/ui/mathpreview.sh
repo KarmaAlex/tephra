@@ -36,7 +36,7 @@ wait 300
 popup
 quit
 SCRIPT
-OUT=$(OBSIDILIGHT_SCRIPT="$TMP/s.script" timeout 30 target/release/obsidilight "$TMP/A.md" | grep -E "^POPUP")
+OUT=$(TEPHRA_SCRIPT="$TMP/s.script" timeout 30 target/release/tephra "$TMP/A.md" | grep -E "^POPUP")
 echo "$OUT"
 WANT='POPUP Some("$a^2$")
 POPUP None

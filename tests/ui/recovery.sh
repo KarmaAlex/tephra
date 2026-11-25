@@ -27,10 +27,10 @@ quit
 SCRIPT
 # Syncthing-like outside change while the app runs (after the autosave)
 ( sleep 5.0; printf 'from the phone\n' > "$TMP/A.md" ) &
-OUT=$(OBSIDILIGHT_SCRIPT="$TMP/s.script" timeout 30 target/release/obsidilight "$TMP/A.md" | grep -E "^(RECOVERY|SHOT)")
+OUT=$(TEPHRA_SCRIPT="$TMP/s.script" timeout 30 target/release/tephra "$TMP/A.md" | grep -E "^(RECOVERY|SHOT)")
 echo "$OUT"
 wait
-D=$(ls -d "$TMP"/.obsidilight/test-data/recovery/*/*/)
+D=$(ls -d "$TMP"/.tephra/test-data/recovery/*/*/)
 TEXTS=$(for f in $(ls "$D"*.md | sort); do printf '[%s]' "$(cat "$f")"; done)
 echo "$TEXTS"
 # before the first edit, the first edit; the second edit (within the interval) only because the

@@ -5,7 +5,7 @@
 #   list lands where it is dropped; + adds at the end; × removes. The bar follows at once.
 # - Picking a colour colours the selection and becomes the button's colour; the button
 #   then toggles it.
-# - The layout and colours are saved in .obsidilight; .obsidian is never written.
+# - The layout and colours are saved in .tephra; .obsidian is never written.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 TMP=$(mktemp -d)
@@ -82,13 +82,13 @@ key ctrl-s
 wait 1200
 quit
 SCRIPT
-OUT=$(OBSIDILIGHT_SCRIPT="$TMP/t.script" timeout 40 target/release/obsidilight "$TMP/n.md" | grep -E "^(STATE|BOUNDS|DRAGK|CLICKK)")
+OUT=$(TEPHRA_SCRIPT="$TMP/t.script" timeout 40 target/release/tephra "$TMP/n.md" | grep -E "^(STATE|BOUNDS|DRAGK|CLICKK)")
 echo "$OUT"
 fail() { echo "ui-toolbar-layout: $1"; exit 1; }
 grep -qE '^BOUNDS tb-row:0 [0-9]' <<<"$OUT" || fail "right-click menu didn't open the toolbar settings"
 grep -qE 'DRAGK|CLICKK' <<<"$OUT" && fail "an element wasn't on screen"
-SAVED="$TMP/.obsidilight/plugins/editing-toolbar.json"
-[ -f "$SAVED" ] || fail "nothing saved in .obsidilight"
+SAVED="$TMP/.tephra/plugins/editing-toolbar.json"
+[ -f "$SAVED" ] || fail "nothing saved in .tephra"
 LAYOUT=$(python3 -c '
 import json,sys
 d=json.load(open(sys.argv[1]))

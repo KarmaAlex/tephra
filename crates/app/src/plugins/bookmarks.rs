@@ -1,6 +1,6 @@
 //! Bookmarks (Obsidian core plugin), a left sidebar view: notes, folders, headings, blocks and
 //! searches, optionally in groups. Stored in Obsidian's own format (`{"items": [{"type": "file",
-//! "path": …, "ctime": …}, …]}`) in `.obsidilight/bookmarks.json`; the first time, Obsidian's
+//! "path": …, "ctime": …}, …]}`) in `.tephra/bookmarks.json`; the first time, Obsidian's
 //! `.obsidian/bookmarks.json` is copied (read only, never written). Fields we don't use are kept.
 //! Bookmarks follow renamed notes.
 
@@ -27,7 +27,7 @@ pub struct Store {
 impl Store {
     pub fn load(vault: &Path) -> Self {
         let read = |p: PathBuf| std::fs::read_to_string(p).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).filter(|v| v["items"].is_array());
-        let ours = vault.join(".obsidilight/bookmarks.json");
+        let ours = vault.join(".tephra/bookmarks.json");
         let data = read(ours.clone()).or_else(|| read(vault.join(".obsidian/bookmarks.json"))).unwrap_or_else(|| json!({ "items": [] }));
         Self { data, path: Some(ours) }
     }
@@ -42,7 +42,7 @@ impl Store {
         if let Some(d) = p.parent() {
             let _ = std::fs::create_dir_all(d);
         }
-        let tmp = p.with_extension("json.obsidilight-tmp");
+        let tmp = p.with_extension("json.tephra-tmp");
         if std::fs::write(&tmp, serde_json::to_string_pretty(&self.data).unwrap_or_default()).is_ok() {
             let _ = std::fs::rename(&tmp, p);
         }
@@ -227,7 +227,7 @@ impl Plugin for Bookmarks {
             run: Rc::new(move |a: &mut ActionCtx| {
                 let Some(rel) = a.workspace().and_then(|w| w.active_note(a.cx)) else { return };
                 let on = s.borrow_mut().toggle_path(&rel, false);
-                if std::env::var_os("OBSIDILIGHT_SCRIPT").is_some() {
+                if std::env::var_os("TEPHRA_SCRIPT").is_some() {
                     println!("BOOKMARK {rel} {on}");
                 }
                 a.cx.refresh_windows();
@@ -307,7 +307,7 @@ impl Plugin for Bookmarks {
                                 s2.borrow_mut().remove(&at);
                                 cx.refresh_windows();
                             }))
-                            .when(!missing && obsidilight_core::index::is_note(&path) && matches!(kind.as_str(), "file" | "heading" | "block"), |d| {
+                            .when(!missing && tephra_core::index::is_note(&path) && matches!(kind.as_str(), "file" | "heading" | "block"), |d| {
                                 let sub = item["subpath"].as_str().unwrap_or("").trim_start_matches('#').to_string();
                                 d.preview_on_hover(&v.workspace, &path, &sub)
                             })

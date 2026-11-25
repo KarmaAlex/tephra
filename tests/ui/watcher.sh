@@ -7,7 +7,7 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/.obsidian"
 printf '[[b]]\n' > "$TMP/a.md"
-OBSIDILIGHT_SCRIPT=tests/ui/watcher.script timeout 30 target/release/obsidilight "$TMP/a.md" > "$TMP/out.txt" &
+TEPHRA_SCRIPT=tests/ui/watcher.script timeout 30 target/release/tephra "$TMP/a.md" > "$TMP/out.txt" &
 APP=$!
 sleep 2.4
 printf 'nuova\n' > "$TMP/b.md"                                   # another device adds b.md

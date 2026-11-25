@@ -1,12 +1,12 @@
-# Packaging obsidilight
+# Packaging Tephra
 
 One command per platform; every package lands in `dist/` (gitignored):
 
 | Command | Output | Built |
 |---|---|---|
-| `make arch` | `dist/obsidilight-<ver>-<rel>-x86_64.pkg.tar.zst` | natively (makepkg) |
-| `make deb` | `dist/obsidilight_<ver>-1_amd64.deb` | in a Debian 12 container |
-| `make windows` | `dist/obsidilight-<ver>-windows-x86_64.zip` | cross-compiled in a container; natively on Windows |
+| `make arch` | `dist/tephra-<ver>-<rel>-x86_64.pkg.tar.zst` | natively (makepkg) |
+| `make deb` | `dist/tephra_<ver>-1_amd64.deb` | in a Debian 12 container |
+| `make windows` | `dist/tephra-<ver>-windows-x86_64.zip` | cross-compiled in a container; natively on Windows |
 | `make dist` | all three | |
 
 `make test` runs the unit and fixture tests. `make test-all` adds the PDF export of every
@@ -25,7 +25,7 @@ the licenses.
 - `base-devel` for `make arch` (makepkg, Arch hosts only).
 - `podman` for `make deb` / `make windows`. The build images are created on first use
   (`packaging/*/Containerfile`, a few minutes) and cached after that. Cargo downloads are cached
-  in the `obsidilight-cargo-registry` volume, and the build outputs go to `target/cross/<platform>/`.
+  in the `tephra-cargo-registry` volume, and the build outputs go to `target/cross/<platform>/`.
   `CONTAINER=docker` also works, but rootful docker leaves root-owned files in `target/` and `dist/`.
 
 ## Arch Linux — `packaging/arch/`
@@ -35,14 +35,14 @@ It writes `pkgver` (from Cargo.toml) and the checksums into a copy of `PKGBUILD`
 there. Nothing needs to be edited by hand; bump `pkgrel` in `PKGBUILD` only to
 re-release the same version. Runtime dependencies and what each one is for: `arch/DEPENDENCIES.txt`.
 
-Copy **only** `dist/obsidilight-<ver>-<rel>-x86_64.pkg.tar.zst` to the target machine and install it:
+Copy **only** `dist/tephra-<ver>-<rel>-x86_64.pkg.tar.zst` to the target machine and install it:
 
 ```sh
-sudo pacman -U obsidilight-*-x86_64.pkg.tar.zst
+sudo pacman -U tephra-*-x86_64.pkg.tar.zst
 ```
 
 Nothing under `target/` is installable. (An earlier version staged an
-`obsidilight-<ver>-linux-x86_64.tar.zst` there. `pacman -U` on that file fails with
+`tephra-<ver>-linux-x86_64.tar.zst` there. `pacman -U` on that file fails with
 "missing package metadata", because it is a plain tarball and not a package.)
 
 ## Debian / Ubuntu — `packaging/debian/`
@@ -55,12 +55,12 @@ writes `copyright` (MIT + font licenses) and `changelog.Debian.gz`. Build on ano
 `make deb DEB_IMAGE=docker.io/library/ubuntu:22.04`.
 
 ```sh
-sudo apt install ./dist/obsidilight_*_amd64.deb
+sudo apt install ./dist/tephra_*_amd64.deb
 ```
 
 ## Windows — `packaging/windows/`
 
-A portable zip: `obsidilight.exe` (GUI subsystem, icon embedded, static runtime, imports only
+A portable zip: `tephra.exe` (GUI subsystem, icon embedded, static runtime, imports only
 Windows system DLLs) + licenses + `README.txt`. Requires Windows 10 1903+ and a DirectX 11 GPU.
 
 **Cross-compiling from Linux (`make windows`).** Target `x86_64-pc-windows-gnu`, linked with
@@ -84,7 +84,7 @@ powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1
 ```
 
 The script checks the prerequisites, builds the JS bundles if they are missing, and writes
-`dist\obsidilight-<ver>-windows-x86_64.zip` (`-NoZip` builds only the exe). With GNU make
+`dist\tephra-<ver>-windows-x86_64.zip` (`-NoZip` builds only the exe). With GNU make
 installed, `make windows` on Windows runs the same script.
 
 **Testing with Wine does not work.** The exe starts and every DLL import resolves, but GPUI's
@@ -94,7 +94,7 @@ Windows or in a VM.
 
 ## Shared files — `packaging/common/`
 
-`obsidilight.desktop` (menu entry; `Exec=obsidilight %f`, so a launch from the menu reopens the
-last vault, or shows the welcome page) and `obsidilight.png` (64×64 icon). The Windows icon
-`crates/app/assets/obsidilight.ico` is generated from the PNG:
-`magick packaging/common/obsidilight.png -define icon:auto-resize=256,64,48,32,16 crates/app/assets/obsidilight.ico`.
+`tephra.desktop` (menu entry; `Exec=tephra %f`, so a launch from the menu reopens the
+last vault, or shows the welcome page) and `tephra.png` (64×64 icon). The Windows icon
+`crates/app/assets/tephra.ico` is generated from the PNG:
+`magick packaging/common/tephra.png -define icon:auto-resize=256,64,48,32,16 crates/app/assets/tephra.ico`.

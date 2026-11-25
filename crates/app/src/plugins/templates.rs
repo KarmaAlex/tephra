@@ -8,8 +8,8 @@ use std::rc::Rc;
 use chrono::NaiveDateTime;
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::App;
-use obsidilight_core::index::is_note;
-use obsidilight_core::EditKind;
+use tephra_core::index::is_note;
+use tephra_core::EditKind;
 use serde_json::{Map, Value};
 
 use super::api::*;
@@ -76,7 +76,7 @@ pub fn fill(template: &str, title: &str, date_fmt: &str, time_fmt: &str, now: &N
 }
 
 /// Template notes in `folder` (vault paths, sorted).
-pub fn list(index: &obsidilight_core::index::VaultIndex, folder: &str) -> Vec<String> {
+pub fn list(index: &tephra_core::index::VaultIndex, folder: &str) -> Vec<String> {
     let folder = folder.trim().trim_matches('/');
     let prefix = format!("{folder}/");
     let mut v: Vec<String> = index.files().filter(|f| is_note(f) && !folder.is_empty() && f.starts_with(&prefix)).cloned().collect();

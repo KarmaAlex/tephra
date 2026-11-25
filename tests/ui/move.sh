@@ -44,7 +44,7 @@ ws-resolve a
 ws-resolve Sub/c
 quit
 SCRIPT
-OUT=$(OBSIDILIGHT_SCRIPT="$ROOT/t.script" timeout 30 target/release/obsidilight "$TMP/A/a.md" | grep -E "^(TABS|TREE|STATUS|RESOLVE|DRAGK|CLICKK)")
+OUT=$(TEPHRA_SCRIPT="$ROOT/t.script" timeout 30 target/release/tephra "$TMP/A/a.md" | grep -E "^(TABS|TREE|STATUS|RESOLVE|DRAGK|CLICKK)")
 echo "$OUT"
 fail() { echo "ui-move: $1"; exit 1; }
 grep -qE 'DRAGK|CLICKK' <<<"$OUT" && fail "an element wasn't on screen"

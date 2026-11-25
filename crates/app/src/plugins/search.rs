@@ -1,6 +1,6 @@
 //! Search (Obsidian core plugin): full-text search over the vault in the left sidebar, with
 //! `"phrases"`, `-exclusion`, `OR`, `( )`, `path:`, `file:`, `tag:` and `content:`
-//! (`obsidilight_core::search`). Results list each note with its matching lines; clicking one
+//! (`tephra_core::search`). Results list each note with its matching lines; clicking one
 //! opens the note there (Ctrl+click: new tab). Ctrl+Shift+F focuses it, with the selection
 //! as the query.
 
@@ -13,7 +13,7 @@ use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{h_flex, v_flex, ActiveTheme as _, Icon, IconName, Sizable as _};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use obsidilight_core::search::{parse_query, FileHit};
+use tephra_core::search::{parse_query, FileHit};
 use serde_json::{Map, Value};
 
 use super::api::*;
@@ -101,7 +101,7 @@ impl SearchView {
         self.index_gen = v.index.generation();
         drop(v);
         self.ms = t.elapsed().as_secs_f64() * 1000.0;
-        if std::env::var_os("OBSIDILIGHT_SCRIPT").is_some() {
+        if std::env::var_os("TEPHRA_SCRIPT").is_some() {
             println!("SEARCH {:?} files={} lines={} ms={:.1}", q, self.hits.len(), self.hits.iter().map(|h| h.lines.len()).sum::<usize>(), self.ms);
         }
         self.query = q;

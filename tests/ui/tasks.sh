@@ -8,7 +8,7 @@ trap 'rm -rf "$TMP"' EXIT
 printf '# Tasks\n- [ ] uno\n- [x] due\nfine\n' > "$TMP/n.md"
 UNO=$(python3 -c "print(open('$TMP/n.md').read().find('uno'))")
 printf 'wait 800\nkey ctrl-end\nwait 300\npos %s\nquit\n' "$UNO" > "$TMP/p.script"
-P=$(OBSIDILIGHT_SCRIPT="$TMP/p.script" timeout 30 target/release/obsidilight "$TMP/n.md" | grep POS)
+P=$(TEPHRA_SCRIPT="$TMP/p.script" timeout 30 target/release/tephra "$TMP/n.md" | grep POS)
 X=$(echo "$P" | awk '{print $3-16}'); Y=$(echo "$P" | awk '{print $4}')
 cat > "$TMP/a.script" <<SCRIPT
 wait 800
@@ -27,7 +27,7 @@ state
 wait 1500
 quit
 SCRIPT
-OUT=$(OBSIDILIGHT_SCRIPT="$TMP/a.script" timeout 30 target/release/obsidilight "$TMP/n.md" | grep -E "^(TASK|STATE)")
+OUT=$(TEPHRA_SCRIPT="$TMP/a.script" timeout 30 target/release/tephra "$TMP/n.md" | grep -E "^(TASK|STATE)")
 echo "$OUT"
 fail() { echo "ui-tasks: $1"; exit 1; }
 grep -qx 'TASK \[x\]' <<<"$OUT" || fail "clicking the checkbox did not tick it"

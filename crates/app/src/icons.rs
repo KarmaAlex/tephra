@@ -12,8 +12,14 @@ gpui_kit::assets::icon_assets!(
 
 pub struct AppAssets;
 
+/// Images bundled with the app (the logo on the welcome page), served from `assets/`.
+pub const LOGO: &str = "images/tephra-logo.png";
+
 impl AssetSource for AppAssets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
+        if path == LOGO {
+            return Ok(Some(Cow::Borrowed(&include_bytes!("../assets/tephra-logo.png")[..])));
+        }
         if let Some(b) = ExtraIcons.load(path)? {
             return Ok(Some(b));
         }
@@ -22,6 +28,9 @@ impl AssetSource for AppAssets {
     fn list(&self, path: &str) -> Result<Vec<SharedString>> {
         let mut v = gpui_kit::assets::Assets.list(path)?;
         v.extend(ExtraIcons.list(path)?);
+        if path.is_empty() || path == "images" {
+            v.push(SharedString::from(LOGO));
+        }
         v.sort();
         v.dedup();
         Ok(v)

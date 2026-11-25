@@ -7,7 +7,7 @@ VAULT="${VAULT:-$HOME/dev/vault-fixture}"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 printf 'wait 9000\nquit\n' > "$TMP/idle.script"
-OBSIDILIGHT_TIMING=1 OBSIDILIGHT_SCRIPT="$TMP/idle.script" timeout 30 target/release/obsidilight "$VAULT" > "$TMP/out.txt" 2>&1 &
+TEPHRA_TIMING=1 TEPHRA_SCRIPT="$TMP/idle.script" timeout 30 target/release/tephra "$VAULT" > "$TMP/out.txt" 2>&1 &
 APP=$!
 sleep 3
 a=$(awk '{print $14+$15}' /proc/$APP/stat)

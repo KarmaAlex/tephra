@@ -3,9 +3,9 @@
 //! and "Add to dictionary" in the editor's right-click menu.
 //!
 //! Dictionaries are the system's Hunspell ones (`hunspell-en_us`, `hunspell-it`, … packages:
-//! `/usr/share/hunspell`), `~/.local/share/hunspell`, `$DICPATH`, or `<vault>/.obsidilight/
+//! `/usr/share/hunspell`), `~/.local/share/hunspell`, `$DICPATH`, or `<vault>/.tephra/
 //! dictionaries`. Checking uses `spellbook` (pure-Rust Hunspell). Words you add are kept in
-//! `<vault>/.obsidilight/dictionary.txt`, one per line.
+//! `<vault>/.tephra/dictionary.txt`, one per line.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
@@ -15,8 +15,8 @@ use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 
 use gpui_kit::{div, App, Hsla, IntoElement as _, ParentElement as _, Styled as _};
-use obsidilight_core::markdown::{parse_blocks, parse_inline, BlockKind, Inline, InlineKind};
-use obsidilight_core::{EditKind, Selection};
+use tephra_core::markdown::{parse_blocks, parse_inline, BlockKind, Inline, InlineKind};
+use tephra_core::{EditKind, Selection};
 use serde_json::{Map, Value};
 use spellbook::Dictionary;
 
@@ -28,7 +28,7 @@ pub fn search_dirs(vault: &Path, extra: &str) -> Vec<PathBuf> {
     // ':' separates like $PATH on Unix; on Windows it is part of "C:\..." so only ',' / ';'
     let seps: &[char] = if cfg!(windows) { &[',', ';'] } else { &[',', ':'] };
     let mut v: Vec<PathBuf> = extra.split(seps).map(str::trim).filter(|s| !s.is_empty()).map(PathBuf::from).collect();
-    v.push(vault.join(".obsidilight/dictionaries"));
+    v.push(vault.join(".tephra/dictionaries"));
     if let Some(p) = std::env::var_os("DICPATH") {
         v.extend(std::env::split_paths(&p));
     }
@@ -255,7 +255,7 @@ impl Checker {
         out
     }
 
-    /// Adds a word to the vault's dictionary (`.obsidilight/dictionary.txt`).
+    /// Adds a word to the vault's dictionary (`.tephra/dictionary.txt`).
     pub fn add_word(&self, word: &str) {
         let w = word.trim().to_string();
         if w.is_empty() || !self.custom.borrow_mut().insert(w.clone()) {
@@ -267,7 +267,7 @@ impl Checker {
         if let Some(d) = self.words_file.parent() {
             let _ = std::fs::create_dir_all(d);
         }
-        let tmp = self.words_file.with_extension("txt.obsidilight-tmp");
+        let tmp = self.words_file.with_extension("txt.tephra-tmp");
         if std::fs::write(&tmp, all.join("\n") + "\n").is_ok() {
             let _ = std::fs::rename(&tmp, &self.words_file);
         }
@@ -339,7 +339,7 @@ impl Plugin for SpellCheck {
         let langs: Vec<String> = get("languages").split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect();
         let chosen: Vec<(String, PathBuf)> = langs.iter().filter_map(|l| find(&avail, l).cloned()).collect();
         let missing: Vec<String> = langs.iter().filter(|l| find(&avail, l).is_none()).cloned().collect();
-        let words_file = self.vault.join(".obsidilight/dictionary.txt");
+        let words_file = self.vault.join(".tephra/dictionary.txt");
         let custom: HashSet<String> = std::fs::read_to_string(&words_file).map(|t| t.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect()).unwrap_or_default();
         let dicts: Arc<OnceLock<Vec<(String, Dictionary)>>> = Arc::new(OnceLock::new());
         let errors: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
@@ -424,7 +424,7 @@ impl Plugin for SpellCheck {
                 let mut lines = vec![if dicts.get().is_none() { "Loading dictionaries…".to_string() } else if loaded.is_empty() { "No dictionary loaded: spell check is off.".into() } else { format!("Checking with: {}", loaded.join(", ")) }];
                 lines.push(if names.is_empty() { "No Hunspell dictionaries found on this system.".into() } else { format!("Available: {}", names.join(", ")) });
                 if !missing.is_empty() {
-                    lines.push(format!("Not found: {}. Install them with your package manager (e.g. hunspell-en_us, hunspell-it) or put <lang>.aff/.dic in .obsidilight/dictionaries.", missing.join(", ")));
+                    lines.push(format!("Not found: {}. Install them with your package manager (e.g. hunspell-en_us, hunspell-it) or put <lang>.aff/.dic in .tephra/dictionaries.", missing.join(", ")));
                 }
                 lines.extend(errors.lock().map(|e| e.clone()).unwrap_or_default());
                 div().flex().flex_col().gap_1().text_sm().children(lines).into_any_element()
@@ -479,12 +479,12 @@ mod tests {
     }
 
     /// Spell-checks every fixture note with the system en_US + it_IT dictionaries and writes the
-    /// flagged words (unique, with counts) to $OBSIDILIGHT_SPELL_REPORT. Run on demand:
-    /// `OBSIDILIGHT_SPELL_REPORT=reports/spell.txt cargo test -p obsidilight fixture_spell -- --ignored`
+    /// flagged words (unique, with counts) to $TEPHRA_SPELL_REPORT. Run on demand:
+    /// `TEPHRA_SPELL_REPORT=reports/spell.txt cargo test -p tephra fixture_spell -- --ignored`
     #[test]
     #[ignore]
     fn fixture_spell_report() {
-        let out = std::env::var("OBSIDILIGHT_SPELL_REPORT").expect("set OBSIDILIGHT_SPELL_REPORT");
+        let out = std::env::var("TEPHRA_SPELL_REPORT").expect("set TEPHRA_SPELL_REPORT");
         let home = std::env::var("HOME").unwrap();
         let root = Path::new(&home).join("dev/vault-fixture");
         let t = std::time::Instant::now();

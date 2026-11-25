@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Cross-compiles obsidilight.exe for x86_64 Windows. Runs INSIDE the obsidilight-build-windows
+# Cross-compiles tephra.exe for x86_64 Windows. Runs INSIDE the tephra-build-windows
 # container (packaging/windows/Containerfile); started by `make windows`.
 #   in : the repo, mounted at $PWD
-#   out: dist/obsidilight-<version>-windows-x86_64.zip  (obsidilight.exe + licenses)
+#   out: dist/tephra-<version>-windows-x86_64.zip  (tephra.exe + licenses)
 # Native build on a Windows machine instead: packaging/windows/build.ps1
 set -euo pipefail
 
@@ -27,17 +27,17 @@ cp Cargo.lock "$CARGO_TARGET_DIR/Cargo.lock.orig"
 trap 'cp "$CARGO_TARGET_DIR/Cargo.lock.orig" Cargo.lock' EXIT
 
 # (no --locked: the [patch] has to rewrite the lock entry; the fetch above was --locked)
-cargo build --release --target "$TARGET" -p obsidilight \
+cargo build --release --target "$TARGET" -p tephra \
     --config "patch.crates-io.gpui-pre-windows.path=\"$patched\""
 
 VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-Z=$CARGO_TARGET_DIR/zip/obsidilight-$VERSION-windows-x86_64
+Z=$CARGO_TARGET_DIR/zip/tephra-$VERSION-windows-x86_64
 rm -rf "$Z" && mkdir -p "$Z" dist
-cp "$CARGO_TARGET_DIR/$TARGET/release/obsidilight.exe" "$Z/"
+cp "$CARGO_TARGET_DIR/$TARGET/release/tephra.exe" "$Z/"
 cp LICENSE "$Z/LICENSE.txt"
 cp crates/app/assets/fonts/LICENSE-IBMPlexSans.txt crates/app/assets/fonts/LICENSE-DejaVu.txt "$Z/"
 cp packaging/windows/README.txt "$Z/README.txt"
 sed -i 's/$/\r/' "$Z"/*.txt  # CRLF for Notepad
-OUT=dist/obsidilight-$VERSION-windows-x86_64.zip
+OUT=dist/tephra-$VERSION-windows-x86_64.zip
 rm -f "$OUT" && (cd "$(dirname "$Z")" && zip -qr9 - "$(basename "$Z")") > "$OUT"
 ls -l "$OUT"

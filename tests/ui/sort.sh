@@ -45,8 +45,8 @@ wait 1800
 ws-order
 quit
 SCRIPT
-OUT=$(OBSIDILIGHT_SCRIPT="$ROOT/a.script" timeout 30 target/release/obsidilight "$TMP" | grep -E "^ORDER")
-OUT+=$'\n'$(OBSIDILIGHT_SCRIPT="$ROOT/b.script" timeout 30 target/release/obsidilight "$TMP" | grep -E "^ORDER")
+OUT=$(TEPHRA_SCRIPT="$ROOT/a.script" timeout 30 target/release/tephra "$TMP" | grep -E "^ORDER")
+OUT+=$'\n'$(TEPHRA_SCRIPT="$ROOT/b.script" timeout 30 target/release/tephra "$TMP" | grep -E "^ORDER")
 echo "$OUT"
 WANT='ORDER byCreatedTimeReverse ["folder a/", "Folder B/", "Zeta.md", "Lecture 10.md", "Èlite.md", "lecture 2.md"]
 ORDER alphabetical ["folder a/", "Folder B/", "Èlite.md", "lecture 2.md", "Lecture 10.md", "Zeta.md"]
@@ -57,5 +57,5 @@ ORDER byCreatedTime ["folder a/", "Folder B/", "lecture 2.md", "Èlite.md", "Lec
 ORDER byCreatedTime ["folder a/", "Folder B/", "lecture 2.md", "Èlite.md", "Lecture 10.md", "Zeta.md"]
 ORDER byModifiedTime ["folder a/", "Folder B/", "Lecture 10.md", "Èlite.md", "Zeta.md", "lecture 2.md"]'
 [ "$OUT" = "$WANT" ] || { echo "ui-sort: expected:"; echo "$WANT"; exit 1; }
-grep -q '"fileSortOrder": "byModifiedTime"' "$TMP/.obsidilight/app.json" || { echo "ui-sort: order not saved"; exit 1; }
+grep -q '"fileSortOrder": "byModifiedTime"' "$TMP/.tephra/app.json" || { echo "ui-sort: order not saved"; exit 1; }
 echo "ui-sort: OK"

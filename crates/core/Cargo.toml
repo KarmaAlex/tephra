@@ -1,5 +1,5 @@
 [package]
-name = "obsidilight-core"
+name = "tephra-core"
 description = "Platform-agnostic core: document buffer, file I/O, Obsidian Markdown parser"
 version.workspace = true
 edition.workspace = true

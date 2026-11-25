@@ -22,7 +22,7 @@ wait 200
 state
 quit
 SCRIPT
-OUT=$(OBSIDILIGHT_SCRIPT="$TMP/m.script" timeout 40 target/release/obsidilight "$TMP/math.md" | grep -E "^STATE")
+OUT=$(TEPHRA_SCRIPT="$TMP/m.script" timeout 40 target/release/tephra "$TMP/math.md" | grep -E "^STATE")
 echo "$OUT"
 fail() { echo "ui-caret: $1"; exit 1; }
 mapfile -t ST <<<"$OUT"
@@ -39,7 +39,7 @@ pos 100
 pos 300
 quit
 SCRIPT
-POS=$(OBSIDILIGHT_SCRIPT="$TMP/p.script" timeout 40 target/release/obsidilight "$TMP/wrap.md" | grep -E "^POS")
+POS=$(TEPHRA_SCRIPT="$TMP/p.script" timeout 40 target/release/tephra "$TMP/wrap.md" | grep -E "^POS")
 echo "$POS"
 X1=$(awk '/^POS 8 /{print $3}' <<<"$POS")
 Y1=$(awk '/^POS 8 /{print $4}' <<<"$POS")
@@ -56,7 +56,7 @@ wait 200
 state
 quit
 SCRIPT
-OUT=$(OBSIDILIGHT_SCRIPT="$TMP/w.script" timeout 40 target/release/obsidilight "$TMP/wrap.md" | grep -E "^STATE")
+OUT=$(TEPHRA_SCRIPT="$TMP/w.script" timeout 40 target/release/tephra "$TMP/wrap.md" | grep -E "^STATE")
 echo "$OUT"
 # the caret must stay on the first row of the wrapped paragraph (its y), not move to row 2
 [[ "$OUT" =~ caret_px=\([0-9]+,([0-9]+) ]] || fail "no caret in output"
@@ -78,7 +78,7 @@ wait 200
 state
 quit
 SCRIPT
-OUT=$(OBSIDILIGHT_SCRIPT="$TMP/s.script" timeout 40 target/release/obsidilight "$TMP/wrap.md" | grep -E "^STATE")
+OUT=$(TEPHRA_SCRIPT="$TMP/s.script" timeout 40 target/release/tephra "$TMP/wrap.md" | grep -E "^STATE")
 echo "$OUT"
 mapfile -t ST <<<"$OUT"
 for i in 0 1; do

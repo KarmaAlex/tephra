@@ -16,10 +16,10 @@ use std::path::PathBuf;
 use gpui_kit::base::text::editor_host::{BlockNode, CodeBlock, ColumnAlign, InlineNode, LinkMark, Paragraph, Span, Table, TextMark};
 use gpui_kit::base::text::MarkdownNode;
 use gpui_kit::Hsla;
-use obsidilight_core::markdown::callouts::{parse_quote, Callout, QuoteItem};
-use obsidilight_core::markdown::{parse_blocks, parse_inline, parse_table, Align, BlockKind, Inline, InlineKind};
-use obsidilight_core::markdown::{blocks::continues_table, tables::is_table_start};
-use obsidilight_core::Selection;
+use tephra_core::markdown::callouts::{parse_quote, Callout, QuoteItem};
+use tephra_core::markdown::{parse_blocks, parse_inline, parse_table, Align, BlockKind, Inline, InlineKind};
+use tephra_core::markdown::{blocks::continues_table, tables::is_table_start};
+use tephra_core::Selection;
 
 pub const ATOM: &str = "\u{FFFC}";
 pub const MATH_NODE: &str = "ol-math";
@@ -59,7 +59,7 @@ fn plain(s: &str) -> String {
 
 /// How an HTML element formats its content: (mark, text colour).
 fn html_format(open_tag: &str, mark: &TextMark, highlight: Hsla) -> (TextMark, Option<Hsla>) {
-    use obsidilight_core::markdown::inline::{html_attr, html_tag_name};
+    use tephra_core::markdown::inline::{html_attr, html_tag_name};
     let m = mark.clone();
     let style = html_attr(open_tag, "style").unwrap_or_default();
     let mut fg = crate::css::style_prop(&style, "color").and_then(|c| crate::css::parse_color(&c));
@@ -84,7 +84,7 @@ fn html_format(open_tag: &str, mark: &TextMark, highlight: Hsla) -> (TextMark, O
 
 /// The alignment of a paragraph that is entirely one aligned HTML element.
 fn block_align(text: &str, range: &Range<usize>, inl: &[Inline]) -> Option<BlockAlign> {
-    use obsidilight_core::markdown::inline::{html_attr, html_tag_name};
+    use tephra_core::markdown::inline::{html_attr, html_tag_name};
     let t = text[range.clone()].trim_end();
     let [n] = inl else { return None };
     if n.kind != InlineKind::Html || n.range.start != range.start || n.range.end != range.start + t.len() {
@@ -612,7 +612,7 @@ impl<'a> LeafBuilder<'a> {
             }
             InlineKind::Html => {
                 let open_tag = self.text[open.clone()].to_string();
-                let name = obsidilight_core::markdown::inline::html_tag_name(&open_tag);
+                let name = tephra_core::markdown::inline::html_tag_name(&open_tag);
                 if !reveal && (name == "sup" || name == "sub") {
                     let t = plain(&self.text[n.inner.clone()]);
                     self.atom(n.range.clone(), MarkdownNode::new(SUPSUB_NODE, SupSubAtom { text: t, sup: name == "sup" }));
@@ -795,7 +795,7 @@ impl QuoteCtx<'_> {
             }
             let (ts, te) = (line_start(i), lines[j - 1].end);
             let revealed = self.sel.start <= te && self.sel.end >= ts;
-            let Some(t) = (!revealed).then(|| obsidilight_core::markdown::tables::parse_table_lines(text, &lines[i..j])).flatten() else {
+            let Some(t) = (!revealed).then(|| tephra_core::markdown::tables::parse_table_lines(text, &lines[i..j])).flatten() else {
                 i = j;
                 continue;
             };
@@ -839,7 +839,7 @@ impl QuoteCtx<'_> {
         let text = self.text;
         let mut out = Vec::new();
         let mut cur = r.start;
-        for m in obsidilight_core::markdown::find_math(&text[r.clone()]).into_iter().filter(|m| m.display) {
+        for m in tephra_core::markdown::find_math(&text[r.clone()]).into_iter().filter(|m| m.display) {
             let (ms, me) = (r.start + m.range.start, r.start + m.range.end);
             let ls = text[..ms].rfind('\n').map_or(0, |i| i + 1).max(r.start);
             let le = text[me..].find('\n').map_or(r.end, |i| me + i).min(r.end);
@@ -877,7 +877,7 @@ impl QuoteCtx<'_> {
             let line = ls..le;
             ls += raw.len() + 1;
             // the content after the quote markers, parsed as a line of its own
-            let cs = obsidilight_core::markdown::callouts::quote_prefixes(text, &line).last().map_or(line.start, |p| p.end);
+            let cs = tephra_core::markdown::callouts::quote_prefixes(text, &line).last().map_or(line.start, |p| p.end);
             let item = parse_blocks(&text[cs..le]).into_iter().next().filter(|b| matches!(b.kind, BlockKind::ListItem { .. }));
             let Some(b) = item else {
                 para = Some(para.map_or(line.clone(), |p| p.start..line.end));
@@ -889,7 +889,7 @@ impl QuoteCtx<'_> {
             let (marker, content) = (cs + b.marker.start..cs + b.marker.end, cs + b.content.start..cs + b.content.end);
             let k = self.next_key();
             let mut lb = self.leaf(line.clone());
-            lb.prefixes = obsidilight_core::markdown::callouts::quote_prefixes(text, &line).into_iter().map(|p| (p, false)).collect();
+            lb.prefixes = tephra_core::markdown::callouts::quote_prefixes(text, &line).into_iter().map(|p| (p, false)).collect();
             let inl = parse_inline(text, content.clone());
             let indent = b.indent as f32 * 6.0;
             let node = match b.kind {
@@ -932,7 +932,7 @@ impl QuoteCtx<'_> {
     fn lines(&mut self, r: &Range<usize>, proj: &mut Projection) -> ProjNode {
         let k = self.next_key();
         let mut lb = self.leaf(r.clone());
-        lb.prefixes = obsidilight_core::markdown::callouts::quote_prefixes(self.text, r).into_iter().map(|p| (p, false)).collect();
+        lb.prefixes = tephra_core::markdown::callouts::quote_prefixes(self.text, r).into_iter().map(|p| (p, false)).collect();
         let inl = parse_inline(self.text, r.clone());
         lb.inlines(&inl, r.clone(), &TextMark::default());
         ProjNode::Block(BlockNode::Paragraph(lb.finish(k, proj)))

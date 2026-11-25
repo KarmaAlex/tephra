@@ -1,0 +1,34 @@
+/* Tephra Light — the light variant of Tephra's volcanic-ash palette.
+ *
+ * Warm paper surfaces with a dark-ember accent. Like every Obsidian theme it
+ * only sets CSS variables; this theme sets the `.theme-light` ones (the dark
+ * base theme keeps Obsidian's default dark colours). The app embeds it
+ * (crates/app/src/theme.rs) and lists it in Settings → Appearance next to the
+ * default; copy this folder into `<vault>/.obsidian/themes/` to install it into
+ * a vault (a vault theme of the same name overrides it).
+ */
+
+.theme-light {
+  --mono-rgb-0: 255, 255, 255; --mono-rgb-100: 0, 0, 0;
+  /* warm paper, from the page to the darkest ink */
+  --color-base-00: #faf7f1; --color-base-05: #f4efe7; --color-base-10: #ede7db; --color-base-20: #e6ddcd;
+  --color-base-25: #dcd0ba; --color-base-30: #cec0a8; --color-base-35: #bcae94; --color-base-40: #a3947a;
+  --color-base-50: #857762; --color-base-60: #6a5e4d; --color-base-70: #544a3d; --color-base-100: #2e2921;
+  /* ember, dark enough to read on paper */
+  --accent-h: 15; --accent-s: 80%; --accent-l: 45%;
+  --color-red-rgb: 198, 62, 52; --color-orange-rgb: 206, 108, 22; --color-yellow-rgb: 176, 138, 12;
+  --color-green-rgb: 34, 138, 74; --color-cyan-rgb: 8, 146, 136; --color-blue-rgb: 36, 100, 204;
+  --color-purple-rgb: 128, 74, 198; --color-pink-rgb: 202, 62, 122;
+  --text-highlight-bg: rgba(242, 138, 56, 0.35);
+  --background-modifier-hover: rgba(var(--mono-rgb-100), 0.075);
+  --text-selection: hsla(15, 80%, 45%, 0.22);
+}
+
+/* callout colours (r, g, b) */
+.callout[data-callout="note"], .callout[data-callout="info"] { --callout-color: 36, 100, 204; }
+.callout[data-callout="tip"], .callout[data-callout="abstract"], .callout[data-callout="summary"] { --callout-color: 8, 146, 136; }
+.callout[data-callout="warning"], .callout[data-callout="caution"], .callout[data-callout="attention"] { --callout-color: 206, 108, 22; }
+.callout[data-callout="danger"], .callout[data-callout="error"], .callout[data-callout="fail"], .callout[data-callout="failure"], .callout[data-callout="missing"] { --callout-color: 198, 62, 52; }
+.callout[data-callout="question"], .callout[data-callout="help"], .callout[data-callout="faq"] { --callout-color: 34, 138, 74; }
+.callout[data-callout="example"] { --callout-color: 128, 74, 198; }
+.callout[data-callout="quote"], .callout[data-callout="cite"] { --callout-color: 133, 119, 98; }

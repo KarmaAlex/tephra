@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#352e27"/>
+      <stop offset="1" stop-color="#14110e"/>
+    </linearGradient>
+    <linearGradient id="cone" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffb257"/>
+      <stop offset="0.45" stop-color="#f0712f"/>
+      <stop offset="1" stop-color="#a83412"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ff9a4d" stop-opacity="0.8"/>
+      <stop offset="1" stop-color="#ff9a4d" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- basalt badge -->
+  <rect x="16" y="16" width="480" height="480" rx="108" fill="url(#bg)"/>
+
+  <!-- geological strata under the volcano -->
+  <g stroke="#7a6f60" stroke-width="9" stroke-linecap="round">
+    <line x1="140" y1="442" x2="372" y2="442" opacity="0.75"/>
+    <line x1="170" y1="466" x2="342" y2="466" opacity="0.45"/>
+  </g>
+
+  <!-- glow behind the crater -->
+  <circle cx="256" cy="188" r="118" fill="url(#glow)"/>
+
+  <!-- volcano cone with a flat crater -->
+  <path d="M 88 416 L 224 188 L 240 170 L 272 170 L 288 188 L 424 416 Z" fill="url(#cone)"/>
+  <!-- lava in the crater and a trickle down the slope -->
+  <ellipse cx="256" cy="175" rx="15" ry="6" fill="#ffd27a"/>
+  <path d="M 263 182 C 269 208 259 232 267 258 C 273 279 263 302 269 326" stroke="#ffc06a" stroke-width="7" stroke-linecap="round" fill="none" opacity="0.9"/>
+
+  <!-- tephra / ash cloud -->
+  <g fill="#e2d9ca">
+    <circle cx="256" cy="118" r="24"/>
+    <circle cx="215" cy="96" r="16" opacity="0.85"/>
+    <circle cx="297" cy="96" r="16" opacity="0.85"/>
+    <circle cx="256" cy="72" r="11" opacity="0.55"/>
+    <circle cx="233" cy="136" r="9" opacity="0.5"/>
+    <circle cx="279" cy="136" r="9" opacity="0.5"/>
+  </g>
+</svg>

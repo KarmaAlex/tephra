@@ -1,12 +1,12 @@
-//! Typing benchmark (OBSIDILIGHT_BENCH=1): types into the open note through the normal
+//! Typing benchmark (TEPHRA_BENCH=1): types into the open note through the normal
 //! edit path, one character per frame, then prints `REPORT {json}` and quits.
 //! The note is never saved during the benchmark.
 
 use std::time::Duration;
 
 use gpui_kit::*;
-use obsidilight_core::markdown::find_math;
-use obsidilight_core::{EditKind, Selection};
+use tephra_core::markdown::find_math;
+use tephra_core::{EditKind, Selection};
 
 use crate::editor::Editor;
 
@@ -96,13 +96,13 @@ pub fn start(editor: Entity<Editor>, _window: &mut Window, cx: &mut App) {
                 for _ in 0..5 {
                     for q in queries {
                         let t = std::time::Instant::now();
-                        let n = obsidilight_core::search::parse_query(q).map(|q| v.index.search(&q).len()).unwrap_or(0);
+                        let n = tephra_core::search::parse_query(q).map(|q| v.index.search(&q).len()).unwrap_or(0);
                         ms.push(t.elapsed().as_secs_f64() * 1000.0);
                         std::hint::black_box(n);
                     }
                 }
                 let t = std::time::Instant::now();
-                let idx = obsidilight_core::index::VaultIndex::build(&v.root);
+                let idx = tephra_core::index::VaultIndex::build(&v.root);
                 std::hint::black_box(idx.files().count());
                 (stats(&ms), format!("{:.1}", t.elapsed().as_secs_f64() * 1000.0))
             })

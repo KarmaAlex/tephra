@@ -33,7 +33,7 @@ wait 300
 ws-panes
 quit
 SCRIPT
-OUT=$(OBSIDILIGHT_SCRIPT="$TMP/p.script" timeout 30 target/release/obsidilight "$TMP/A.md" | grep -E "^(PANES|RENAME)")
+OUT=$(TEPHRA_SCRIPT="$TMP/p.script" timeout 30 target/release/tephra "$TMP/A.md" | grep -E "^(PANES|RENAME)")
 echo "$OUT"
 expect() { grep -qxF "$1" <<<"$OUT" || { echo "ui-panes: expected: $1"; exit 1; }; }
 expect 'PANES ["A.md"] | *["A.md"]'

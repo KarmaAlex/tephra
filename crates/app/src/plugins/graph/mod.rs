@@ -18,8 +18,8 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{h_flex, ActiveTheme as _, Sizable as _};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use obsidilight_core::index::{is_note, VaultIndex};
-use obsidilight_core::links::link_path;
+use tephra_core::index::{is_note, VaultIndex};
+use tephra_core::links::link_path;
 use serde_json::{Map, Value};
 
 use super::api::*;
@@ -304,7 +304,7 @@ impl GraphView {
         if kept * 2 > data.nodes.len() {
             sim.alpha = 0.3; // a small change: a gentle re-settle
         }
-        if std::env::var_os("OBSIDILIGHT_SCRIPT").is_some() {
+        if std::env::var_os("TEPHRA_SCRIPT").is_some() {
             println!("GRAPH build {} nodes={} edges={} ({:.1} ms)", if self.local { "local" } else { "global" }, data.nodes.len(), data.edges.len(), t.elapsed().as_secs_f64() * 1000.0);
         }
         self.data = data;
@@ -515,7 +515,7 @@ impl Render for GraphView {
             window.request_animation_frame();
         } else if !self.reported && !self.data.nodes.is_empty() {
             self.reported = true;
-            if std::env::var_os("OBSIDILIGHT_SCRIPT").is_some() || std::env::var_os("OBSIDILIGHT_TIMING").is_some() {
+            if std::env::var_os("TEPHRA_SCRIPT").is_some() || std::env::var_os("TEPHRA_TIMING").is_some() {
                 println!("GRAPH settled {} nodes={} ticks={} tick_avg_ms={:.2} frame_max_ms={:.1} paint_max_ms={:.1}", if self.local { "local" } else { "global" }, self.data.nodes.len(), self.ticks, self.tick_ms / self.ticks.max(1) as f64, self.frame_ms, self.paint_ms.get());
             }
         }
@@ -749,7 +749,7 @@ impl Plugin for Graph {
 mod tests {
     // no `gpui_kit::*` glob here: its `test` macro would shadow the built-in one
     use super::{build, Filters, GraphData, Kind};
-    use obsidilight_core::index::VaultIndex;
+    use tephra_core::index::VaultIndex;
 
     fn vault(files: &[(&str, &str)]) -> (std::path::PathBuf, VaultIndex) {
         let dir = std::env::temp_dir().join(format!("ol-graph-{}-{}", std::process::id(), files.len()));

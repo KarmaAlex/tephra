@@ -4,8 +4,8 @@
 # Don't run makepkg here by hand: `make arch` (packaging/arch/build.sh) builds the binary, copies
 # the source files next to a copy of this PKGBUILD in target/pkg/arch, sets pkgver from Cargo.toml,
 # fills in the checksums and runs makepkg there.
-# Output (the only file to install): dist/obsidilight-<pkgver>-<pkgrel>-x86_64.pkg.tar.zst
-pkgname=obsidilight
+# Output (the only file to install): dist/tephra-<pkgver>-<pkgrel>-x86_64.pkg.tar.zst
+pkgname=tephra
 pkgver=0.1.0
 pkgrel=3
 pkgdesc='Lightweight Obsidian-compatible notes app (GPUI)'
@@ -25,13 +25,13 @@ optdepends=('vulkan-driver: hardware-accelerated rendering (e.g. vulkan-radeon, 
 options=('!strip' '!debug')
 # plain files, no source tarball: a `<name>-<ver>-...tar.zst` next to the real package was too
 # easy to mistake for it (pacman -U on it fails with "missing package metadata")
-source=('obsidilight' 'obsidilight.desktop' 'obsidilight.png'
+source=('tephra' 'tephra.desktop' 'tephra.png'
         'LICENSE' 'LICENSE-IBMPlexSans.txt' 'LICENSE-DejaVu.txt')
 sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')  # filled in by build.sh
 
 package() {
-  install -Dm755 obsidilight "$pkgdir/usr/bin/obsidilight"
-  install -Dm644 obsidilight.desktop "$pkgdir/usr/share/applications/obsidilight.desktop"
-  install -Dm644 obsidilight.png "$pkgdir/usr/share/icons/hicolor/64x64/apps/obsidilight.png"
+  install -Dm755 tephra "$pkgdir/usr/bin/tephra"
+  install -Dm644 tephra.desktop "$pkgdir/usr/share/applications/tephra.desktop"
+  install -Dm644 tephra.png "$pkgdir/usr/share/icons/hicolor/64x64/apps/tephra.png"
   install -Dm644 -t "$pkgdir/usr/share/licenses/$pkgname" LICENSE LICENSE-IBMPlexSans.txt LICENSE-DejaVu.txt
 }

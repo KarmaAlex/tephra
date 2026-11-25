@@ -9,7 +9,7 @@
 //!   (`horizontal-block-layout-<first 16 hex of SHA-256(source)>` → `width-<i>`, `bg-<i>`,
 //!   `fg-<i>`, `title-<i>`), so layouts saved by Obsidian apply here. Obsidian's
 //!   `.obsidian/plugins/horizontal-blocks/data.json` is read, never written: ours go to
-//!   `.obsidilight/horizontal-blocks.json` and win over Obsidian's for the same key;
+//!   `.tephra/horizontal-blocks.json` and win over Obsidian's for the same key;
 //! - the styling settings (divider, blocks, spacing, toolbar, theme-aware colours) are the
 //!   original's, with its defaults, or its saved `style` when Obsidian has one;
 //! - each column has a toolbar (hidden by default) with background/text colour pickers and
@@ -224,7 +224,7 @@ fn obsidian_data(vault: &Path) -> Map<String, Value> {
 
 impl Layouts {
     fn load(vault: &Path) -> Self {
-        let file = vault.join(".obsidilight/horizontal-blocks.json");
+        let file = vault.join(".tephra/horizontal-blocks.json");
         let ours = read_json(&file).unwrap_or_default();
         Self::from_parts(obsidian_data(vault), ours, Some(file))
     }
@@ -286,7 +286,7 @@ impl Layouts {
         if let Some(d) = p.parent() {
             let _ = std::fs::create_dir_all(d);
         }
-        let tmp = p.with_extension("json.obsidilight-tmp");
+        let tmp = p.with_extension("json.tephra-tmp");
         if std::fs::write(&tmp, serde_json::to_string_pretty(&Value::Object(self.ours.clone())).unwrap_or_default()).is_ok() {
             let _ = std::fs::rename(&tmp, p);
         }
@@ -1117,7 +1117,7 @@ mod tests {
         assert!(t.contains("<a>") && t.contains("<c>") && t.contains("fill: rgb(255, 0, 0)"), "{t}");
         assert!(t.contains("(left: 2.0 * u_ + c_.accent)"), "solid divider in the accent colour: {t}");
         // the spike's Typst compiler checks this output (see docs/milestones/M2-feedback.md)
-        if let Ok(dir) = std::env::var("OBSIDILIGHT_TYPST_OUT") {
+        if let Ok(dir) = std::env::var("TEPHRA_TYPST_OUT") {
             let body = Columns(Rc::new(shared(Map::new()))).typst("=== Left\nSome *bold* text.\n---\n=== Right\n- a list", &|m: &str| m.to_string());
             let pre = "#let u_ = 0.75pt\n#let c_ = (text: rgb(34, 34, 34), accent: rgb(138, 92, 245))\n";
             std::fs::write(Path::new(&dir).join("main.typ"), format!("#set page(paper: \"a4\", margin: 10mm)\n{pre}= Layout\n\n{body}\n\nAfter the block.\n")).unwrap();

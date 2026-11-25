@@ -36,8 +36,8 @@ pub fn open(cx: &mut App) {
     crate::theme::apply(None, cx);
     let opts = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size(px(860.), px(580.)), cx))),
-        titlebar: Some(TitlebarOptions { title: Some("obsidilight".into()), ..Default::default() }),
-        app_id: Some("obsidilight".into()),
+        titlebar: Some(TitlebarOptions { title: Some("Tephra".into()), ..Default::default() }),
+        app_id: Some("tephra".into()),
         ..Default::default()
     };
     let result = gpui_kit::open_window(opts, cx, |window, cx| {
@@ -161,7 +161,8 @@ impl Render for Welcome {
                 v_flex()
                     .items_center()
                     .gap_1()
-                    .child(div().text_size(r(26.)).font_weight(FontWeight::SEMIBOLD).child("obsidilight"))
+                    .child(img(crate::icons::LOGO).w(r(72.)).h(r(72.)))
+                    .child(div().text_size(r(26.)).font_weight(FontWeight::SEMIBOLD).child("Tephra"))
                     .child(div().text_size(r(13.)).text_color(theme.muted_foreground).child(concat!("Version ", env!("CARGO_PKG_VERSION")))),
             )
             .child(actions);

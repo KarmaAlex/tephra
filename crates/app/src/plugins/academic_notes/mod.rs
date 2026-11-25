@@ -229,7 +229,7 @@ impl CalloutRenderer for Styles {
 
 /// Entries of the Contents panel: (depth, text, offset, is a numbered environment).
 pub fn contents(text: &str, depth: u8) -> Vec<(u8, String, usize, bool)> {
-    use obsidilight_core::markdown::{parse_blocks, BlockKind};
+    use tephra_core::markdown::{parse_blocks, BlockKind};
     let numbers = numbering::number(&numbering::items_of_text(text));
     let mut out = Vec::new();
     let mut level = 0u8;
@@ -301,7 +301,7 @@ impl Toc {
 
 /// (level, text, offset) of the headings a contents block lists.
 pub fn toc_entries(text: &str, depth: u8) -> Vec<(u8, String, usize)> {
-    use obsidilight_core::markdown::{parse_blocks, BlockKind};
+    use tephra_core::markdown::{parse_blocks, BlockKind};
     parse_blocks(text)
         .into_iter()
         .filter_map(|b| match b.kind {
@@ -447,7 +447,7 @@ impl Plugin for AcademicNotes {
                             .on_click(move |_, window, cx| {
                                 editor.update(cx, |e, cx| {
                                     window.focus(&e.focus, cx);
-                                    e.set_selection(obsidilight_core::Selection::caret(off), false, cx);
+                                    e.set_selection(tephra_core::Selection::caret(off), false, cx);
                                 });
                             })
                             .into_any_element()
@@ -463,7 +463,7 @@ impl Plugin for AcademicNotes {
 mod tests {
     use super::{palette, toc_entries, CalloutLook, CalloutRenderer, LinkLabeler, NoteCtx, References, Styles};
     use gpui_kit::rgb;
-    use obsidilight_core::index::VaultIndex;
+    use tephra_core::index::VaultIndex;
 
     #[test]
     fn claims_its_environments_only() {
@@ -534,7 +534,7 @@ mod tests {
 #[cfg(test)]
 mod algorithm_reference {
     use super::algorithm::{parse, Part};
-    use obsidilight_core::markdown::{callouts::flatten, parse_blocks, parse_quote, BlockKind};
+    use tephra_core::markdown::{callouts::flatten, parse_blocks, parse_quote, BlockKind};
 
     #[test]
     fn pseudocode_matches_academic_notes() {

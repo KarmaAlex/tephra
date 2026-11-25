@@ -27,9 +27,9 @@ pub struct PickItem {
 pub type Items = Rc<dyn Fn(&str, &App) -> Vec<PickItem>>;
 pub type Pick = Rc<dyn Fn(usize, bool, &mut Window, &mut App)>;
 
-/// Prints what a picker shows (`PICKER …` lines) under `OBSIDILIGHT_SCRIPT`, for UI tests.
+/// Prints what a picker shows (`PICKER …` lines) under `TEPHRA_SCRIPT`, for UI tests.
 fn trace(query: &str, items: &[PickItem]) {
-    if std::env::var_os("OBSIDILIGHT_SCRIPT").is_some() {
+    if std::env::var_os("TEPHRA_SCRIPT").is_some() {
         let first: Vec<&str> = items.iter().take(5).map(|i| i.label.as_str()).collect();
         println!("PICKER {query:?} {} {first:?}", items.len());
     }
@@ -122,7 +122,7 @@ pub fn confirm(title: &str, body: &str, ok: &str, on_ok: Rc<dyn Fn(&mut Window, 
     use gpui_kit::component::button::{Button, ButtonVariants as _};
     use gpui_kit::component::dialog::{DialogAction, DialogClose, DialogFooter};
     let (title, body, ok) = (title.to_string(), body.to_string(), ok.to_string());
-    if std::env::var_os("OBSIDILIGHT_SCRIPT").is_some() {
+    if std::env::var_os("TEPHRA_SCRIPT").is_some() {
         println!("CONFIRM {title}: {body}");
     }
     window.open_dialog(cx, move |dialog, _, _| {

@@ -24,7 +24,7 @@
   };
   g.require = function (name) {
     if (String(name).trim() === "latex-suite") return api;
-    throw new Error('require("' + name + '") is not available in obsidilight');
+    throw new Error('require("' + name + '") is not available in tephra');
   };
   g.__ls = ls;
   g.__lsFns = [];

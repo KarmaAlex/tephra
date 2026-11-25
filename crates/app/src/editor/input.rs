@@ -4,7 +4,7 @@ use std::ops::Range;
 
 use gpui_kit::base::text::editor_host::{Caret, CaretAffinity};
 use gpui_kit::*;
-use obsidilight_core::{EditKind, Selection};
+use tephra_core::{EditKind, Selection};
 
 use super::Editor;
 

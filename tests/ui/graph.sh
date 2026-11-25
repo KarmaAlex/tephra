@@ -31,7 +31,7 @@ key enter
 wait 2500
 quit
 SCRIPT
-OUT=$(OBSIDILIGHT_SCRIPT="$TMP/s.script" timeout 30 target/release/obsidilight "$TMP/A.md" | grep -E "^(GRAPH|TABS|PREVIEW)")
+OUT=$(TEPHRA_SCRIPT="$TMP/s.script" timeout 30 target/release/tephra "$TMP/A.md" | grep -E "^(GRAPH|TABS|PREVIEW)")
 echo "$OUT"
 fail() { echo "ui-graph: $1"; exit 1; }
 grep -q '^GRAPH build global nodes=4 edges=3' <<<"$OUT" || fail "global graph: A, B, C and the unresolved link; no orphan"

@@ -7,9 +7,9 @@ use std::rc::Rc;
 
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::{App, Window};
-use obsidilight_core::index::is_note;
-use obsidilight_core::markdown::{parse_blocks, BlockKind};
-use obsidilight_core::EditKind;
+use tephra_core::index::is_note;
+use tephra_core::markdown::{parse_blocks, BlockKind};
+use tephra_core::EditKind;
 use serde_json::{Map, Value};
 
 use super::api::*;

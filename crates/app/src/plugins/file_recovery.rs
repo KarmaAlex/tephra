@@ -3,7 +3,7 @@
 //!
 //! Snapshots live outside the vault, on this machine only (your choice, M6): not synced,
 //! like Obsidian's own (it keeps them in its local database). One folder per vault:
-//!   $XDG_DATA_HOME/obsidilight/recovery/<vault name>-<hash of its path>/<hash of note path>/
+//!   $XDG_DATA_HOME/tephra/recovery/<vault name>-<hash of its path>/<hash of note path>/
 //!     path          the note's vault path
 //!     <unix ms>.md  one snapshot
 //!
@@ -42,22 +42,22 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Where app data goes: `$OBSIDILIGHT_DATA_DIR`; inside the (throwaway) vault for scripted UI
-/// tests; else `$XDG_DATA_HOME/obsidilight` (`~/.local/share/obsidilight`), on Windows
-/// `%LOCALAPPDATA%\obsidilight`.
+/// Where app data goes: `$TEPHRA_DATA_DIR`; inside the (throwaway) vault for scripted UI
+/// tests; else `$XDG_DATA_HOME/tephra` (`~/.local/share/tephra`), on Windows
+/// `%LOCALAPPDATA%\tephra`.
 pub fn data_dir(vault: &Path) -> PathBuf {
-    if let Some(d) = std::env::var_os("OBSIDILIGHT_DATA_DIR") {
+    if let Some(d) = std::env::var_os("TEPHRA_DATA_DIR") {
         return PathBuf::from(d);
     }
-    if std::env::var_os("OBSIDILIGHT_SCRIPT").is_some() || std::env::var_os("OBSIDILIGHT_BENCH").is_some() {
-        return vault.join(".obsidilight/test-data");
+    if std::env::var_os("TEPHRA_SCRIPT").is_some() || std::env::var_os("TEPHRA_BENCH").is_some() {
+        return vault.join(".tephra/test-data");
     }
     let env_dir = |k: &str| std::env::var_os(k).map(PathBuf::from).filter(|p| p.is_absolute());
-    // Windows has no $HOME/XDG: %LOCALAPPDATA%\obsidilight (machine-local, not roamed)
+    // Windows has no $HOME/XDG: %LOCALAPPDATA%\tephra (machine-local, not roamed)
     let base = if cfg!(windows) { env_dir("LOCALAPPDATA").or_else(|| env_dir("APPDATA")) } else { None }
         .or_else(|| env_dir("XDG_DATA_HOME"))
         .unwrap_or_else(|| env_dir("HOME").or_else(|| env_dir("USERPROFILE")).unwrap_or_else(std::env::temp_dir).join(".local/share"));
-    base.join("obsidilight")
+    base.join("tephra")
 }
 
 impl Store {
@@ -337,7 +337,7 @@ pub fn open_history(store: &Store, rel: &str, window: &mut Window, cx: &mut App)
         return;
     }
     let current = WorkspaceHandle::current(cx).and_then(|ws| ws.note_text(rel, cx));
-    if std::env::var_os("OBSIDILIGHT_SCRIPT").is_some() {
+    if std::env::var_os("TEPHRA_SCRIPT").is_some() {
         println!("RECOVERY {rel} {}", snaps.len());
     }
     let (store, rel) = (store.clone(), rel.to_string());

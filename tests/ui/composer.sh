@@ -13,8 +13,8 @@ cleanup() {
   done
 }
 trap cleanup EXIT
-mkdir -p "$TMP/.obsidian" "$TMP/.obsidilight/plugins" "$TMP/sub"
-echo '{"confirmMerge": false}' > "$TMP/.obsidilight/plugins/note-composer.json"
+mkdir -p "$TMP/.obsidian" "$TMP/.tephra/plugins" "$TMP/sub"
+echo '{"confirmMerge": false}' > "$TMP/.tephra/plugins/note-composer.json"
 printf '# Src\nsrc body [[Src#Src]]\n' > "$TMP/sub/Src.md"
 printf 'dst\n' > "$TMP/Dst.md"
 printf 'see [[Src]] and [[Src#Src|it]]\n' > "$TMP/Other.md"
@@ -40,7 +40,7 @@ wait 1500
 ws-tree
 quit
 SCRIPT
-OUT=$(OBSIDILIGHT_SCRIPT="$TMP/s.script" timeout 30 target/release/obsidilight "$TMP/sub/Src.md" | grep -E "^(TABS|TREE|STATUS)")
+OUT=$(TEPHRA_SCRIPT="$TMP/s.script" timeout 30 target/release/tephra "$TMP/sub/Src.md" | grep -E "^(TABS|TREE|STATUS)")
 echo "$OUT"
 fail() { echo "ui-composer: $1"; exit 1; }
 grep -qF 'TABS active=0 ["Dst.md"]' <<<"$OUT" || fail "merged-into note not opened"

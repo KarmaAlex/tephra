@@ -1,4 +1,4 @@
-//! Core (non-plugin) settings, saved in `<vault>/.obsidilight/app.json`. Unknown keys are kept.
+//! Core (non-plugin) settings, saved in `<vault>/.tephra/app.json`. Unknown keys are kept.
 
 use std::path::PathBuf;
 
@@ -20,7 +20,7 @@ pub const TOGGLES: &[(&str, &str, &str, bool)] = &[
 
 impl AppSettings {
     pub fn init(cx: &mut App, vault_root: &std::path::Path) {
-        let path = vault_root.join(".obsidilight/app.json");
+        let path = vault_root.join(".tephra/app.json");
         let values = std::fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v.as_object().cloned()).unwrap_or_default();
         cx.set_global(AppSettings { values, path: Some(path) });
     }
@@ -42,7 +42,7 @@ impl AppSettings {
             if let Some(d) = p.parent() {
                 let _ = std::fs::create_dir_all(d);
             }
-            let tmp = p.with_extension("json.obsidilight-tmp");
+            let tmp = p.with_extension("json.tephra-tmp");
             if std::fs::write(&tmp, serde_json::to_string_pretty(&s.values).unwrap_or_default()).is_ok() {
                 let _ = std::fs::rename(&tmp, p);
             }

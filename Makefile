@@ -1,4 +1,4 @@
-# obsidilight — developer entry points. `make help` lists them.
+# Tephra — developer entry points. `make help` lists them.
 VAULT ?= $(HOME)/dev/vault-fixture
 VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 RUST_TOOLCHAIN := $(shell sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)
@@ -6,7 +6,7 @@ RUST_TOOLCHAIN := $(shell sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.tom
 # Container builds (Debian .deb, Windows cross-compile): podman (rootless) by default.
 CONTAINER ?= podman
 DEB_IMAGE ?= docker.io/library/debian:bookworm
-CARGO_CACHE ?= obsidilight-cargo-registry
+CARGO_CACHE ?= tephra-cargo-registry
 RUN_IN = $(CONTAINER) run --rm -v "$(CURDIR)":/src:z -w /src -v $(CARGO_CACHE):/opt/cargo/registry
 
 # JS bundles the app embeds with include_str! (gitignored; built once, `make bundles` rebuilds)
@@ -22,7 +22,7 @@ help:            ## list the targets
 
 # --- build -----------------------------------------------------------------------------------------
 build: $(BUNDLES) ## release build of the app (+ winshot, the UI tests' screenshot tool)
-	cargo build --release -p obsidilight -p winshot
+	cargo build --release -p tephra -p winshot
 
 $(BUNDLES) &:
 	$(MAKE) bundles
@@ -41,7 +41,7 @@ test-all: test export-check ui-smoke ## every test: unit + fixture, PDF export o
 	@echo "test-all: OK"
 
 export-check: $(BUNDLES) ## every fixture note converts to Typst and compiles to PDF (~1 min)
-	cargo test --release -p obsidilight fixture_notes_export -- --ignored --nocapture
+	cargo test --release -p tephra fixture_notes_export -- --ignored --nocapture
 
 ui-smoke: build  ## scripted UI tests (need a display; windows open briefly)
 	for t in smoke links watcher idle snippets assist academic m4 tasks hotkeys panes sync toolbar pdf daily composer recovery preview graph theme files focus toolbar-layout move firstline caret emptyfolder fonts vaults mathpreview sort hblocks; do tests/ui/$$t.sh || exit 1; done
@@ -50,21 +50,21 @@ ui-smoke: build  ## scripted UI tests (need a display; windows open briefly)
 dist: arch deb windows ## all packages: Arch .pkg.tar.zst, Debian/Ubuntu .deb, Windows .zip
 	@ls -l dist/*$(VERSION)*
 
-arch: build      ## Arch package (native makepkg)       -> dist/obsidilight-<ver>-<rel>-x86_64.pkg.tar.zst
+arch: build      ## Arch package (native makepkg)       -> dist/tephra-<ver>-<rel>-x86_64.pkg.tar.zst
 	packaging/arch/build.sh
 
-deb: $(BUNDLES)  ## Debian/Ubuntu package (in a container) -> dist/obsidilight_<ver>-1_amd64.deb
+deb: $(BUNDLES)  ## Debian/Ubuntu package (in a container) -> dist/tephra_<ver>-1_amd64.deb
 	$(CONTAINER) build -q --build-arg BASE_IMAGE=$(DEB_IMAGE) --build-arg RUST_TOOLCHAIN=$(RUST_TOOLCHAIN) \
-		-t obsidilight-build-debian -f packaging/debian/Containerfile packaging/debian
-	$(RUN_IN) obsidilight-build-debian packaging/debian/build.sh
+		-t tephra-build-debian -f packaging/debian/Containerfile packaging/debian
+	$(RUN_IN) tephra-build-debian packaging/debian/build.sh
 
 ifeq ($(OS),Windows_NT)
-windows: windows-native ## Windows .zip -> dist/obsidilight-<ver>-windows-x86_64.zip (cross-built in a container; native on Windows)
+windows: windows-native ## Windows .zip -> dist/tephra-<ver>-windows-x86_64.zip (cross-built in a container; native on Windows)
 else
 windows: $(BUNDLES)
 	$(CONTAINER) build -q --build-arg RUST_TOOLCHAIN=$(RUST_TOOLCHAIN) \
-		-t obsidilight-build-windows -f packaging/windows/Containerfile packaging/windows
-	$(RUN_IN) obsidilight-build-windows packaging/windows/build.sh
+		-t tephra-build-windows -f packaging/windows/Containerfile packaging/windows
+	$(RUN_IN) tephra-build-windows packaging/windows/build.sh
 endif
 
 windows-native:  ## on a Windows machine: MSVC build via packaging/windows/build.ps1

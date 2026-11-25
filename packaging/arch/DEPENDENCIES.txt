@@ -1,7 +1,7 @@
-obsidilight 0.1.0 — Arch Linux (x86_64) runtime requirements
+Tephra 0.1.0 — Arch Linux (x86_64) runtime requirements
 =============================================================
 
-The package obsidilight-<version>-<pkgrel>-x86_64.pkg.tar.zst (from dist/) declares these as
+The package tephra-<version>-<pkgrel>-x86_64.pkg.tar.zst (from dist/) declares these as
 dependencies, so `pacman -U` resolves them automatically from the repos.
 If the target laptop is offline or deps are missing, install them manually:
 
@@ -32,8 +32,8 @@ without one it falls back to software rendering.
 
 Install the app on the target laptop:
 
-    sudo pacman -U obsidilight-*-x86_64.pkg.tar.zst
+    sudo pacman -U tephra-*-x86_64.pkg.tar.zst
 
 Run it:
 
-    obsidilight /path/to/your/vault        # or: obsidilight /path/to/note.md
+    tephra /path/to/your/vault        # or: tephra /path/to/note.md

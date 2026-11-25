@@ -18,9 +18,9 @@ use gpui_kit::component::tree::{tree, TreeItem, TreeState};
 use gpui_kit::component::{h_flex, v_flex, ActiveTheme as _, Icon, IconName, Selectable as _, Sizable as _};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use obsidilight_core::index::{is_note, is_sync_conflict};
-use obsidilight_core::links::link_path;
-use obsidilight_core::sort::{sort_files, sort_folders, FileTimes, SortOrder};
+use tephra_core::index::{is_note, is_sync_conflict};
+use tephra_core::links::link_path;
+use tephra_core::sort::{sort_files, sort_folders, FileTimes, SortOrder};
 
 use crate::editor::{Editor, EditorEvent};
 use crate::file_drag::{self, TreeDrag};
@@ -202,7 +202,7 @@ impl Workspace {
     pub fn new(root: PathBuf, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let t = std::time::Instant::now();
         let vault = Rc::new(RefCell::new(Vault::open(root.clone())));
-        if std::env::var_os("OBSIDILIGHT_TIMING").is_some() {
+        if std::env::var_os("TEPHRA_TIMING").is_some() {
             eprintln!("TIMING vault+index {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
         }
         let tree = cx.new(|cx| TreeState::new(cx));
@@ -256,7 +256,7 @@ impl Workspace {
         this._watcher = this.watch(&root, cx);
         let tw = t.elapsed().as_secs_f64() * 1000.0;
         this.rebuild_tree(cx);
-        if std::env::var_os("OBSIDILIGHT_TIMING").is_some() {
+        if std::env::var_os("TEPHRA_TIMING").is_some() {
             eprintln!("TIMING watcher {tw:.1} ms, tree {:.1} ms", t.elapsed().as_secs_f64() * 1000.0 - tw);
         }
         window.focus(&this.focus, cx);
@@ -535,7 +535,7 @@ impl Workspace {
                 self.right_sidebar = false;
             }
         }
-        if std::env::var_os("OBSIDILIGHT_SCRIPT").is_some() {
+        if std::env::var_os("TEPHRA_SCRIPT").is_some() {
             println!("FOCUS {} fullscreen={}", self.focus_mode.is_some(), self.focus_mode.is_some_and(|f| f.2));
         }
         cx.notify();
@@ -723,7 +723,7 @@ impl Workspace {
         // the note may already be open, with unsaved edits, in another pane: start from those
         if let Some(peer) = self.all_editors().into_iter().find(|o| *o != editor && o.read(cx).path == editor.read(cx).path) {
             let text = peer.read(cx).doc.text();
-            if let Some((r, t)) = obsidilight_core::Document::diff(&editor.read(cx).doc.text(), &text) {
+            if let Some((r, t)) = tephra_core::Document::diff(&editor.read(cx).doc.text(), &text) {
                 editor.update(cx, |e, cx| e.apply_remote(r, &t, cx));
             }
             let v = editor.read(cx).doc.version();
@@ -787,7 +787,7 @@ impl Workspace {
             OpenAt::Keep => {}
             OpenAt::Offset(off) => ed.update(cx, |e, cx| {
                 let off = e.doc.clamp(off);
-                e.set_selection(obsidilight_core::Selection::caret(off), false, cx);
+                e.set_selection(tephra_core::Selection::caret(off), false, cx);
             }),
             OpenAt::Subpath(sub) => ed.update(cx, |e, cx| e.go_to_subpath(&sub, cx)),
         }
@@ -891,10 +891,10 @@ impl Workspace {
         self.save_layout();
     }
 
-    // ---- layout (`.obsidilight/workspace.json`) --------------------------------------
+    // ---- layout (`.tephra/workspace.json`) --------------------------------------
 
     fn layout_path(&self) -> PathBuf {
-        self.vault.borrow().root.join(".obsidilight/workspace.json")
+        self.vault.borrow().root.join(".tephra/workspace.json")
     }
 
     fn load_layout(&mut self) {
@@ -909,7 +909,7 @@ impl Workspace {
 
     fn save_layout(&self) {
         // benchmarks and UI tests run on throwaway copies, but never write while benchmarking
-        if std::env::var_os("OBSIDILIGHT_BENCH").is_some() {
+        if std::env::var_os("TEPHRA_BENCH").is_some() {
             return;
         }
         let v = serde_json::json!({
@@ -921,7 +921,7 @@ impl Workspace {
         if let Some(d) = p.parent() {
             let _ = std::fs::create_dir_all(d);
         }
-        let tmp = p.with_extension("json.obsidilight-tmp");
+        let tmp = p.with_extension("json.tephra-tmp");
         if std::fs::write(&tmp, serde_json::to_string_pretty(&v).unwrap_or_default()).is_ok() {
             let _ = std::fs::rename(&tmp, &p);
         }
@@ -989,7 +989,7 @@ impl Workspace {
                 let Some(text) = ws.note_text(&rel, cx) else { return };
                 let Some((snippet, first)) = crate::editor::preview::snippet(&text, &sub) else { return };
                 let numbers = crate::editor::preview::numbers(&rel, &text, first, &ws.vault.borrow().index, cx);
-                if std::env::var_os("OBSIDILIGHT_SCRIPT").is_some() {
+                if std::env::var_os("TEPHRA_SCRIPT").is_some() {
                     println!("PREVIEW {key} {:?}", snippet.lines().next().unwrap_or(""));
                 }
                 ws.preview = Some(WsPreview { key, rel, at, text: text.into(), snippet, numbers });
@@ -1031,7 +1031,7 @@ impl Workspace {
         }
         let text = editor.read(cx).doc.text();
         for p in peers {
-            let Some((range, new)) = obsidilight_core::Document::diff(&p.read(cx).doc.text(), &text) else { continue };
+            let Some((range, new)) = tephra_core::Document::diff(&p.read(cx).doc.text(), &text) else { continue };
             p.update(cx, |e, cx| e.apply_remote(range, &new, cx));
             let v = p.read(cx).doc.version();
             self.synced.insert(p.entity_id(), v);
@@ -1224,7 +1224,7 @@ impl Workspace {
         // 4. rewrite links: through the editor if the note is open, else straight to disk
         let (links, failures) = self.apply_note_edits(&plan, cx);
         // 5. re-index, tell plugins (bookmarks), keep the recent list pointing at the files
-        let fresh = obsidilight_core::index::VaultIndex::build(&root);
+        let fresh = tephra_core::index::VaultIndex::build(&root);
         self.vault.borrow_mut().index = fresh;
         for r in self.recent.iter_mut() {
             if let Some((_, n)) = moves.iter().find(|(o, _)| o == r) {
@@ -1265,7 +1265,7 @@ impl Workspace {
     /// Applies edits to notes: through the editor when the note is open (undoable, saved at
     /// once), else on disk with the usual "never overwrite a newer file" check. Returns the
     /// number of edits and the notes that could not be written.
-    fn apply_note_edits(&mut self, plan: &[obsidilight_core::index::NoteEdit], cx: &mut Context<Self>) -> (usize, Vec<String>) {
+    fn apply_note_edits(&mut self, plan: &[tephra_core::index::NoteEdit], cx: &mut Context<Self>) -> (usize, Vec<String>) {
         let root = self.vault.borrow().root.clone();
         let mut n = 0;
         let mut failures = Vec::new();
@@ -1276,11 +1276,11 @@ impl Workspace {
                 e.update(cx, |e, cx| e.apply_edits(&edit.edits, cx));
                 continue;
             }
-            let res = obsidilight_core::file::load(&path).and_then(|l| {
-                let text = obsidilight_core::index::apply_edits(&l.text, &edit.edits);
-                obsidilight_core::file::save(&path, &text, Some(l.disk))
+            let res = tephra_core::file::load(&path).and_then(|l| {
+                let text = tephra_core::index::apply_edits(&l.text, &edit.edits);
+                tephra_core::file::save(&path, &text, Some(l.disk))
             });
-            if !matches!(res, Ok(obsidilight_core::file::SaveOutcome::Saved(_) | obsidilight_core::file::SaveOutcome::Unchanged(_))) {
+            if !matches!(res, Ok(tephra_core::file::SaveOutcome::Saved(_) | tephra_core::file::SaveOutcome::Unchanged(_))) {
                 failures.push(edit.note.clone());
             }
         }
@@ -1304,9 +1304,9 @@ impl Workspace {
             e.update(cx, |e, cx| e.apply_edits(&[(0..len, text.to_string())], cx));
             return if e.read(cx).doc.is_dirty() { Err(format!("\"{rel}\" could not be saved")) } else { Ok(()) };
         }
-        let l = obsidilight_core::file::load(&path).map_err(|e| e.to_string())?;
-        match obsidilight_core::file::save(&path, text, Some(l.disk)) {
-            Ok(obsidilight_core::file::SaveOutcome::Saved(_) | obsidilight_core::file::SaveOutcome::Unchanged(_)) => {
+        let l = tephra_core::file::load(&path).map_err(|e| e.to_string())?;
+        match tephra_core::file::save(&path, text, Some(l.disk)) {
+            Ok(tephra_core::file::SaveOutcome::Saved(_) | tephra_core::file::SaveOutcome::Unchanged(_)) => {
                 self.vault.borrow_mut().index.refresh(rel);
                 Ok(())
             }
@@ -1359,7 +1359,7 @@ impl Workspace {
         let (src_plan, rest): (Vec<_>, Vec<_>) = plan.into_iter().partition(|e| e.note == src);
         let text = self.note_text(src, cx).ok_or_else(|| format!("cannot read \"{src}\""))?;
         let content = wrap(&match src_plan.first() {
-            Some(e) => obsidilight_core::index::apply_edits(&text, &e.edits),
+            Some(e) => tephra_core::index::apply_edits(&text, &e.edits),
             None => text,
         });
         let (links, failures) = self.apply_note_edits(&rest, cx);
@@ -1409,7 +1409,7 @@ impl Workspace {
             self.close_tab(i, window, cx);
         }
         trash::delete(&abs).map_err(|e| e.to_string())?;
-        let fresh = obsidilight_core::index::VaultIndex::build(&root);
+        let fresh = tephra_core::index::VaultIndex::build(&root);
         self.vault.borrow_mut().index = fresh;
         let prefix = format!("{rel}/");
         self.recent.retain(|r| r != rel && !r.starts_with(&prefix));
@@ -1553,7 +1553,7 @@ impl Workspace {
 
     fn on_files_changed(&mut self, rels: &[String], cx: &mut Context<Self>) {
         let t = std::time::Instant::now();
-        let log = std::env::var_os("OBSIDILIGHT_TIMING").is_some();
+        let log = std::env::var_os("TEPHRA_TIMING").is_some();
         let before = self.vault.borrow().index.files().count();
         let old: Vec<(String, Option<String>)> = rels.iter().filter(|r| is_note(r)).map(|r| (r.clone(), self.vault.borrow().index.text(r).map(String::from))).collect();
         self.vault.borrow_mut().index.refresh_batch(rels);

@@ -41,7 +41,7 @@ ws-tabs
 ws-tree
 quit
 SCRIPT
-OUT=$(OBSIDILIGHT_SCRIPT="$ROOT/t.script" timeout 40 target/release/obsidilight "$TMP/A.md" | grep -E "^(TABS|TREE|STATUS|RCLICKK|CLICKK|DRAGK)")
+OUT=$(TEPHRA_SCRIPT="$ROOT/t.script" timeout 40 target/release/tephra "$TMP/A.md" | grep -E "^(TABS|TREE|STATUS|RCLICKK|CLICKK|DRAGK)")
 echo "$OUT"
 fail() { echo "ui-emptyfolder: $1"; exit 1; }
 grep -qE 'RCLICKK|CLICKK|DRAGK' <<<"$OUT" && fail "an element wasn't on screen"

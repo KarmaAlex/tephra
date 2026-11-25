@@ -1,5 +1,5 @@
 {
-  "name": "obsidilight-js-bundles",
+  "name": "tephra-js-bundles",
   "private": true,
   "type": "module",
   "description": "Builds the JS bundles the app embeds (include_str!) and runs in QuickJS",

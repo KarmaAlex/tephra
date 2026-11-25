@@ -101,7 +101,7 @@ impl Plugin for CommandPalette {
                     r.insert(0, id.clone());
                     r.truncate(20);
                 }
-                if std::env::var_os("OBSIDILIGHT_SCRIPT").is_some() {
+                if std::env::var_os("TEPHRA_SCRIPT").is_some() {
                     println!("COMMAND {id}");
                 }
                 let editor = WorkspaceHandle::current(cx).and_then(|w| w.active_editor(cx));

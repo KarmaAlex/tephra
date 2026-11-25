@@ -1,5 +1,5 @@
 //! Debug helper: formulas found by the whole-document scan but not by the per-block scan.
-use obsidilight_core::markdown::*;
+use tephra_core::markdown::*;
 fn collect(v: &[Inline], out: &mut Vec<std::ops::Range<usize>>) {
     for n in v { if matches!(n.kind, InlineKind::Math { .. }) { out.push(n.range.clone()); } collect(&n.children, out); }
 }

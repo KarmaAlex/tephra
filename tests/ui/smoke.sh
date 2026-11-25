@@ -11,5 +11,5 @@ mkdir -p "$TMP/.obsidian"
 cp "$VAULT/.obsidian/app.json" "$TMP/.obsidian/" 2>/dev/null || true
 ln -s "$VAULT/Images" "$TMP/Images"
 cp "$VAULT/$NOTE" "$TMP/note.md"
-OBSIDILIGHT_SCRIPT=tests/ui/smoke.script timeout 60 target/release/obsidilight "$TMP/note.md" | grep STATE
+TEPHRA_SCRIPT=tests/ui/smoke.script timeout 60 target/release/tephra "$TMP/note.md" | grep STATE
 cmp "$VAULT/$NOTE" "$TMP/note.md" && echo "ui-smoke: OK (byte-identical after edit + undo + autosave)"

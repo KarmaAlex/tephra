@@ -1,7 +1,7 @@
 {
   "productName": "spike-tauri",
   "version": "0.0.0",
-  "identifier": "dev.obsidilight.spike",
+  "identifier": "dev.tephra.spike",
   "build": { "frontendDist": "../dist" },
   "app": {
     "windows": [{ "label": "main", "title": "spike-tauri", "width": 1200, "height": 900 }],

@@ -8,8 +8,8 @@
 use std::rc::Rc;
 
 use gpui_kit::{App, ClipboardItem};
-use obsidilight_core::markdown::{parse_blocks, BlockKind};
-use obsidilight_core::{EditKind, Selection};
+use tephra_core::markdown::{parse_blocks, BlockKind};
+use tephra_core::{EditKind, Selection};
 use serde_json::{Map, Value};
 
 use super::api::*;
@@ -88,7 +88,7 @@ impl CopyBlockLink {
 }
 
 fn copy(cx: &mut App, s: String) {
-    if std::env::var_os("OBSIDILIGHT_SCRIPT").is_some() {
+    if std::env::var_os("TEPHRA_SCRIPT").is_some() {
         println!("COPIED {s}");
     }
     cx.write_to_clipboard(ClipboardItem::new_string(s));

@@ -102,7 +102,7 @@ impl World for DocWorld {
 /// Typst's caches and the font index (hundreds of MB) are gone again when it finishes.
 pub fn run_isolated(job: Job) -> Result<Output, String> {
     static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let dir = std::env::temp_dir().join(format!("obsidilight-export-{}-{}", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+    let dir = std::env::temp_dir().join(format!("tephra-export-{}-{}", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let res = (|| {
         let spec = serde_json::json!({

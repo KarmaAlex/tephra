@@ -50,7 +50,7 @@ ws-rename Alfa.md|Corsi/Alfa nuova.md
 wait 400
 quit
 SCRIPT
-OUT=$(OBSIDILIGHT_SCRIPT="$TMP/m4.script" timeout 40 target/release/obsidilight "$TMP/Alfa.md" | grep -E "^(SEARCH|COMMAND|BACKLINKS|OUTGOING|BOOKMARK|TABS|RENAME)")
+OUT=$(TEPHRA_SCRIPT="$TMP/m4.script" timeout 40 target/release/tephra "$TMP/Alfa.md" | grep -E "^(SEARCH|COMMAND|BACKLINKS|OUTGOING|BOOKMARK|TABS|RENAME)")
 echo "$OUT"
 fail() { echo "ui-m4: $1"; exit 1; }
 grep -qF 'SEARCH "senza" files=1 lines=1' <<<"$OUT" || fail "search"
@@ -60,6 +60,6 @@ grep -qF 'OUTGOING Alfa.md [("Corsi/Beta.md", true), ("img.png", true), ("Manca"
 grep -qF 'BOOKMARK Alfa.md true' <<<"$OUT" || fail "bookmark command"
 grep -qF 'TABS active=0 ["Corsi/Beta.md"]' <<<"$OUT" || fail "quick switcher did not open Beta"
 grep -qF 'BACKLINKS Corsi/Beta.md linked=[("Alfa.md", 1)]' <<<"$OUT" || fail "backlinks follow the active note"
-grep -qF '"path": "Corsi/Alfa nuova.md"' "$TMP/.obsidilight/bookmarks.json" || fail "bookmark did not follow the rename"
-grep -qF '"Corsi/Alfa nuova.md"' "$TMP/.obsidilight/workspace.json" || fail "recent files did not follow the rename"
+grep -qF '"path": "Corsi/Alfa nuova.md"' "$TMP/.tephra/bookmarks.json" || fail "bookmark did not follow the rename"
+grep -qF '"Corsi/Alfa nuova.md"' "$TMP/.tephra/workspace.json" || fail "recent files did not follow the rename"
 echo "ui-m4: OK"

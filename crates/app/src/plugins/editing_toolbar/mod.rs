@@ -3,7 +3,7 @@
 //! (`.obsidian/plugins/editing-toolbar/data.json`, `menuCommands`; read, never written), with
 //! the same command ids, so buttons, submenus and dropdowns come out as you arranged them.
 //! You change it in Settings → Editing toolbar (M8); that copy is saved in
-//! `.obsidilight/plugins/editing-toolbar.json`.
+//! `.tephra/plugins/editing-toolbar.json`.
 //! Every action is also a command (palette, hotkeys: Ctrl+B / Ctrl+I / Ctrl+K as in Obsidian).
 //! The colour buttons have a picker next to them; the colour you pick is applied and becomes
 //! the button's colour.
@@ -23,7 +23,7 @@ use gpui_kit::component::color_picker::{ColorPicker, ColorPickerEvent, ColorPick
 use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{h_flex, ActiveTheme as _, Sizable as _};
 use gpui_kit::*;
-use obsidilight_core::EditKind;
+use tephra_core::EditKind;
 use serde_json::{Map, Value};
 
 use self::layout::Item;

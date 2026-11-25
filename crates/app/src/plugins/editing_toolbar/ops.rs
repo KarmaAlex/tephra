@@ -3,7 +3,7 @@
 
 use std::ops::Range;
 
-use obsidilight_core::Selection;
+use tephra_core::Selection;
 
 /// Replace `range` with `text`, then select `sel` (offsets in the new text).
 #[derive(Clone, Debug, PartialEq, Eq)]

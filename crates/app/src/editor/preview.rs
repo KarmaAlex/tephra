@@ -1,7 +1,7 @@
 //! What a link's hover preview shows (Obsidian's Page preview, Academic Notes' reference
 //! previews): the callout a `#^block` sits in, a heading's section, or the start of the note.
 
-use obsidilight_core::markdown::{callouts::flatten, parse_blocks, parse_quote, BlockKind};
+use tephra_core::markdown::{callouts::flatten, parse_blocks, parse_quote, BlockKind};
 
 /// Lines of the preview at most.
 const MAX_LINES: usize = 40;
@@ -52,7 +52,7 @@ pub fn snippet(text: &str, sub: &str) -> Option<(String, usize)> {
 
 /// Plugin labels (callout and equation numbers) of `text`, for preview lines from `first` on,
 /// keyed by line within the preview.
-pub fn numbers(rel: &str, text: &str, first: usize, index: &obsidilight_core::index::VaultIndex, cx: &gpui_kit::App) -> std::collections::HashMap<usize, String> {
+pub fn numbers(rel: &str, text: &str, first: usize, index: &tephra_core::index::VaultIndex, cx: &gpui_kit::App) -> std::collections::HashMap<usize, String> {
     let mut numbers = std::collections::HashMap::new();
     if let Some(h) = cx.try_global::<crate::plugins::PluginHost>() {
         let ctx = crate::plugins::NoteCtx { path: rel, text, index };

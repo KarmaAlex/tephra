@@ -1,4 +1,4 @@
-# Cross-compiles obsidilight for Windows (x86_64-pc-windows-gnu) from Linux.
+# Cross-compiles tephra for Windows (x86_64-pc-windows-gnu) from Linux.
 #   mingw-w64-gcc    C/C++ cross compiler + linker for the -sys crates (QuickJS, tree-sitter)
 #   vkd3d            its vkd3d-compiler is an open-source HLSL -> DXBC compiler; it stands in
 #                    for the Windows SDK's fxc.exe when precompiling GPUI's DirectX shaders

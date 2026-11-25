@@ -29,7 +29,7 @@ wait 300
 ws-panes
 quit
 SCRIPT
-OUT=$(OBSIDILIGHT_SCRIPT="$TMP/s.script" timeout 30 target/release/obsidilight "$TMP/A.md" | grep -E "^(FOCUS|PANES)")
+OUT=$(TEPHRA_SCRIPT="$TMP/s.script" timeout 30 target/release/tephra "$TMP/A.md" | grep -E "^(FOCUS|PANES)")
 echo "$OUT"
 WANT='FOCUS true fullscreen=false
 PANES ["A.md"] | *["B.md"]

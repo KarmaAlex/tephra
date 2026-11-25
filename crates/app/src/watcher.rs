@@ -20,11 +20,11 @@ pub fn is_relevant(kind: &EventKind) -> bool {
 }
 
 /// The vault-relative path (with `/`) of a changed file, or `None` for paths the app ignores:
-/// outside the vault, the vault itself, dot-folders (`.obsidian`, `.obsidilight`, `.stfolder`…)
+/// outside the vault, the vault itself, dot-folders (`.obsidian`, `.tephra`, `.stfolder`…)
 /// and the app's own temporary save files.
 pub fn vault_relative(root: &Path, p: &Path) -> Option<String> {
     let rel = p.strip_prefix(root).ok()?.to_string_lossy().replace('\\', "/");
-    if rel.is_empty() || rel.split('/').any(|c| c.starts_with('.')) || rel.contains(".obsidilight-tmp-") {
+    if rel.is_empty() || rel.split('/').any(|c| c.starts_with('.')) || rel.contains(".tephra-tmp-") {
         return None;
     }
     Some(rel)
@@ -46,7 +46,7 @@ impl VaultWatcher {
             if !is_relevant(&ev.kind) {
                 return;
             }
-            if std::env::var_os("OBSIDILIGHT_TIMING").is_some() {
+            if std::env::var_os("TEPHRA_TIMING").is_some() {
                 eprintln!("EVENT {:?} {:?}", ev.kind, ev.paths.first().and_then(|p| p.file_name()));
             }
             for p in ev.paths {
@@ -75,7 +75,7 @@ impl VaultWatcher {
 mod tests {
     use super::*;
     use notify::event::{AccessKind, CreateKind, DataChange, MetadataKind, RemoveKind, RenameMode};
-    use obsidilight_core::index::VaultIndex;
+    use tephra_core::index::VaultIndex;
     use std::time::{Duration, Instant};
 
     fn vault(name: &str) -> PathBuf {
@@ -133,9 +133,9 @@ mod tests {
         assert_eq!(vault_relative(root, root), None);
         assert_eq!(vault_relative(root, Path::new("/v/other/A.md")), None);
         assert_eq!(vault_relative(root, &root.join(".obsidian/app.json")), None);
-        assert_eq!(vault_relative(root, &root.join(".obsidilight/plugins/x.json")), None);
+        assert_eq!(vault_relative(root, &root.join(".tephra/plugins/x.json")), None);
         assert_eq!(vault_relative(root, &root.join("Corsi/.stversions/A.md")), None);
-        assert_eq!(vault_relative(root, &root.join("Corsi/.obsidilight-tmp-123-A.md")), None);
+        assert_eq!(vault_relative(root, &root.join("Corsi/.tephra-tmp-123-A.md")), None);
     }
 
     #[test]
@@ -184,7 +184,7 @@ mod tests {
         // Obsidian's and the app's config, Syncthing's folders, the app's atomic-save temp file
         std::fs::write(root.join(".obsidian/workspace.json"), "{}").unwrap();
         std::fs::create_dir_all(root.join(".stfolder")).unwrap();
-        std::fs::write(root.join("Corsi/.obsidilight-tmp-1-A.md"), "x").unwrap();
+        std::fs::write(root.join("Corsi/.tephra-tmp-1-A.md"), "x").unwrap();
         assert_eq!(settle(&w), Vec::<String>::new());
 
         // still alive afterwards

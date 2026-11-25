@@ -20,8 +20,8 @@ use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use obsidilight_core::file::{self, DiskState, SaveOutcome};
-use obsidilight_core::{Document, EditKind, Selection};
+use tephra_core::file::{self, DiskState, SaveOutcome};
+use tephra_core::{Document, EditKind, Selection};
 
 use crate::embeds::SharedVault;
 use crate::plugins::{EditorHook, EditorKey, PluginHost};
@@ -89,7 +89,7 @@ pub fn bind_keys(cx: &mut App) {
     ]);
 }
 
-/// Per-frame timing, for `make perf` (OBSIDILIGHT_BENCH=1).
+/// Per-frame timing, for `make perf` (TEPHRA_BENCH=1).
 #[derive(Default)]
 pub struct Perf {
     pub pending_edit: Option<Instant>,
@@ -233,7 +233,7 @@ impl Editor {
             perf: Perf::default(),
         };
         this.proj.version = u64::MAX;
-        this.plain = !obsidilight_core::index::is_note(&this.path.to_string_lossy());
+        this.plain = !tephra_core::index::is_note(&this.path.to_string_lossy());
         this
     }
 
@@ -391,7 +391,7 @@ impl Editor {
     pub(crate) fn css_classes(&mut self) -> Rc<Vec<String>> {
         if self.classes.0 != self.doc.version() {
             let head = self.doc.slice(0..self.doc.len().min(8192));
-            self.classes = (self.doc.version(), Rc::new(obsidilight_core::index::cssclasses(&head)));
+            self.classes = (self.doc.version(), Rc::new(tephra_core::index::cssclasses(&head)));
         }
         self.classes.1.clone()
     }
@@ -537,7 +537,7 @@ impl Editor {
         if target.starts_with("tag:") || target.is_empty() {
             return;
         }
-        let script = std::env::var_os("OBSIDILIGHT_SCRIPT").is_some();
+        let script = std::env::var_os("TEPHRA_SCRIPT").is_some();
         if target.contains("://") || target.starts_with("mailto:") {
             println!("OPEN_URL {target}");
             if !script {
@@ -563,7 +563,7 @@ impl Editor {
         let sel = self.doc.selection();
         api::apply_edit(&mut self.doc, &mut self.tabstops, at, now, EditKind::Other);
         self.doc.set_selection(sel);
-        if std::env::var_os("OBSIDILIGHT_SCRIPT").is_some() {
+        if std::env::var_os("TEPHRA_SCRIPT").is_some() {
             println!("TASK {now}");
         }
         self.schedule_save(cx);
@@ -596,9 +596,9 @@ impl Editor {
         } else {
             // `[[note#A#B]]` targets heading B (under A)
             let want = sub.rsplit('#').next().unwrap_or(sub).trim().to_lowercase();
-            obsidilight_core::markdown::parse_blocks(&text)
+            tephra_core::markdown::parse_blocks(&text)
                 .into_iter()
-                .find(|b| matches!(b.kind, obsidilight_core::markdown::BlockKind::Heading { .. }) && text[b.content.clone()].trim().to_lowercase() == want)
+                .find(|b| matches!(b.kind, tephra_core::markdown::BlockKind::Heading { .. }) && text[b.content.clone()].trim().to_lowercase() == want)
                 .map(|b| b.range.start)
         };
         match found {
@@ -799,9 +799,9 @@ impl Editor {
         let ls = self.doc.line_start(line);
         let text = self.doc.line_text(line);
         let col = off - ls;
-        let n = obsidilight_core::markdown::parse_inline(&text, 0..text.len())
+        let n = tephra_core::markdown::parse_inline(&text, 0..text.len())
             .into_iter()
-            .find(|n| matches!(n.kind, obsidilight_core::markdown::InlineKind::WikiLink { embed: false }) && n.range.start <= col && col < n.range.end)?;
+            .find(|n| matches!(n.kind, tephra_core::markdown::InlineKind::WikiLink { embed: false }) && n.range.start <= col && col < n.range.end)?;
         let target = n.link_target(&text).to_string();
         let source = if self.mode == ViewMode::Reading { crate::plugins::HoverSource::Reading } else { crate::plugins::HoverSource::Editor };
         PluginHost::wants_preview(cx, &target, source, ctrl).then_some(target)

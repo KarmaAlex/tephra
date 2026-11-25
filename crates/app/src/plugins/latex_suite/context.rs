@@ -3,7 +3,7 @@
 
 use std::ops::Range;
 
-use obsidilight_core::markdown::{parse_blocks, parse_inline, BlockKind, InlineKind};
+use tephra_core::markdown::{parse_blocks, parse_inline, BlockKind, InlineKind};
 
 use super::tex::{stack_at, Frame};
 use crate::editor::api::math_at;
@@ -217,7 +217,7 @@ fn within_macros(envs: &[EnvName], macros: &[MacroArgs]) -> Option<bool> {
 }
 
 fn in_inline_code(text: &str, block: Range<usize>, pos: usize) -> bool {
-    fn walk(n: &[obsidilight_core::markdown::Inline], pos: usize) -> bool {
+    fn walk(n: &[tephra_core::markdown::Inline], pos: usize) -> bool {
         n.iter().any(|i| (i.kind == InlineKind::Code && i.range.start < pos && pos < i.range.end) || walk(&i.children, pos))
     }
     walk(&parse_inline(text, block), pos)

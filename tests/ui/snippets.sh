@@ -10,7 +10,7 @@ mkdir -p "$TMP/.obsidian/plugins/obsidian-latex-suite" "$TMP/math-jax-snippets"
 cp "$VAULT/.obsidian/plugins/obsidian-latex-suite/data.json" "$TMP/.obsidian/plugins/obsidian-latex-suite/"
 cp "$VAULT/math-jax-snippets/snippets.js" "$TMP/math-jax-snippets/"
 printf 'a ' > "$TMP/note.md"
-OUT=$(OBSIDILIGHT_SCRIPT=tests/ui/snippets.script timeout 60 target/release/obsidilight "$TMP/note.md" | grep STATE)
+OUT=$(TEPHRA_SCRIPT=tests/ui/snippets.script timeout 60 target/release/tephra "$TMP/note.md" | grep STATE)
 echo "$OUT"
 expect() { grep -qF -- "$1" <<<"$OUT" || { echo "ui-snippets: FAILED, expected $1"; exit 1; }; }
 expect 'text="a ${}|{}$"'

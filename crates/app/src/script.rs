@@ -1,4 +1,4 @@
-//! Scripted input for testing the real app (OBSIDILIGHT_SCRIPT=<file>): feeds keystrokes and
+//! Scripted input for testing the real app (TEPHRA_SCRIPT=<file>): feeds keystrokes and
 //! mouse events through GPUI's normal dispatch (key bindings, text input handler, mouse
 //! listeners), prints `STATE` lines, and can take screenshots with `spectacle`.
 //!
@@ -96,7 +96,7 @@ impl Global for Target {}
 /// Runs the script on `window`. Called again while it runs (the welcome page opened a vault),
 /// the script carries on in the new window.
 pub fn start(editor: Option<Entity<Editor>>, ws: Option<WeakEntity<crate::workspace::Workspace>>, window: &mut Window, cx: &mut App) {
-    let Ok(script) = std::env::var("OBSIDILIGHT_SCRIPT").map(std::fs::read_to_string) else { return };
+    let Ok(script) = std::env::var("TEPHRA_SCRIPT").map(std::fs::read_to_string) else { return };
     let Ok(script) = script else { return };
     let running = cx.has_global::<Target>();
     cx.set_global(Target {
@@ -332,7 +332,7 @@ pub fn start(editor: Option<Entity<Editor>>, ws: Option<WeakEntity<crate::worksp
                         if let Some(off) = e.doc.text().find(&needle) {
                             let line = (e.doc.line_of(off) as i64 + delta).max(0) as usize;
                             let at = e.doc.line_start(line.min(e.doc.line_count() - 1));
-                            e.set_selection(obsidilight_core::Selection::caret(at), false, cx);
+                            e.set_selection(tephra_core::Selection::caret(at), false, cx);
                         } else {
                             println!("FIND not found: {needle}");
                         }
@@ -404,7 +404,7 @@ pub fn start(editor: Option<Entity<Editor>>, ws: Option<WeakEntity<crate::worksp
                 }
                 "ws-sort" => {
                     // ws-sort <order id>: change the file list's order (as the sort menu does)
-                    if let Some(o) = obsidilight_core::sort::SortOrder::from_id(rest.trim()) {
+                    if let Some(o) = tephra_core::sort::SortOrder::from_id(rest.trim()) {
                         let _ = ws.update(cx, |ws, cx| ws.set_sort(o, cx));
                     } else {
                         println!("BAD-SORT {rest}");
