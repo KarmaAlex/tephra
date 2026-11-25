@@ -82,7 +82,10 @@ fn open_vault(arg: PathBuf, t0: Instant, cx: &mut App) {
     if root.is_dir() {
         vaults::record_opened(&root);
     }
-    let title: SharedString = root.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default().into();
+    // "Tephra — <vault>", the vault named after its folder
+    let vault_name = root.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+    let title: SharedString =
+        if vault_name.is_empty() { "Tephra".to_string() } else { format!("Tephra — {vault_name}") }.into();
     app_settings::AppSettings::init(cx, &root);
     plugins::PluginHost::init(cx, &root);
     hotkeys::install(cx);
