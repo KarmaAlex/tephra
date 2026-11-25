@@ -96,5 +96,7 @@ Windows or in a VM.
 
 `tephra.desktop` (menu entry; `Exec=tephra %f`, so a launch from the menu reopens the
 last vault, or shows the welcome page) and `tephra.png` (64×64 icon). The Windows icon
-`crates/app/assets/tephra.ico` is generated from the PNG:
-`magick packaging/common/tephra.png -define icon:auto-resize=256,64,48,32,16 crates/app/assets/tephra.ico`.
+`crates/app/assets/tephra.ico` and `tephra.png` are generated from the logo master
+`assets/tephra-logo.svg`: rasterize it, crop to the artwork and add a 5% margin, then
+`magick master.png -define icon:auto-resize=256,128,64,48,32,16 crates/app/assets/tephra.ico`
+and `magick master.png -resize 64x64 packaging/common/tephra.png`.

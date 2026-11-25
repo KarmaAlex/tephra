@@ -15,7 +15,7 @@ BUNDLES := crates/app/assets/mathjax-svg.js crates/app/assets/cm6-headless.js
 .DEFAULT_GOAL := build
 .PHONY: help build bundles mathjax-bundle cm6-bundle test test-all export-check ui-smoke \
         dist arch deb windows windows-native clean-dist \
-        perf perf-obsidian corpus-math vault-stats bench-ref spikes
+        perf perf-obsidian corpus-math vault-stats
 
 help:            ## list the targets
 	@grep -hE '^[a-z][a-z-]*:.*## ' $(MAKEFILE_LIST) | sed 's/:[^#]*## /\t/' | expand -t18
@@ -29,7 +29,6 @@ $(BUNDLES) &:
 
 bundles:         ## (re)build the embedded JS bundles: MathJax SVG + headless CM6 (needs Node.js)
 	cd tools/js-bundles && npm ci --no-audit --no-fund && npm run -s build
-	if [ -d spikes/gpui/assets ]; then cp crates/app/assets/mathjax-svg.js spikes/gpui/assets/; fi
 
 mathjax-bundle cm6-bundle: bundles
 
@@ -74,7 +73,7 @@ clean-dist:      ## remove built packages and packaging work dirs (not the cargo
 	rm -rf dist target/pkg target/cross/*/deb target/cross/*/zip
 
 # --- measurements & research tools -----------------------------------------------------------------
-perf: build      ## idle memory / startup / typing for the app (OBSIDIAN=1 adds the baseline, SPIKES=1 the M0 spikes)
+perf: build      ## idle memory / startup / typing for the app (OBSIDIAN=1 adds the baseline)
 	VAULT="$(VAULT)" tools/perf/run_perf.sh
 
 perf-obsidian:   ## same, including Obsidian on the fixture (isolated profile)
@@ -85,10 +84,3 @@ corpus-math:     ## HANDOFF §7 corpus math test (details -> reports/, gitignore
 
 vault-stats:     ## HANDOFF §5 figures (aggregates only)
 	cd tools/corpus && node --import tsx stats.ts "$(VAULT)"
-
-bench-ref:       ## validate benchmark hidden tests against reference solutions
-	python3 bench/run_bench.py --score-ref
-
-spikes:
-	cd spikes/tauri && npm run -s build:fe && cd src-tauri && cargo build --release
-	cd spikes/gpui && cargo build --release

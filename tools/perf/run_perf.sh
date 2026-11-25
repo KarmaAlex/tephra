@@ -12,7 +12,6 @@ SCRATCH="${SCRATCH:-${TMPDIR:-/tmp}/tephra-perf}"
 mkdir -p reports "$SCRATCH"
 # keep the fixture from becoming the last opened vault in your real config (src/vaults.rs)
 export TEPHRA_CONFIG_DIR="$SCRATCH/config"
-MESA=/usr/share/glvnd/egl_vendor.d/50_mesa.json
 tag() { python3 -c "import json,sys; d=json.load(sys.stdin); d.pop('log_tail',None); d['label']=sys.argv[1]; print(json.dumps(d))" "$1"; }
 
 # the app itself (M1a+): idle memory, start-up, and the typing benchmark (never saves)
@@ -21,21 +20,6 @@ if [[ -x target/release/tephra ]]; then
     python3 tools/perf/proctree.py --settle 6 -- target/release/tephra "$VAULT/$NOTE" | tag tephra-idle >> "$OUT"
   done
   TEPHRA_BENCH=1 python3 tools/perf/proctree.py --report --timeout 90 -- target/release/tephra "$VAULT/$NOTE" | tag tephra-bench >> "$OUT"
-fi
-if [[ "${SPIKES:-0}" == 1 && -x spikes/tauri/src-tauri/target/release/spike-tauri ]]; then
-  for i in $(seq "$RUNS"); do
-    env VAULT="$VAULT" NOTE="$NOTE" __EGL_VENDOR_LIBRARY_FILENAMES=$MESA WEBKIT_DISABLE_DMABUF_RENDERER=1 \
-      python3 tools/perf/proctree.py --settle 6 -- spikes/tauri/src-tauri/target/release/spike-tauri | tag tauri-tuned-idle >> "$OUT"
-    env VAULT="$VAULT" NOTE="$NOTE" python3 tools/perf/proctree.py --settle 6 -- spikes/tauri/src-tauri/target/release/spike-tauri | tag tauri-default-idle >> "$OUT"
-  done
-  env VAULT="$VAULT" NOTE="$NOTE" BENCH=1 __EGL_VENDOR_LIBRARY_FILENAMES=$MESA WEBKIT_DISABLE_DMABUF_RENDERER=1 \
-    python3 tools/perf/proctree.py --report --timeout 120 -- spikes/tauri/src-tauri/target/release/spike-tauri | tag tauri-tuned-bench >> "$OUT"
-fi
-if [[ "${SPIKES:-0}" == 1 && -x spikes/gpui/target/release/spike-gpui ]]; then
-  for i in $(seq "$RUNS"); do
-    env NOTE_PATH="$VAULT/$NOTE" MATHJAX_BUNDLE=spikes/gpui/assets/mathjax-svg.js \
-      python3 tools/perf/proctree.py --settle 6 -- spikes/gpui/target/release/spike-gpui | tag gpui-idle >> "$OUT"
-  done
 fi
 if [[ "${OBSIDIAN:-0}" == 1 ]]; then
   PROFILE="$SCRATCH/obsidian-profile"

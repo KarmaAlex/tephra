@@ -1,1 +1,0 @@
-{"name":"bench-ts-env","private":true,"type":"module","dependencies":{"@codemirror/state":"^6.7.6","@codemirror/view":"^6.43.15","@types/jsdom":"^30.0.0","@types/node":"^26.6.6","jsdom":"^25.0.1","tsx":"^4.23.15","typescript":"^5.9.3"}}

@@ -73,7 +73,7 @@ crates/app     tephra      — the GPUI app: editor, plugins, themes, vault UI
 tools/winshot              — KWin screenshot tool used by the UI tests
 tools/js-bundles           — builds the embedded MathJax/CM6 bundles (Node.js)
 themes/                    — the built-in Tephra themes (dark & light variants)
-assets/                    — logo (SVG + PNG) and future banner
+assets/                    — logo (SVG) and banner
 packaging/                 — Arch / Debian / Windows packages
 tests/ui/                  — scripted UI tests
 ```
