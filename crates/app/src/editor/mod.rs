@@ -481,31 +481,29 @@ impl Editor {
         }
     }
 
-    /// Enter: new line, continuing a list item's marker (or ending the list on an empty item).
+    /// Enter: new line, continuing a list item's or blockquote's markers (or ending the list /
+    /// quote on an empty line).
     fn newline(&mut self, cx: &mut Context<Self>) {
+        use assist::{on_enter, Enter};
         let nl = self.line_ending();
         let s = self.doc.selection();
-        let line = self.doc.line_of(s.head);
+        let r = s.range();
+        let line = self.doc.line_of(r.start);
         let text = self.doc.line_text(line);
         let ls = self.doc.line_start(line);
-        let indent: String = text.chars().take_while(|c| *c == ' ' || *c == '\t').collect();
-        let rest = &text[indent.len()..];
-        // (marker on this line, marker for the next line)
-        let markers: Option<(String, String)> = ["- [ ] ", "- [x] ", "- [X] ", "- ", "* ", "+ "]
-            .iter()
-            .find(|m| rest.starts_with(**m))
-            .map(|m| (m.to_string(), m.replace("[x]", "[ ]").replace("[X]", "[ ]")))
-            .or_else(|| {
-                let d: String = rest.chars().take_while(char::is_ascii_digit).collect();
-                let n: u32 = d.parse().ok()?;
-                let sep = rest[d.len()..].chars().next().filter(|c| *c == '.' || *c == ')')?;
-                rest[d.len() + 1..].starts_with(' ').then(|| (format!("{n}{sep} "), format!("{}{sep} ", n + 1)))
-            });
-        match markers {
-            // empty item: Enter ends the list instead of continuing it
-            Some((cur, _)) if s.is_empty() && rest.trim_end() == cur.trim_end() => self.edit(ls..ls + text.len(), "", EditKind::Other, cx),
-            Some((_, next)) => self.edit(s.range(), &format!("{nl}{indent}{next}"), EditKind::Other, cx),
-            None => self.edit(s.range(), nl, EditKind::Insert, cx),
+        match on_enter(&text, r.start - ls, !s.is_empty()) {
+            Enter::ClearLine(keep) => self.edit(ls..ls + text.len(), &keep, EditKind::Other, cx),
+            Enter::Continue(prefix) => self.edit(r, &format!("{nl}{prefix}"), EditKind::Other, cx),
+            Enter::Plain => self.edit(r, nl, EditKind::Insert, cx),
+        }
+    }
+
+    /// After a typed backtick completes a fence opener, adds the closing fence below it.
+    pub(crate) fn close_fence(&mut self, cx: &mut Context<Self>) {
+        let caret = self.doc.selection().head;
+        if let Some(closer) = assist::fence_closer(&self.doc.text(), caret, self.line_ending()) {
+            self.edit(caret..caret, &closer, EditKind::Other, cx);
+            self.set_selection(Selection::caret(caret), false, cx);
         }
     }
 

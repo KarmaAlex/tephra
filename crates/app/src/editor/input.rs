@@ -234,6 +234,9 @@ impl EntityInputHandler for Editor {
             }
         }
         self.edit(r, text, EditKind::Insert, cx);
+        if typed && text == "`" && self.mode != super::ViewMode::Reading {
+            self.close_fence(cx);
+        }
     }
 
     fn replace_and_mark_text_in_range(&mut self, range: Option<Range<usize>>, new_text: &str, new_sel: Option<Range<usize>>, _: &mut Window, cx: &mut Context<Self>) {

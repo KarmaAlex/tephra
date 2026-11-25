@@ -1,4 +1,4 @@
-# auto-paired brackets and [[link suggestions (see tests/ui/assist.sh)
+# auto-paired brackets, [[link suggestions, fence auto-close, quote continuation (see tests/ui/assist.sh)
 wait 500
 key ctrl-end
 type f(x
@@ -27,4 +27,18 @@ wait 200
 key escape
 wait 100
 suggest
+key ctrl-end
+key enter
+type ```
+state
+key down
+state
+key ctrl-end
+key enter
+key enter
+type > quoted
+key enter
+state
+key enter
+state
 quit

@@ -62,6 +62,95 @@ pub fn deletes_pair(before: Option<char>, after: Option<char>) -> bool {
     matches!((before, after), (Some(b), Some(a)) if closer(b) == Some(a))
 }
 
+// ---- Enter and fences -----------------------------------------------------------------------
+
+/// What Enter does on a line: list items and blockquotes carry their markers to the new line.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Enter {
+    /// Replace the whole line with this text: Enter on an empty item or quote line ends it.
+    ClearLine(String),
+    /// Insert a line break followed by this prefix.
+    Continue(String),
+    /// A plain line break.
+    Plain,
+}
+
+/// Enter on `line` with the caret at byte `col` of it (`has_selection`: replacing a selection).
+pub fn on_enter(line: &str, col: usize, has_selection: bool) -> Enter {
+    let ws = |s: &str| s.len() - s.trim_start_matches([' ', '\t']).len();
+    let indent = ws(line);
+    // quote markers: `>` each with one optional space (`> `, `>> `, `> > `)
+    let (mut q, mut outer) = (indent, indent);
+    while line[q..].starts_with('>') {
+        outer = q;
+        q += 1;
+        if line[q..].starts_with([' ', '\t']) {
+            q += 1;
+        }
+    }
+    let quoted = q > indent;
+    let lead = q + ws(&line[q..]); // indent, quote markers and the item's own indent
+    let rest = &line[lead..];
+    // (marker on this line, marker for the next line)
+    let markers: Option<(String, String)> = ["- [ ] ", "- [x] ", "- [X] ", "- ", "* ", "+ "]
+        .iter()
+        .find(|m| rest.starts_with(**m))
+        .map(|m| (m.to_string(), m.replace("[x]", "[ ]").replace("[X]", "[ ]")))
+        .or_else(|| {
+            let d: String = rest.chars().take_while(char::is_ascii_digit).collect();
+            let n: u32 = d.parse().ok()?;
+            let sep = rest[d.len()..].chars().next().filter(|c| *c == '.' || *c == ')')?;
+            rest[d.len() + 1..].starts_with(' ').then(|| (format!("{n}{sep} "), format!("{}{sep} ", n + 1)))
+        });
+    let empty = !has_selection && rest.trim().is_empty();
+    match markers {
+        // caret inside the markers: just push the line down
+        Some((cur, _)) if col < lead + cur.len() => Enter::Plain,
+        // empty item: end the list (staying in the quote it is in)
+        Some((cur, _)) if !has_selection && rest.trim_end() == cur.trim_end() => {
+            Enter::ClearLine(if quoted { line[..q].to_string() } else { String::new() })
+        }
+        Some((_, next)) => Enter::Continue(format!("{}{next}", &line[..lead])),
+        None if !quoted || col < q => Enter::Plain,
+        // empty quote line: leave one level of quoting (all of it when there is one)
+        None if empty => Enter::ClearLine(if outer > indent { line[..outer].to_string() } else { String::new() }),
+        None => {
+            let mut p = line[..lead].to_string();
+            if !p.ends_with([' ', '\t']) {
+                p.push(' ');
+            }
+            Enter::Continue(p)
+        }
+    }
+}
+
+/// After typing the third backtick of a fence opener (```` ``` ```` alone on its line, caret at
+/// its end), the closing fence to insert at the caret when the next line is empty or missing.
+/// Not when the backticks close a fence opened above.
+pub fn fence_closer(text: &str, caret: usize, nl: &str) -> Option<String> {
+    let ls = text[..caret].rfind('\n').map_or(0, |i| i + 1);
+    let le = text[caret..].find('\n').map_or(text.len(), |i| caret + i);
+    if !text[caret..le].trim_end_matches('\r').is_empty() {
+        return None;
+    }
+    let line = &text[ls..caret];
+    let body = line.trim_start_matches(' ');
+    let indent = &line[..line.len() - body.len()];
+    if body != "```" || indent.len() > 3 {
+        return None;
+    }
+    if le < text.len() {
+        let next = &text[le + 1..];
+        if !next[..next.find('\n').unwrap_or(next.len())].trim().is_empty() {
+            return None;
+        }
+    }
+    let opens = obsidilight_core::markdown::parse_blocks(text)
+        .iter()
+        .any(|b| b.range.start == ls && matches!(b.kind, obsidilight_core::markdown::BlockKind::Code { .. }));
+    opens.then(|| format!("{nl}{indent}```"))
+}
+
 // ---- link suggestions -----------------------------------------------------------------------
 
 /// An open `[[…` before the caret on its line: (offset just after `[[`, the query, embed?).
@@ -174,6 +263,41 @@ mod tests {
         assert_eq!(on_type('\'', None, None, false), Pair::None, "apostrophes never pair");
         assert_eq!(on_type('(', None, None, true), Pair::Wrap { open: '(', close: ')' });
         assert!(deletes_pair(Some('('), Some(')')) && !deletes_pair(Some('('), Some(']')));
+    }
+
+    #[test]
+    fn enter_continues_lists_and_quotes() {
+        use Enter::*;
+        let end = |l: &str| on_enter(l, l.len(), false);
+        assert_eq!(end("- a"), Continue("- ".into()));
+        assert_eq!(end("  - [x] a"), Continue("  - [ ] ".into()));
+        assert_eq!(end("9) a"), Continue("10) ".into()));
+        assert_eq!(end("- "), ClearLine(String::new()), "empty item ends the list");
+        assert_eq!(end("plain"), Plain);
+        assert_eq!(end("> a"), Continue("> ".into()));
+        assert_eq!(end(">a"), Continue("> ".into()));
+        assert_eq!(end("> > a"), Continue("> > ".into()));
+        assert_eq!(end("> [!note] Title"), Continue("> ".into()), "callouts too");
+        assert_eq!(end("> "), ClearLine(String::new()), "empty quote line ends the quote");
+        assert_eq!(end(">> "), ClearLine(">".into()), "…one level at a time");
+        assert_eq!(end("> - a"), Continue("> - ".into()), "lists inside quotes");
+        assert_eq!(end("> - "), ClearLine("> ".into()), "empty item in a quote stays quoted");
+        assert_eq!(on_enter("- a", 0, false), Plain, "caret before the marker");
+        assert_eq!(on_enter("> a", 0, false), Plain);
+        assert_eq!(on_enter("> ab", 3, false), Continue("> ".into()), "mid-line splits into the quote");
+        assert_eq!(on_enter("> ", 2, true), Continue("> ".into()), "replacing a selection never clears");
+    }
+
+    #[test]
+    fn fence_autoclose() {
+        let at_end = |t: &str| fence_closer(t, t.find("```").unwrap() + 3, "\n");
+        assert_eq!(at_end("```"), Some("\n```".into()));
+        assert_eq!(at_end("a\n\n```\n\nb"), Some("\n```".into()));
+        assert_eq!(at_end("  ```"), Some("\n  ```".into()), "keeps the indent");
+        assert_eq!(at_end("```\nnext"), None, "next line not empty");
+        assert_eq!(fence_closer("```js", 5, "\n"), None, "only right after the backticks");
+        assert_eq!(fence_closer("```\ncode\n```", 12, "\n"), None, "closing an open fence");
+        assert_eq!(fence_closer("x ```", 5, "\n"), None);
     }
 
     #[test]
