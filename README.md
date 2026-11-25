@@ -55,9 +55,15 @@ app as a secondary choice (Settings → Appearance): **Tephra**, a volcanic-ash 
 basalt greys and ember accent in dark mode, warm paper and dark ember in light mode). It is a
 single theme with two variants — the dark or light variant is picked by the base color scheme
 setting (system/light/dark). Its source lives in `themes/Tephra/theme.css`; copy the folder into
-`<vault>/.obsidian/themes/Tephra/` to install it into a vault (a vault theme of the same name
-overrides the bundled one). Any Obsidian theme or CSS snippet from the vault works too — only
-their CSS variables apply.
+the app's themes folder to install it as an installed theme (an installed theme of the same name
+overrides the bundled one).
+
+Themes are per user, not per vault: any Obsidian theme installed in `<config dir>/themes/`
+(`~/.config/tephra/themes`, `%APPDATA%\tephra\themes` on Windows) as `<name>/theme.css` (or
+`<name>.css`) is offered in Settings → Appearance and applies to every vault; a vault's
+`.obsidian/themes` is not read. Only a theme's CSS variables apply (colours, fonts, sizes).
+CSS snippets still come from the vault (`.obsidian/snippets`), and only their variables apply
+there too.
 
 ## Layout
 
@@ -75,8 +81,9 @@ tests/ui/                  — scripted UI tests
 ## Configuration
 
 Per vault: `<vault>/.tephra/` (app settings, plugin settings, workspace layout). Per user:
-`~/.config/tephra/` (`%APPDATA%\tephra` on Windows). Environment: `TEPHRA_CONFIG_DIR`,
-`TEPHRA_DATA_DIR`, `TEPHRA_LOG`, `TEPHRA_LOG_LEVEL`, `TEPHRA_SCRIPT`, `TEPHRA_BENCH`.
+`~/.config/tephra/` (`%APPDATA%\tephra` on Windows): the vault list and `themes/`. Environment:
+`TEPHRA_CONFIG_DIR`, `TEPHRA_DATA_DIR`, `TEPHRA_LOG`, `TEPHRA_LOG_LEVEL`, `TEPHRA_SCRIPT`,
+`TEPHRA_BENCH`.
 
 ## License
 

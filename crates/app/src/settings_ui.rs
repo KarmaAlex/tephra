@@ -162,6 +162,19 @@ fn appearance_page(cx: &App) -> SettingPage {
         crate::theme::reload(cx);
     };
     let bundled: Vec<&str> = crate::theme::BUILTIN_THEMES.iter().map(|(n, _)| *n).collect();
+    let installed_in = crate::theme::themes_dir()
+        .map(|d| {
+            // `~/.config/tephra/themes` rather than the whole home path
+            let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(std::path::PathBuf::from);
+            match home.and_then(|h| d.strip_prefix(&h).ok().map(|p| p.to_path_buf())) {
+                Some(rest) => format!("~/{}", rest.display()),
+                None => d.display().to_string(),
+            }
+        })
+        .unwrap_or_else(|| "the app's global settings folder, in themes/".to_string());
+    let theme_desc = format!(
+        "Default (Obsidian's own), the built-in Tephra (its dark or light variant follows the base color scheme), or a theme installed in {installed_in} — one folder for every vault. Its CSS variables apply (colours, fonts, sizes); other rules can't."
+    );
     let mut themes: Vec<(SharedString, SharedString)> = vec![("".into(), "Default".into())];
     themes.extend(t.themes.iter().map(|n| {
         let label = if bundled.contains(&n.as_str()) { format!("{n}") } else { n.clone() };
@@ -195,7 +208,7 @@ fn appearance_page(cx: &App) -> SettingPage {
         ),
         settings_row::item(
             "Theme",
-            "Default (Obsidian's own), the built-in Tephra (its dark or light variant follows the base color scheme), or a theme from .obsidian/themes. Its CSS variables apply (colours, fonts, sizes); other rules can't.",
+            theme_desc,
             vec!["cssTheme".into()],
             settings_row::dropdown(
                 themes,

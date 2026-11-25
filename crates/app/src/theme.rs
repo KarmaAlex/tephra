@@ -1,7 +1,8 @@
 //! Themes and CSS snippets (HANDOFF §5.1 "Theming"), read the way you chose in M6: GPUI has no
 //! CSS engine, so what applies is Obsidian's CSS *variables*:
 //! - declared in global rules (`:root`, `body`, `.theme-light`, `.theme-dark`) of the chosen
-//!   theme (`.obsidian/themes/<name>/theme.css`) and of the enabled snippets;
+//!   theme (the global `themes/<name>/theme.css`, see [`themes_dir`]) and of the enabled
+//!   snippets;
 //! - declared in rules scoped by one class (`.NoBorder { … }`), from every snippet, for notes
 //!   whose `cssclasses` name it (note-specific snippets apply without being enabled);
 //! - `--callout-color` / `--callout-icon` in `.callout[data-callout="type"]` rules.
@@ -12,6 +13,11 @@
 //! (dark and light variants, embedded from `themes/`) is a secondary choice. Choices live in
 //! `.tephra/app.json` (`baseTheme`, `cssTheme`, `enabledCssSnippets`); the defaults come from
 //! `.obsidian/appearance.json` (read, never written).
+//!
+//! Themes are per user, not per vault: installed ones are read from `<config dir>/themes`
+//! (`~/.config/tephra/themes`, `%APPDATA%\tephra\themes`), next to the app's other global
+//! settings, so one folder serves every vault. A vault's `.obsidian/themes` is not read; only
+//! snippets (and Obsidian's appearance defaults) still come from the vault.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -91,9 +97,10 @@ body {
 
 /// Themes bundled with the app (name, CSS), embedded from `themes/` at the repo root. They are
 /// secondary choices, listed in Settings → Appearance next to the default (Obsidian's own light
-/// and dark variables below); a vault theme of the same name (`.obsidian/themes/<name>/theme.css`)
-/// overrides the bundled one. Each bundled theme carries both variants: its `.theme-dark` rules
-/// apply when the base color scheme is dark, its `.theme-light` ones when it is light.
+/// and dark variables below); an installed theme of the same name
+/// (`<config dir>/themes/<name>/theme.css`) overrides the bundled one. Each bundled theme carries
+/// both variants: its `.theme-dark` rules apply when the base color scheme is dark, its
+/// `.theme-light` ones when it is light.
 pub const BUILTIN_THEMES: &[(&str, &str)] = &[("Tephra", include_str!("../../../themes/Tephra/theme.css"))];
 
 /// Where a theme's CSS comes from.
@@ -239,13 +246,11 @@ pub struct ThemeCss {
 
 impl Global for ThemeCss {}
 
-/// Installed themes: `.obsidian/themes/<name>/theme.css` (and the older `<name>.css`).
-fn installed_themes(root: &Path) -> BTreeMap<String, PathBuf> {
+/// Installed themes: `<config dir>/themes/<name>/theme.css` (and the older `<name>.css`).
+fn installed_themes(dir: Option<&Path>) -> BTreeMap<String, PathBuf> {
     let mut out = BTreeMap::new();
-    if root.as_os_str().is_empty() {
-        return out;
-    }
-    for e in std::fs::read_dir(root.join(".obsidian/themes")).into_iter().flatten().flatten() {
+    let Some(dir) = dir else { return out };
+    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
         let p = e.path();
         let name = e.file_name().to_string_lossy().to_string();
         if p.is_dir() && p.join("theme.css").exists() {
@@ -255,6 +260,13 @@ fn installed_themes(root: &Path) -> BTreeMap<String, PathBuf> {
         }
     }
     out
+}
+
+/// The folder themes are installed in: `themes` next to the app's global settings
+/// (`~/.config/tephra/themes`, on Windows `%APPDATA%\tephra\themes`; `$TEPHRA_CONFIG_DIR` moves
+/// both). One folder for every vault; None when there is no config folder.
+pub fn themes_dir() -> Option<PathBuf> {
+    crate::vaults::config_dir().map(|d| d.join("themes"))
 }
 
 /// Snippets in `.obsidian/snippets` by name (without `.css`).
@@ -282,21 +294,28 @@ fn obsidian_appearance(root: &Path) -> serde_json::Map<String, Value> {
 }
 
 impl ThemeCss {
-    /// Loads the theme and snippets as `cx`'s settings say.
+    /// Loads the theme and snippets as `cx`'s settings say: themes from the global
+    /// [`themes_dir`], snippets from the vault `root`.
     pub fn load(root: &Path, css_theme: &str, enabled: &[String], generation: u64) -> Self {
+        Self::load_from(themes_dir().as_deref(), root, css_theme, enabled, generation)
+    }
+
+    /// [`load`](Self::load) with the themes folder given: `themes` = where installed themes are
+    /// read from (None: only the bundled ones).
+    fn load_from(themes: Option<&Path>, root: &Path, css_theme: &str, enabled: &[String], generation: u64) -> Self {
         let mut me = ThemeCss { root: root.to_path_buf(), generation, ..Default::default() };
         let mut base = Layered::default();
         me.add_sheet(&parse_sheet(BASE), &mut base, &mut Report::default(), true);
         me.global.push(base);
-        let vault = installed_themes(root);
+        let installed = installed_themes(themes);
         let mut names: Vec<String> = BUILTIN_THEMES.iter().map(|(n, _)| (*n).to_string()).collect();
-        let extra: Vec<String> = vault.keys().filter(|n| !names.contains(n)).cloned().collect();
+        let extra: Vec<String> = installed.keys().filter(|n| !names.contains(n)).cloned().collect();
         names.extend(extra);
         names.sort();
         me.themes = names;
         let mut files: Vec<(String, ThemeSrc, bool, bool)> = Vec::new();
         if !css_theme.is_empty() {
-            if let Some(p) = vault.get(css_theme) {
+            if let Some(p) = installed.get(css_theme) {
                 files.push((css_theme.to_string(), ThemeSrc::File(p.clone()), true, true));
             } else if let Some((_, css)) = BUILTIN_THEMES.iter().find(|(n, _)| n == &css_theme) {
                 files.push((css_theme.to_string(), ThemeSrc::Builtin(css), true, true));
@@ -689,12 +708,13 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("ol-theme-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join(".obsidian/snippets")).unwrap();
-        std::fs::create_dir_all(dir.join(".obsidian/themes/Mine")).unwrap();
-        std::fs::write(dir.join(".obsidian/themes/Mine/theme.css"), ".theme-dark { --accent-h: 120; } body { --h1-color: red; } .markdown-preview-view h1 { text-transform: uppercase; } @font-face { font-family: X; }").unwrap();
+        let themes = dir.join("cfg/themes");
+        std::fs::create_dir_all(themes.join("Mine")).unwrap();
+        std::fs::write(themes.join("Mine/theme.css"), ".theme-dark { --accent-h: 120; } body { --h1-color: red; } .markdown-preview-view h1 { text-transform: uppercase; } @font-face { font-family: X; }").unwrap();
         std::fs::write(dir.join(".obsidian/snippets/table_border.css"), ".NoBorder {\n--table-border-width: 0px;\n--table-white-space: normal;\n}").unwrap();
         std::fs::write(dir.join(".obsidian/snippets/callouts.css"), ".callout[data-callout=\"thm\"] { --callout-color: 0, 120, 200; } :root { --font-text-size: 18px; }").unwrap();
         // the callout snippet off: its global and callout rules don't apply; the class rule always does
-        let t = ThemeCss::load(&dir, "Mine", &[], 1);
+        let t = ThemeCss::load_from(Some(&themes), &dir, "Mine", &[], 1);
         let none: Vec<String> = Vec::new();
         assert_eq!(t.var("--h1-color", false, &none).as_deref(), Some("red"));
         assert_eq!(t.var("--interactive-accent", true, &none).as_deref(), Some("hsl(120, 88%, 66%)"), "the theme's dark accent hue");
@@ -709,7 +729,7 @@ mod tests {
         let tb = t.reports.iter().find(|r| r.name == "table_border").unwrap();
         assert_eq!((tb.class_vars, tb.ignored, tb.classes.clone()), (2, 0, vec!["NoBorder".to_string()]));
         // enabled
-        let t = ThemeCss::load(&dir, "", &["callouts".to_string()], 2);
+        let t = ThemeCss::load_from(Some(&themes), &dir, "", &["callouts".to_string()], 2);
         assert_eq!(t.length("--font-text-size", false, &none, 16.0), Some(18.0));
         assert!(t.callout_color("thm", true).is_some());
         assert_eq!(t.var("--h1-color", false, &none), None, "no theme: inherit");
@@ -720,28 +740,35 @@ mod tests {
     fn builtin_theme_is_secondary_with_both_variants() {
         let dir = std::env::temp_dir().join(format!("tephra-theme-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let themes = dir.join("cfg/themes");
+        std::fs::create_dir_all(&themes).unwrap();
         let none: Vec<String> = Vec::new();
         // no theme chosen: the default look is still Obsidian's own variables
-        let t = ThemeCss::load(&dir, "", &[], 1);
+        let t = ThemeCss::load_from(Some(&themes), &dir, "", &[], 1);
         assert_eq!(t.var("--color-base-00", true, &none).as_deref(), Some("#1e1e1e"));
         assert_eq!(t.var("--interactive-accent", true, &none).as_deref(), Some("hsl(258, 88%, 66%)"));
         // the bundled Tephra theme is listed as an extra choice
         assert!(t.themes.iter().any(|n| n == "Tephra"));
         // one theme, both variants: dark variables in dark mode, light ones in light mode
-        let t = ThemeCss::load(&dir, "Tephra", &[], 2);
+        let t = ThemeCss::load_from(Some(&themes), &dir, "Tephra", &[], 2);
         assert_eq!(t.var("--color-base-00", true, &none).as_deref(), Some("#1a1816"));
         assert_eq!(t.var("--interactive-accent", true, &none).as_deref(), Some("hsl(16, 84%, 56%)"));
         assert_eq!(t.var("--color-base-00", false, &none).as_deref(), Some("#faf7f1"));
         assert_eq!(t.var("--interactive-accent", false, &none).as_deref(), Some("hsl(15, 80%, 45%)"));
         assert!(t.callout_color("warning", true).is_some());
         assert!(t.callout_color("warning", false).is_some());
-        // a vault theme of the same name replaces the bundled one entirely
-        std::fs::create_dir_all(dir.join(".obsidian/themes/Tephra")).unwrap();
-        std::fs::write(dir.join(".obsidian/themes/Tephra/theme.css"), ".theme-dark { --color-base-00: #000001; }").unwrap();
-        let t = ThemeCss::load(&dir, "Tephra", &[], 3);
+        // an installed theme of the same name replaces the bundled one entirely
+        std::fs::create_dir_all(themes.join("Tephra")).unwrap();
+        std::fs::write(themes.join("Tephra/theme.css"), ".theme-dark { --color-base-00: #000001; }").unwrap();
+        let t = ThemeCss::load_from(Some(&themes), &dir, "Tephra", &[], 3);
         assert_eq!(t.var("--color-base-00", true, &none).as_deref(), Some("#000001"));
         assert_eq!(t.var("--color-base-00", false, &none).as_deref(), Some("#ffffff"), "light falls back to the base theme");
+        // themes are per user: a vault's `.obsidian/themes` is neither listed nor loaded
+        std::fs::create_dir_all(dir.join(".obsidian/themes/VaultOnly")).unwrap();
+        std::fs::write(dir.join(".obsidian/themes/VaultOnly/theme.css"), ".theme-dark { --color-base-00: #000002; }").unwrap();
+        let t = ThemeCss::load_from(Some(&themes), &dir, "VaultOnly", &[], 4);
+        assert!(!t.themes.iter().any(|n| n == "VaultOnly"));
+        assert_eq!(t.var("--color-base-00", true, &none).as_deref(), Some("#1e1e1e"), "a vault theme is ignored");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -4,7 +4,9 @@
 //!
 //! Saved in `$TEPHRA_CONFIG_DIR/vaults.json`; else `$XDG_CONFIG_HOME/tephra/vaults.json`
 //! (`~/.config/tephra`), on Windows `%APPDATA%\tephra`. Scripted UI tests and the
-//! benchmark never touch the real file: without `$TEPHRA_CONFIG_DIR` they save nothing.
+//! benchmark never touch the real file: without `$TEPHRA_CONFIG_DIR` they save nothing. The same
+//! folder ([`config_dir`]) holds the themes installed for every vault (`themes/`, see
+//! `theme::themes_dir`).
 //!
 //! The app holds one vault per process (its settings, plugins and theme are globals), so a
 //! vault opened from a window that already has one opens in a new window (a new process), as
@@ -34,20 +36,27 @@ pub struct Known {
     pub recent: Vec<PathBuf>,
 }
 
-/// Where the list is saved (None: nowhere, in scripted runs without `$TEPHRA_CONFIG_DIR`).
-pub fn state_file() -> Option<PathBuf> {
+/// The app's per-user folder, next to no vault: `$TEPHRA_CONFIG_DIR`; else
+/// `$XDG_CONFIG_HOME/tephra` (`~/.config/tephra`), on Windows `%APPDATA%\tephra`. Holds the vault
+/// list (`vaults.json`) and the themes that aren't bundled with the app (`themes/`).
+pub fn config_dir() -> Option<PathBuf> {
     if let Some(d) = std::env::var_os("TEPHRA_CONFIG_DIR") {
-        return Some(PathBuf::from(d).join("vaults.json"));
-    }
-    if std::env::var_os("TEPHRA_SCRIPT").is_some() || std::env::var_os("TEPHRA_BENCH").is_some() {
-        return None;
+        return Some(PathBuf::from(d));
     }
     let env_dir = |k: &str| std::env::var_os(k).map(PathBuf::from).filter(|p| p.is_absolute());
     // Windows: %APPDATA%\tephra (roamed, like other per-user settings)
     let base = if cfg!(windows) { env_dir("APPDATA") } else { None }
         .or_else(|| env_dir("XDG_CONFIG_HOME"))
         .or_else(|| env_dir("HOME").or_else(|| env_dir("USERPROFILE")).map(|h| h.join(".config")))?;
-    Some(base.join("tephra").join("vaults.json"))
+    Some(base.join("tephra"))
+}
+
+/// Where the list is saved (None: nowhere, in scripted runs without `$TEPHRA_CONFIG_DIR`).
+pub fn state_file() -> Option<PathBuf> {
+    if std::env::var_os("TEPHRA_CONFIG_DIR").is_none() && (std::env::var_os("TEPHRA_SCRIPT").is_some() || std::env::var_os("TEPHRA_BENCH").is_some()) {
+        return None;
+    }
+    config_dir().map(|d| d.join("vaults.json"))
 }
 
 impl Known {
