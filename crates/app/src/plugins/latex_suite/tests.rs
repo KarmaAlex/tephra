@@ -1,24 +1,19 @@
-//! Snippet engine tests in a headless editor (HANDOFF §7 "snippets test"). `typed()` replays
+//! Snippet engine tests in a headless editor. `typed()` replays
 //! keys the way the editor does: hooks first, the default action otherwise.
 
 use super::*;
 use crate::editor::api::{Backend as _, Headless};
 use tephra_core::Selection;
 
-/// The vault's own snippets file (read only; the test is skipped when the fixture is absent).
-fn fixture_snippets() -> Option<String> {
-    let home = std::env::var_os("HOME")?;
-    std::fs::read_to_string(Path::new(&home).join("dev/vault-fixture/math-jax-snippets/snippets.js")).ok()
-}
-
-fn fixture_settings() -> Map<String, Value> {
-    let home = std::env::var_os("HOME").unwrap_or_default();
-    let ls = LatexSuite::new(&Path::new(&home).join("dev/vault-fixture"));
+/// Manifest defaults, as they are without a vault settings file (an empty directory).
+fn default_settings() -> Map<String, Value> {
+    let dir = std::env::temp_dir().join(format!("tephra-ls-test-{}", std::process::id()));
+    let ls = LatexSuite::new(&dir);
     ls.manifest.settings.iter().map(|s| (s.key.to_string(), s.default.clone())).collect()
 }
 
 fn engine_with(src: &str) -> Engine {
-    let mut m = fixture_settings();
+    let mut m = default_settings();
     m.insert("snippetsFileLocation".into(), Value::from("snippets.js"));
     let src = src.to_string();
     Engine::load(&m, &move |rel| (rel == "snippets.js").then(|| src.clone()))
@@ -83,33 +78,32 @@ fn run(e: &Engine, start: &str, keys: &str) -> String {
 }
 
 #[test]
-fn the_vaults_snippets_file_loads_completely() {
-    let Some(src) = fixture_snippets() else { return eprintln!("fixture absent: skipped") };
-    let e = engine_with(&src);
+fn builtin_defaults_load_completely() {
+    let mut m = default_settings();
+    m.insert("snippetsFileLocation".into(), Value::from(""));
+    let e = Engine::load(&m, &|_| None);
     assert!(e.errors.is_empty(), "load problems: {:?}", e.errors);
     let js = js::Js::new().unwrap();
-    let descs = js.load_snippets(&src).unwrap();
-    assert!(descs.len() > 200, "{} snippets", descs.len());
+    let descs = js.load_snippets(DEFAULT_SNIPPETS).unwrap();
+    assert!(descs.len() > 150, "{} snippets", descs.len());
     assert_eq!(e.snippets.len(), descs.len(), "every snippet registers");
     let fallback = e.snippets.iter().filter(|s| matches!(&s.trigger, Trigger::Regex { re: None, .. })).count();
     assert_eq!(fallback, 0, "all regex triggers compile natively");
 }
 
 #[test]
-fn the_vaults_snippets_expand() {
-    let Some(src) = fixture_snippets() else { return eprintln!("fixture absent: skipped") };
-    let e = engine_with(&src);
+fn builtin_defaults_expand() {
+    let mut m = default_settings();
+    m.insert("snippetsFileLocation".into(), Value::from(""));
+    let e = Engine::load(&m, &|_| None);
     let m = |s: &str| format!("$$\n{s}\n$$");
     // text mode: inline math (the "${}$0{}$" trick) and display math via the dm function snippet
     assert_eq!(run(&e, "a |", "mk"), "a ${}|{}$");
     assert_eq!(run(&e, "|", "dm"), "$$\n|\n$$");
     assert_eq!(run(&e, "> |", "dm"), "> \n> $$\n> |\n> $$", "callout prefix kept on new lines");
-    // plain, regex and function snippets
+    // plain and regex snippets
     assert_eq!(run(&e, &m("|"), "@a"), m("\\alpha|"));
     assert_eq!(run(&e, &m("|"), "xsr"), m("x^{2}|"));
-    assert_eq!(run(&e, &m("|"), "x3"), m("x_{3}|"));
-    assert_eq!(run(&e, &m("|"), "@a3"), m("\\alpha_{3}|"));
-    assert_eq!(run(&e, &m("|"), "iden2"), m("\\begin{pmatrix}\n1 & 0 \\\\\n0 & 1\n\\end{pmatrix}|"));
     // typing a macro is left alone; an unknown continuation gets a space
     assert_eq!(run(&e, &m("|"), "\\alp"), m("\\alp|"));
     assert_eq!(run(&e, &m("|"), "\\tox"), m("\\to x|"));
@@ -118,17 +112,6 @@ fn the_vaults_snippets_expand() {
     assert_eq!(run(&e, &m("|"), "sq"), m("\\sqrt{ | }"));
     assert_eq!(run(&e, &m("|"), "dint"), m("\\int_{[0]}^{1}  \\, dx "));
     assert_eq!(run(&e, &m("|"), "dint<Tab>"), m("\\int_{0}^{[1]}  \\, dx "));
-    assert_eq!(run(&e, &m("|"), "taylg"), m("g|(x + h) = g(x) + g'(x)h + g''(x) \\frac{h^{2}}{2!} + \\dots"), "mirrored placeholder");
-    // non-automatic snippet on Tab
-    assert_eq!(run(&e, &m("|"), "par<Tab>"), m("\\frac{ \\partial [y] }{ \\partial x } "));
-    // environments: regex with captures, mirrored names, matrix shortcuts
-    assert_eq!(run(&e, &m("|"), "pmat"), m("\\begin{pmatrix}\n|\n\\end{pmatrix}"));
-    assert_eq!(run(&e, &m("|"), "pmata<Tab>b<CR>c"), m("\\begin{pmatrix}\na & b \\\\\nc|\n\\end{pmatrix}"));
-    assert_eq!(run(&e, &m("|"), "pmata<S-CR>"), m("\\begin{pmatrix}\na\n\\end{pmatrix}|"));
-    // visual snippet on a selection
-    assert_eq!(run(&e, &m("[x+y]"), "U"), m("\\underbrace{ x+y }_{ | }"));
-    // inline math trims trailing whitespace of expansions
-    assert_eq!(run(&e, "$x|$", "lim"), "$x\\lim_{ [n] \\to \\infty }$");
 }
 
 #[test]
@@ -166,7 +149,7 @@ fn auto_enlarge_and_undo() {
 
 #[test]
 fn builtin_defaults_load() {
-    let mut m = Map::new();
+    let mut m = default_settings();
     m.insert("snippetsFileLocation".into(), Value::from(""));
     let e = Engine::load(&m, &|_| None);
     assert!(e.errors.is_empty(), "{:?}", e.errors);
@@ -186,7 +169,7 @@ fn snippet_keys_reach_the_headless_backend() {
 
 #[test]
 fn inline_math_snippet_brackets_and_fractions() {
-    // the vault's own snippets for these keys, so the test runs without the fixture
+    // inline snippets, so the test is self-contained
     let e = engine_with(
         r#"export default [
         {trigger: "mk", replacement: "${}$0{}$", options: "tA"},
@@ -249,10 +232,10 @@ fn inline_math_preview_in_callouts_and_table_cells() {
 #[test]
 fn math_preview_setting_registers_and_unregisters_the_popup() {
     use crate::plugins::{Plugin as _, Registrar, Registry};
-    let home = std::env::var_os("HOME").unwrap_or_default();
+    let empty = std::env::temp_dir().join(format!("tephra-ls-test-{}", std::process::id()));
     for (on, want) in [(true, 1), (false, 0)] {
-        let mut ls = LatexSuite::new(&Path::new(&home).join("dev/vault-fixture"));
-        let mut m = fixture_settings();
+        let mut ls = LatexSuite::new(&empty);
+        let mut m = default_settings();
         m.insert("mathPreviewEnabled".into(), Value::Bool(on));
         let mut reg = Registry::default();
         ls.on_load(&m, &mut Registrar { plugin: "latex-suite", reg: &mut reg });

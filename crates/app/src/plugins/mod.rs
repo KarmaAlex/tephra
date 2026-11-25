@@ -91,7 +91,7 @@ pub fn bundled(vault_root: &Path) -> Vec<Box<dyn Plugin>> {
     ]
 }
 
-/// The bundled plugins before `plugins.json` recorded which plugins it knew (M2–M3).
+/// The bundled plugins before `plugins.json` recorded which plugins it knew (an earlier version).
 const LEGACY_PLUGINS: &[&str] = &["academic-notes", "latex-suite", "spellcheck", "word-count", "desmos", "horizontal-blocks"];
 
 fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
@@ -107,7 +107,7 @@ impl PluginHost {
     pub fn new(dir: Option<PathBuf>, plugins: Vec<Box<dyn Plugin>>) -> Self {
         let read_json = |p: PathBuf| std::fs::read_to_string(p).ok().and_then(|s| serde_json::from_str::<Value>(&s).ok());
         // Saved choices win; plugins that didn't exist when the file was written (newer app
-        // version) get their default. Files from before "known" was recorded (M2/M3) knew these.
+        // version) get their default. Files from before "known" was recorded knew these.
         let strs = |v: Option<&Value>| -> Option<BTreeSet<String>> { v.and_then(Value::as_array).map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()) };
         let saved = dir.as_ref().and_then(|d| read_json(d.join("plugins.json")));
         let saved_enabled = strs(saved.as_ref().and_then(|v| v.get("enabled"))).unwrap_or_default();
@@ -455,7 +455,7 @@ mod tests {
         assert!(!host2.is_enabled("a") && host2.is_enabled("new"));
         std::fs::write(dir.join("plugins.json"), r#"{"enabled": ["spellcheck"]}"#).unwrap();
         let host3 = PluginHost::new(Some(dir.clone()), vec![Box::new(KitchenSink(manifest("word-count", true))), Box::new(KitchenSink(manifest("new", true)))]);
-        assert!(!host3.is_enabled("word-count") && host3.is_enabled("new"), "M3-era file: legacy ids known");
+        assert!(!host3.is_enabled("word-count") && host3.is_enabled("new"), "legacy file: legacy ids known");
         // hotkey overrides: saved, and an empty list removes the default
         let mut h = PluginHost::new(Some(dir.clone()), vec![Box::new(KitchenSink(manifest("a", true)))]);
         h.load_plugin("a");

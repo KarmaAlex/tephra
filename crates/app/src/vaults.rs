@@ -378,8 +378,8 @@ mod tests {
     #[test]
     fn json_round_trip_and_bad_input() {
         let mut k = Known::default();
-        k.opened(Path::new("/x/Test vault"));
-        k.opened(Path::new("/y/calcolabilità"));
+        k.opened(Path::new("/x/My notes"));
+        k.opened(Path::new("/y/café"));
         assert_eq!(Known::parse(&k.to_json()), k);
         assert_eq!(Known::parse("not json"), Known::default());
         assert_eq!(Known::parse(r#"{"last": 3, "recent": ["", "/a", 1]}"#), Known { last: None, recent: vec![PathBuf::from("/a")] });
@@ -407,11 +407,11 @@ mod tests {
         assert!(new_vault_path("", "ok").is_err());
         assert!(new_vault_path("relative/dir", "ok").is_err());
         assert!(new_vault_path(&loc.join("missing").to_string_lossy(), "ok").is_err());
-        let dir = create_vault(&l, " Borůvka ").unwrap();
-        assert_eq!(dir, loc.join("Borůvka"));
+        let dir = create_vault(&l, " Café ").unwrap();
+        assert_eq!(dir, loc.join("Café"));
         assert!(dir.join(".obsidian").is_dir());
         assert_eq!(Vault::root_for(&dir), dir);
-        assert!(create_vault(&l, "Borůvka").is_err(), "an existing folder is never reused");
+        assert!(create_vault(&l, "Café").is_err(), "an existing folder is never reused");
         // marking keeps an existing .obsidian/ as it is
         std::fs::write(dir.join(".obsidian/app.json"), "{}").unwrap();
         mark_as_vault(&dir).unwrap();

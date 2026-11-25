@@ -1,4 +1,4 @@
-//! Full-text search over the vault (HANDOFF §5.4), with a subset of Obsidian's query syntax:
+//! Full-text search over the vault, with a subset of Obsidian's query syntax:
 //! words (all must match), `"phrases"`, `-negation`, `OR`, `( groups )`, and the operators
 //! `path:`, `file:`, `tag:` and `content:`. Matching ignores case.
 //!
@@ -31,7 +31,7 @@ pub struct SearchDoc {
     pub folded: String,
     /// `fold(path)`.
     pub path_folded: String,
-    /// Tags without `#`, folded (`uni/algo`).
+    /// Tags without `#`, folded (`work/cs`).
     pub tags: Vec<String>,
 }
 
@@ -56,7 +56,7 @@ pub enum Term {
     Path(String),
     /// `file:` — part of the file name.
     File(String),
-    /// `tag:` — the tag or one of its subtags (`tag:uni` matches `uni/algo`).
+    /// `tag:` — the tag or one of its subtags (`tag:work` matches `work/cs`).
     Tag(String),
     /// `content:` — the content only.
     Content(String),

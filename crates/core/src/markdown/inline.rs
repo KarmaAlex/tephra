@@ -458,7 +458,7 @@ mod tests {
     #[test]
     fn links_and_embeds() {
         assert_eq!(p("![[Pasted image 20250101.png]]"), [(WikiLink { embed: true }, "![[Pasted image 20250101.png]]", "Pasted image 20250101.png")]);
-        assert_eq!(p("[[Borůvka#^id|alias]]"), [(WikiLink { embed: false }, "[[Borůvka#^id|alias]]", "alias")]);
+        assert_eq!(p("[[Graphs#^id|alias]]"), [(WikiLink { embed: false }, "[[Graphs#^id|alias]]", "alias")]);
         assert_eq!(p("[[Nota]]"), [(WikiLink { embed: false }, "[[Nota]]", "Nota")]);
         assert_eq!(p("[**t**](https://x.y)"), [(Link, "[**t**](https://x.y)", "**t**"), (Strong, "**t**", "t")]);
         assert_eq!(p("![alt](a.png)"), [(Image, "![alt](a.png)", "alt")]);

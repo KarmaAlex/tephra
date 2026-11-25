@@ -1,6 +1,6 @@
-// Launch Obsidian with an ISOLATED profile on the fixture vault, open a note, and print
+// Launch Obsidian with an ISOLATED profile on the given vault, open a note, and print
 // "READY" once the workspace is laid out and the note's view has rendered.
-// The user's ~/.config/obsidian is never touched.
+// The real ~/.config/obsidian is never touched.
 // usage: node obsidian_run.mjs <profileDir> <vaultDir> <noteRelPath> [--enable-plugins]
 import { spawn } from "node:child_process";
 import { writeFileSync, existsSync } from "node:fs";

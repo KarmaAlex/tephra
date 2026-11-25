@@ -1,5 +1,5 @@
 // Builds the two JS bundles compiled into the app (crates/app/assets/, gitignored):
-//   mathjax-svg.js    MathJax 3 TeX -> SVG, run in the embedded QuickJS   (entry: tools/corpus/mathjax-entry.js)
+//   mathjax-svg.js    MathJax 3 TeX -> SVG, run in the embedded QuickJS   (entry: mathjax-entry.js in this folder)
 //   cm6-headless.js   headless CM6 state + Lezer Markdown (GFM) for the LaTeX snippets plugin
 //                     (entry: tools/cm6/entry.js)
 // Usage: npm ci && npm run build            [-- <out dir>, default crates/app/assets]
@@ -18,7 +18,7 @@ const common = {
 
 await build({
   ...common,
-  entryPoints: [path.join(root, "tools/corpus/mathjax-entry.js")],
+  entryPoints: [path.join(here, "mathjax-entry.js")],
   outfile: path.join(out, "mathjax-svg.js"),
   define: { PACKAGE_VERSION: '"3.2.1"' },
   banner: { js: 'var require=function(m){throw new Error("require("+m+") unavailable")};var __dirname="/";' },

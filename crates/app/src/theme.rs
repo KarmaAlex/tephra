@@ -1,9 +1,9 @@
-//! Themes and CSS snippets (HANDOFF §5.1 "Theming"), read the way you chose in M6: GPUI has no
+//! Themes and CSS snippets: GPUI has no
 //! CSS engine, so what applies is Obsidian's CSS *variables*:
 //! - declared in global rules (`:root`, `body`, `.theme-light`, `.theme-dark`) of the chosen
 //!   theme (the global `themes/<name>/theme.css`, see [`themes_dir`]) and of the enabled
 //!   snippets;
-//! - declared in rules scoped by one class (`.NoBorder { … }`), from every snippet, for notes
+//! - declared in rules scoped by one class (`.Plain { … }`), from every snippet, for notes
 //!   whose `cssclasses` name it (note-specific snippets apply without being enabled);
 //! - `--callout-color` / `--callout-icon` in `.callout[data-callout="type"]` rules.
 //!
@@ -187,7 +187,7 @@ fn classify(selector: &str) -> Scope {
     }
     match user.as_slice() {
         [] if !other => Scope::Global(mode),
-        // `.NoBorder table { --x }`: variables inherit, so the class is what matters
+        // `.Plain table { --x }`: variables inherit, so the class is what matters
         [c] => Scope::Class((*c).clone(), mode),
         _ => Scope::Other,
     }
@@ -639,7 +639,7 @@ fn compute_text_style(cx: &App, classes: &[String]) -> (TextViewStyle, f32, Hsla
         r.border_color = Some(v);
         s = s.with_blockquote_style(r);
     }
-    // tables (`.NoBorder` sets the widths to 0)
+    // tables (`.Plain` sets the widths to 0)
     let width = t.length("--table-border-width", dark, classes, body).unwrap_or(1.0);
     let border = if width <= 0.0 { gpui_kit::transparent_black() } else { c("--table-border-color").unwrap_or(s.border()) };
     let w: AbsoluteLength = px(width.max(0.0)).into();
@@ -695,8 +695,8 @@ mod tests {
         assert_eq!(classify("body.theme-dark"), Scope::Global(Mode::Dark));
         assert_eq!(classify(".theme-light"), Scope::Global(Mode::Light));
         assert_eq!(classify("body:not(.theme-dark)"), Scope::Global(Mode::Light));
-        assert_eq!(classify(".NoBorder"), Scope::Class("NoBorder".into(), Mode::Both));
-        assert_eq!(classify(".markdown-preview-view.NoBorder table"), Scope::Class("NoBorder".into(), Mode::Both));
+        assert_eq!(classify(".Plain"), Scope::Class("Plain".into(), Mode::Both));
+        assert_eq!(classify(".markdown-preview-view.Plain table"), Scope::Class("Plain".into(), Mode::Both));
         assert_eq!(classify(".theme-dark .callout[data-callout=\"thm\"]"), Scope::Callout("thm".into(), Mode::Dark));
         assert_eq!(classify("h1"), Scope::Other);
         assert_eq!(classify(".markdown-preview-view h1"), Scope::Other);
@@ -711,7 +711,7 @@ mod tests {
         let themes = dir.join("cfg/themes");
         std::fs::create_dir_all(themes.join("Mine")).unwrap();
         std::fs::write(themes.join("Mine/theme.css"), ".theme-dark { --accent-h: 120; } body { --h1-color: red; } .markdown-preview-view h1 { text-transform: uppercase; } @font-face { font-family: X; }").unwrap();
-        std::fs::write(dir.join(".obsidian/snippets/table_border.css"), ".NoBorder {\n--table-border-width: 0px;\n--table-white-space: normal;\n}").unwrap();
+        std::fs::write(dir.join(".obsidian/snippets/plain.css"), ".Plain {\n--table-border-width: 0px;\n--table-white-space: normal;\n}").unwrap();
         std::fs::write(dir.join(".obsidian/snippets/callouts.css"), ".callout[data-callout=\"thm\"] { --callout-color: 0, 120, 200; } :root { --font-text-size: 18px; }").unwrap();
         // the callout snippet off: its global and callout rules don't apply; the class rule always does
         let t = ThemeCss::load_from(Some(&themes), &dir, "Mine", &[], 1);
@@ -720,14 +720,14 @@ mod tests {
         assert_eq!(t.var("--interactive-accent", true, &none).as_deref(), Some("hsl(120, 88%, 66%)"), "the theme's dark accent hue");
         assert_eq!(t.var("--interactive-accent", false, &none).as_deref(), Some("hsl(258, 88%, 66%)"));
         assert_eq!(t.length("--table-border-width", false, &none, 16.0), Some(1.0));
-        assert_eq!(t.length("--table-border-width", false, &["NoBorder".to_string()], 16.0), Some(0.0));
+        assert_eq!(t.length("--table-border-width", false, &["Plain".to_string()], 16.0), Some(0.0));
         assert_eq!(t.length("--font-text-size", false, &none, 16.0), Some(16.0));
         assert!(t.callout_color("thm", false).is_none());
         let theme = t.reports.iter().find(|r| r.is_theme).unwrap();
         assert_eq!((theme.global_vars, theme.ignored), (2, 2));
         assert!(theme.examples.iter().any(|e| e.contains("text-transform")));
-        let tb = t.reports.iter().find(|r| r.name == "table_border").unwrap();
-        assert_eq!((tb.class_vars, tb.ignored, tb.classes.clone()), (2, 0, vec!["NoBorder".to_string()]));
+        let tb = t.reports.iter().find(|r| r.name == "plain").unwrap();
+        assert_eq!((tb.class_vars, tb.ignored, tb.classes.clone()), (2, 0, vec!["Plain".to_string()]));
         // enabled
         let t = ThemeCss::load_from(Some(&themes), &dir, "", &["callouts".to_string()], 2);
         assert_eq!(t.length("--font-text-size", false, &none, 16.0), Some(18.0));

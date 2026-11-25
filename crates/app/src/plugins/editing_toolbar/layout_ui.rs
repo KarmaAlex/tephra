@@ -1,4 +1,4 @@
-//! Settings → Editing toolbar → layout (M8): your toolbar as a list you rearrange by dragging,
+//! Settings → Editing toolbar → layout: your toolbar as a list you rearrange by dragging,
 //! next to every command the toolbar can hold. Changes apply to the bar at once and are saved
 //! in `.tephra/plugins/editing-toolbar.json`; the Editing Toolbar's own settings in
 //! `.obsidian/` are only read (they are what "Reset" goes back to).

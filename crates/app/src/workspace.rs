@@ -1333,7 +1333,7 @@ impl Workspace {
     }
 
     /// Renames or moves a file or folder (vault paths) and rewrites every link that pointed at
-    /// what moved, so links keep working (HANDOFF §5.1).
+    /// what moved, so links keep working.
     pub fn rename_path(&mut self, old: &str, new: &str, cx: &mut Context<Self>) -> Result<(usize, usize), String> {
         let new = new.trim().trim_matches('/').to_string();
         if new.is_empty() || new.split('/').any(|c| c.is_empty() || c == "." || c == ".." || c.starts_with('.')) {
@@ -1801,7 +1801,7 @@ impl Workspace {
         v_flex().w(crate::ui::r(crate::ui::SIDEBAR)).h_full().flex_none().border_r_1().border_color(theme.border).bg(theme.sidebar).child(header).child(div().flex_1().min_h_0().child(body)).into_any_element()
     }
 
-    // ---- moving by drag and drop (M8) ------------------------------------------------
+    // ---- moving by drag and drop ------------------------------------------------
 
     /// The file-list row under `pos` (from the rows drawn last frame).
     fn row_at(&self, pos: Point<Pixels>) -> Option<String> {

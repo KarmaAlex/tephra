@@ -1,4 +1,4 @@
-//! The plugin API (HANDOFF §5.2, decisions D5/D7). Every bundled feature — core plugins and
+//! The plugin API. Every bundled feature — core plugins and
 //! replacements for Obsidian community plugins — is built on exactly this API; nothing gets
 //! private hooks. Plugins are first-party and in-process; the shape is meant to allow
 //! third-party plugins later (sandboxing is out of scope).
@@ -82,7 +82,7 @@ pub enum CalloutLook {
     Rules,
 }
 
-/// How a callout type looks (D7). The core supplies Obsidian's defaults; a plugin may claim types.
+/// How a callout type looks Obsidian-style by default; plugins may claim types. The core supplies Obsidian's defaults; a plugin may claim types.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CalloutStyle {
     pub color: Hsla,
@@ -138,7 +138,7 @@ pub trait CodeBlockRenderer {
     /// `md` renders Markdown (read only) with links and embeds resolved from the note, for
     /// blocks whose content is itself Markdown (layouts, columns).
     fn render(&self, code: &str, md: &MarkdownRenderer, window: &mut Window, cx: &mut App) -> AnyElement;
-    /// The block in exported documents (PDF is typeset with Typst, M5): Typst markup, using
+    /// The block in exported documents (PDF is typeset with Typst): Typst markup, using
     /// `md` to convert nested Markdown. None = exported as a plain code listing.
     fn export_typst(&self, _code: &str, _md: &dyn Fn(&str) -> String) -> Option<String> {
         None
@@ -259,7 +259,7 @@ pub enum OpenAt {
     Subpath(String),
 }
 
-/// The workspace as plugins see it (D5's `WorkspaceApi` + read-only `IndexApi`): open notes,
+/// The workspace as plugins see it the workspace API plus read-only index access: open notes,
 /// reveal sidebar views, read the vault index. File changes go through the workspace, which
 /// owns conflict checks and link updates.
 #[derive(Clone)]
@@ -394,7 +394,7 @@ pub struct Command {
     /// Namespaced automatically as `<plugin id>:<id>`.
     pub id: String,
     pub name: String,
-    /// Default hotkey, e.g. `ctrl-shift-l` (user overrides arrive with the command palette, M4).
+    /// Default hotkey, e.g. `ctrl-shift-l` (user overrides arrive with the command palette).
     pub hotkey: Option<String>,
     pub run: Action,
 }

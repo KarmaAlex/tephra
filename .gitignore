@@ -1,10 +1,7 @@
-# Private vault data — never commit (HANDOFF §2.2)
+# Local vault fixtures used by the perf/fixture tests — never commit real vault data
 vault-fixture/
-/home/user/dev/vault-fixture/
 *.md.fixture
 fixture/
-# Orchestrator scratch
-.orchestrator/staging/
 # Build outputs
 target/
 node_modules/

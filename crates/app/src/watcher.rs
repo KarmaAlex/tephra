@@ -1,4 +1,4 @@
-//! The vault-wide file watcher (HANDOFF §2.4): turns filesystem events into the vault-relative
+//! The vault-wide file watcher: turns filesystem events into the vault-relative
 //! paths that changed, without any window, so the workspace only decides what to reload.
 
 use std::path::{Path, PathBuf};
@@ -82,9 +82,9 @@ mod tests {
         let root = std::env::temp_dir().join(format!("ol-watch-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join(".obsidian")).unwrap();
-        std::fs::create_dir_all(root.join("Corsi/Calcolabilità")).unwrap();
+        std::fs::create_dir_all(root.join("Courses/Theory")).unwrap();
         std::fs::write(root.join("A.md"), "# A\n[[B]]\n").unwrap();
-        std::fs::write(root.join("Corsi/Calcolabilità/Borůvka.md"), "# Borůvka\n").unwrap();
+        std::fs::write(root.join("Courses/Theory/Graphs.md"), "# Graphs\n").unwrap();
         root
     }
 
@@ -126,16 +126,16 @@ mod tests {
 
     #[test]
     fn paths_are_vault_relative_and_skip_hidden_and_temp_files() {
-        let root = Path::new("/v/Test vault");
-        assert_eq!(vault_relative(root, &root.join("Corsi/Borůvka.md")).as_deref(), Some("Corsi/Borůvka.md"));
+        let root = Path::new("/v/Notes");
+        assert_eq!(vault_relative(root, &root.join("Courses/Graphs.md")).as_deref(), Some("Courses/Graphs.md"));
         assert_eq!(vault_relative(root, &root.join("Images/Pasted image 20250101.png")).as_deref(), Some("Images/Pasted image 20250101.png"));
         assert_eq!(vault_relative(root, &root.join("A.sync-conflict-20251010-120000-ABC.md")).as_deref(), Some("A.sync-conflict-20251010-120000-ABC.md"));
         assert_eq!(vault_relative(root, root), None);
         assert_eq!(vault_relative(root, Path::new("/v/other/A.md")), None);
         assert_eq!(vault_relative(root, &root.join(".obsidian/app.json")), None);
         assert_eq!(vault_relative(root, &root.join(".tephra/plugins/x.json")), None);
-        assert_eq!(vault_relative(root, &root.join("Corsi/.stversions/A.md")), None);
-        assert_eq!(vault_relative(root, &root.join("Corsi/.tephra-tmp-123-A.md")), None);
+        assert_eq!(vault_relative(root, &root.join("Courses/.stversions/A.md")), None);
+        assert_eq!(vault_relative(root, &root.join("Courses/.tephra-tmp-123-A.md")), None);
     }
 
     #[test]
@@ -143,17 +143,17 @@ mod tests {
         let root = vault("ops");
         let w = VaultWatcher::new(&root).unwrap();
 
-        std::fs::write(root.join("Corsi/Calcolabilità/Nuova.md"), "nuova").unwrap();
-        std::fs::write(root.join("A.md"), "# A\nmodificata\n").unwrap();
-        std::fs::write(root.join("A.md"), "# A\nmodificata due volte\n").unwrap();
-        let seen = wait_for(&w, |s| s.iter().any(|r| r == "A.md") && s.iter().any(|r| r == "Corsi/Calcolabilità/Nuova.md"));
+        std::fs::write(root.join("Courses/Theory/New.md"), "new").unwrap();
+        std::fs::write(root.join("A.md"), "# A\nchanged\n").unwrap();
+        std::fs::write(root.join("A.md"), "# A\nchanged twice\n").unwrap();
+        let seen = wait_for(&w, |s| s.iter().any(|r| r == "A.md") && s.iter().any(|r| r == "Courses/Theory/New.md"));
         assert_eq!(seen.iter().filter(|r| *r == "A.md").count(), 1, "{seen:?}");
 
-        std::fs::rename(root.join("Corsi/Calcolabilità/Borůvka.md"), root.join("Corsi/MST.md")).unwrap();
-        wait_for(&w, |s| s.iter().any(|r| r == "Corsi/Calcolabilità/Borůvka.md") && s.iter().any(|r| r == "Corsi/MST.md"));
+        std::fs::rename(root.join("Courses/Theory/Graphs.md"), root.join("Courses/Renamed.md")).unwrap();
+        wait_for(&w, |s| s.iter().any(|r| r == "Courses/Theory/Graphs.md") && s.iter().any(|r| r == "Courses/Renamed.md"));
 
-        std::fs::remove_file(root.join("Corsi/Calcolabilità/Nuova.md")).unwrap();
-        wait_for(&w, |s| s.iter().any(|r| r == "Corsi/Calcolabilità/Nuova.md"));
+        std::fs::remove_file(root.join("Courses/Theory/New.md")).unwrap();
+        wait_for(&w, |s| s.iter().any(|r| r == "Courses/Theory/New.md"));
 
         // A folder arriving with a file in it (Syncthing, a move into the vault): the file can
         // land before the new folder is watched, so the folder itself is reported, and
@@ -179,12 +179,12 @@ mod tests {
 
         // reading and listing (what re-indexing does) must not re-trigger the watcher
         let _ = std::fs::read_to_string(root.join("A.md")).unwrap();
-        let _ = std::fs::read_dir(root.join("Corsi")).unwrap().count();
+        let _ = std::fs::read_dir(root.join("Courses")).unwrap().count();
         let _ = VaultIndex::build(&root);
         // Obsidian's and the app's config, Syncthing's folders, the app's atomic-save temp file
         std::fs::write(root.join(".obsidian/workspace.json"), "{}").unwrap();
         std::fs::create_dir_all(root.join(".stfolder")).unwrap();
-        std::fs::write(root.join("Corsi/.tephra-tmp-1-A.md"), "x").unwrap();
+        std::fs::write(root.join("Courses/.tephra-tmp-1-A.md"), "x").unwrap();
         assert_eq!(settle(&w), Vec::<String>::new());
 
         // still alive afterwards
@@ -203,16 +203,16 @@ mod tests {
         let w = VaultWatcher::new(&root).unwrap();
 
         std::fs::write(root.join("B.md"), "# B\n").unwrap();
-        std::fs::write(root.join("A.md"), "# A\n[[B]] #nuovo\n").unwrap();
-        std::fs::remove_file(root.join("Corsi/Calcolabilità/Borůvka.md")).unwrap();
+        std::fs::write(root.join("A.md"), "# A\n[[B]] #new\n").unwrap();
+        std::fs::remove_file(root.join("Courses/Theory/Graphs.md")).unwrap();
         let batch = wait_for(&w, |s| s.len() >= 3);
         idx.refresh_batch(&batch);
 
         assert_eq!(idx.resolve("B", "A.md").as_deref(), Some("B.md"));
-        assert_eq!(idx.text("A.md"), Some("# A\n[[B]] #nuovo\n"));
+        assert_eq!(idx.text("A.md"), Some("# A\n[[B]] #new\n"));
         assert_eq!(idx.backlinks("B.md").len(), 1);
-        assert!(idx.tags().iter().any(|(t, _)| t == "nuovo"));
-        assert!(!idx.contains("Corsi/Calcolabilità/Borůvka.md"));
+        assert!(idx.tags().iter().any(|(t, _)| t == "new"));
+        assert!(!idx.contains("Courses/Theory/Graphs.md"));
         let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -1,4 +1,4 @@
-//! Shared UI pieces sized like Obsidian's at 100% (measured on Obsidian 1.15, M6 feedback):
+//! Shared UI pieces sized like Obsidian's at 100% (measured on Obsidian 1.15):
 //! 16 px icons in 28×24 buttons, 25 px list rows with 13 px text, a 44 px ribbon, 300 px
 //! sidebars. Sizes are in rems, so the UI scale (Settings → Appearance) scales them all.
 

@@ -208,9 +208,9 @@ mod tests {
 
     #[test]
     fn alphanumeric_by_value_case_and_accents() {
-        let names = ["Lecture 10", "lecture 2", "Lecture 1", "Zeta", "Èlite", "elite", "Borůvka", "Boruvka 2", "a", "B"];
-        assert_eq!(sorted(&names, SortOrder::Alphabetical), ["a", "B", "Borůvka", "Boruvka 2", "elite", "Èlite", "Lecture 1", "lecture 2", "Lecture 10", "Zeta"]);
-        assert_eq!(sorted(&names, SortOrder::AlphabeticalReverse), ["Zeta", "Lecture 10", "lecture 2", "Lecture 1", "Èlite", "elite", "Boruvka 2", "Borůvka", "B", "a"]);
+        let names = ["Lecture 10", "lecture 2", "Lecture 1", "Zeta", "Élite", "elite", "Über", "Uber 2", "a", "B"];
+        assert_eq!(sorted(&names, SortOrder::Alphabetical), ["a", "B", "elite", "Élite", "Lecture 1", "lecture 2", "Lecture 10", "Über", "Uber 2", "Zeta"]);
+        assert_eq!(sorted(&names, SortOrder::AlphabeticalReverse), ["Zeta", "Uber 2", "Über", "Lecture 10", "lecture 2", "Lecture 1", "Élite", "elite", "B", "a"]);
         assert_eq!(natural_cmp("x 007", "x 7"), Ordering::Less); // equal value: still a total order
         assert_eq!(natural_cmp("x 7", "x 7"), Ordering::Equal);
         assert_eq!(natural_cmp("a9", "a10b"), Ordering::Less);
@@ -243,11 +243,11 @@ mod tests {
 
     #[test]
     fn folders_follow_name_order_only() {
-        let mut d = vec!["Secondo".to_string(), "primo 10".into(), "Primo 9".into()];
+        let mut d = vec!["Beta".to_string(), "alpha 10".into(), "Alpha 9".into()];
         sort_folders(&mut d, SortOrder::ByModifiedTime);
-        assert_eq!(d, ["Primo 9", "primo 10", "Secondo"]);
+        assert_eq!(d, ["Alpha 9", "alpha 10", "Beta"]);
         sort_folders(&mut d, SortOrder::AlphabeticalReverse);
-        assert_eq!(d, ["Secondo", "primo 10", "Primo 9"]);
+        assert_eq!(d, ["Beta", "alpha 10", "Alpha 9"]);
     }
 
     #[test]

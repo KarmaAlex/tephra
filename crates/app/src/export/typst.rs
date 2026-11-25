@@ -40,7 +40,7 @@ pub struct Look {
     pub accent: Rgb,
     pub on_accent: Rgb,
     pub link: Rgb,
-    /// Table lines, also the frame of code blocks; width 0 (`.NoBorder`) draws neither.
+    /// Table lines, also the frame of code blocks; width 0 (`.Plain`) draws neither.
     pub border: Rgb,
     pub border_px: f32,
     pub code_bg: Rgb,
@@ -733,7 +733,7 @@ impl<'a> Emitter<'a> {
     }
 }
 
-/// Typst for a MathJax SVG (as the M0 spike did): inline on the baseline; display math as a
+/// Typst for a MathJax SVG : inline on the baseline; display math as a
 /// box for `dmath_`.
 pub fn math_snippet(name: &str, svg: &str, display: bool) -> String {
     const EX_EM: f32 = 0.442; // MathJax ex in em (Computer Modern x-height)
@@ -829,7 +829,7 @@ mod tests {
     fn look_defs_follow_the_theme() {
         let mut l = Look::default();
         assert!(l.defs().contains("#let b_ = 1.00 * u_ + rgb(224, 224, 224)") && l.defs().contains("#let thw_ = 600"));
-        l.border_px = 0.0; // .NoBorder
+        l.border_px = 0.0; // .Plain
         l.headings[0] = (2.0, 800, Some((200, 0, 0)));
         let d = l.defs();
         assert!(d.contains("#let b_ = none"), "{d}");

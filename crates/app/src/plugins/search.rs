@@ -306,12 +306,12 @@ mod tests {
 
     #[test]
     fn snippets_keep_highlights_aligned() {
-        let text = "intro\n    Il minimum spanning tree è unico.\n";
+        let text = "intro\n    The sample algorithm is unique.\n";
         let start = 6;
-        let m = text.find("spanning").unwrap();
-        let (s, hl) = snippet(text, start, &[m..m + 8]);
-        assert_eq!(s, "Il minimum spanning tree è unico.");
-        assert_eq!(&s[hl[0].clone()], "spanning");
+        let m = text.find("sample").unwrap();
+        let (s, hl) = snippet(text, start, &[m..m + 6]);
+        assert_eq!(s, "The sample algorithm is unique.");
+        assert_eq!(&s[hl[0].clone()], "sample");
         let long = format!("{}needle{}", "x".repeat(100), "y".repeat(300));
         let m = long.find("needle").unwrap();
         let (s, hl) = snippet(&long, 0, &[m..m + 6]);

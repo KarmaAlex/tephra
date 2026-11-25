@@ -1,4 +1,4 @@
-# M1a smoke test: caret moves, typing through the input handler, reveal, selection,
+# Smoke test: caret moves, typing through the input handler, reveal, selection,
 # undo back to the original bytes, click, Ctrl+End/Home autoscroll, scrolling.
 state
 key end

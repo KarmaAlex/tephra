@@ -1,4 +1,4 @@
-//! Moving files and folders by dragging them in the file list (M8), as pure path logic: which
+//! Moving files and folders by dragging them in the file list, as pure path logic: which
 //! folder a drop lands in, and where the dragged item ends up. The move itself is a rename
 //! (`Workspace::rename_path`), so links are updated as on rename.
 
@@ -54,34 +54,34 @@ mod tests {
 
     #[test]
     fn drop_folders() {
-        assert_eq!(dest_of_row("dir:Corsi/Algoritmi"), "Corsi/Algoritmi");
-        assert_eq!(dest_of_row("Corsi/Algoritmi/Borůvka.md"), "Corsi/Algoritmi");
+        assert_eq!(dest_of_row("dir:Courses/Algorithms"), "Courses/Algorithms");
+        assert_eq!(dest_of_row("Courses/Algorithms/Graphs.md"), "Courses/Algorithms");
         assert_eq!(dest_of_row("Note.md"), "");
     }
 
     #[test]
     fn targets() {
         // a note into a folder, an attachment to the root, Unicode names
-        assert_eq!(move_target("Altro/Calcolabilità.md", false, "Corsi").as_deref(), Some("Corsi/Calcolabilità.md"));
+        assert_eq!(move_target("Other/Theory.md", false, "Courses").as_deref(), Some("Courses/Theory.md"));
         assert_eq!(move_target("Images/Pasted image 20250101.png", false, "").as_deref(), Some("Pasted image 20250101.png"));
         // a folder with everything in it
-        assert_eq!(move_target("Corsi/Algoritmi", true, "Archivio").as_deref(), Some("Archivio/Algoritmi"));
+        assert_eq!(move_target("Courses/Algorithms", true, "Archive").as_deref(), Some("Archive/Algorithms"));
         // not moves
-        assert_eq!(move_target("Corsi/a.md", false, "Corsi"), None, "same folder");
+        assert_eq!(move_target("Courses/a.md", false, "Courses"), None, "same folder");
         assert_eq!(move_target("a.md", false, ""), None, "already at the root");
-        assert_eq!(move_target("Corsi", true, "Corsi"), None, "into itself");
-        assert_eq!(move_target("Corsi", true, "Corsi/Algoritmi"), None, "into a folder inside it");
+        assert_eq!(move_target("Courses", true, "Courses"), None, "into itself");
+        assert_eq!(move_target("Courses", true, "Courses/Algorithms"), None, "into a folder inside it");
         // a sibling whose name starts the same is fine
-        assert_eq!(move_target("Corsi", true, "Corsi 2").as_deref(), Some("Corsi 2/Corsi"));
+        assert_eq!(move_target("Courses", true, "Courses 2").as_deref(), Some("Courses 2/Courses"));
     }
 
     #[test]
     fn highlighted_rows() {
-        assert!(in_dest("dir:Corsi", "Corsi"));
-        assert!(in_dest("Corsi/a.md", "Corsi"));
-        assert!(in_dest("dir:Corsi/Algoritmi", "Corsi"));
-        assert!(!in_dest("dir:Corsi 2", "Corsi"));
-        assert!(!in_dest("Corsi.md", "Corsi"));
+        assert!(in_dest("dir:Courses", "Courses"));
+        assert!(in_dest("Courses/a.md", "Courses"));
+        assert!(in_dest("dir:Courses/Algorithms", "Courses"));
+        assert!(!in_dest("dir:Courses 2", "Courses"));
+        assert!(!in_dest("Courses.md", "Courses"));
         assert!(!in_dest("a.md", ""), "the root is drawn as the whole list");
     }
 }

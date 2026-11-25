@@ -355,7 +355,7 @@ mod tests {
 
     #[test]
     fn every_line_is_covered_once() {
-        let s = "---\ncssclasses: NoBorder\n---\n# T\n\npara a\npara b\n- x\n  cont\n- [ ] task\n1. one\n\n```c\nint x;\n```\n$$\na\\\\b\n$$\n> [!thm] T\n> x\n| a | b |\n|---|---|\n---\n";
+        let s = "---\ncssclasses: Plain\n---\n# T\n\npara a\npara b\n- x\n  cont\n- [ ] task\n1. one\n\n```c\nint x;\n```\n$$\na\\\\b\n$$\n> [!thm] T\n> x\n| a | b |\n|---|---|\n---\n";
         let bs = parse_blocks(s);
         let mut covered = 0;
         for b in &bs {

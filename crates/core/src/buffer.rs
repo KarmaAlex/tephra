@@ -636,9 +636,9 @@ mod tests {
         assert_eq!(Document::diff("aaa", "aa"), Some((2..3, String::new())));
         // è (c3 a8) vs é (c3 a9) share a first byte: the change must cover the whole char
         assert_eq!(Document::diff("è", "é"), Some((0..2, "é".into())));
-        let (r, t) = Document::diff("calcolabilità x", "calcolabilità yx").unwrap();
-        let mut s = "calcolabilità x".to_string();
+        let (r, t) = Document::diff("ünïcodé x", "ünïcodé yx").unwrap();
+        let mut s = "ünïcodé x".to_string();
         s.replace_range(r, &t);
-        assert_eq!(s, "calcolabilità yx");
+        assert_eq!(s, "ünïcodé yx");
     }
 }

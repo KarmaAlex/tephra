@@ -1,14 +1,10 @@
 #!/usr/bin/env bash
-# Types LaTeX snippets in the running app (keystrokes through the real input path) using the
-# vault's own snippets file and Latex Suite settings, copied into a temporary vault.
+# Types LaTeX snippets in the running app (keystrokes through the real input path) on a
+# temporary vault, using the built-in default snippet set.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-VAULT="${VAULT:-$HOME/dev/vault-fixture}"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
-mkdir -p "$TMP/.obsidian/plugins/obsidian-latex-suite" "$TMP/math-jax-snippets"
-cp "$VAULT/.obsidian/plugins/obsidian-latex-suite/data.json" "$TMP/.obsidian/plugins/obsidian-latex-suite/"
-cp "$VAULT/math-jax-snippets/snippets.js" "$TMP/math-jax-snippets/"
 printf 'a ' > "$TMP/note.md"
 OUT=$(TEPHRA_SCRIPT=tests/ui/snippets.script timeout 60 target/release/tephra "$TMP/note.md" | grep STATE)
 echo "$OUT"

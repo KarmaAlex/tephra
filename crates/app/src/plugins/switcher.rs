@@ -130,14 +130,14 @@ mod tests {
 
     #[test]
     fn ranks_names_then_paths_notes_first() {
-        let files: Vec<String> = ["Algo/The MST problem.md", "Algo/Grafi.md", "Images/mst.png", "MST appunti.md", "Altro/Thesis.md"].iter().map(|s| s.to_string()).collect();
-        let got: Vec<String> = matches(&files, &[], "mst", true).into_iter().map(|(f, _)| f).collect();
-        assert_eq!(got, vec!["MST appunti.md", "Images/mst.png", "Algo/The MST problem.md"]);
-        let got: Vec<String> = matches(&files, &[], "mst", false).into_iter().map(|(f, _)| f).collect();
-        assert_eq!(got, vec!["MST appunti.md", "Algo/The MST problem.md"]);
-        let got: Vec<String> = matches(&files, &[], "algo graf", false).into_iter().map(|(f, _)| f).collect();
-        assert_eq!(got, vec!["Algo/Grafi.md"], "words can match the folder");
-        let recent = vec!["Altro/Thesis.md".to_string(), "Gone.md".to_string()];
+        let files: Vec<String> = ["Algo/Sample.md", "Algo/Graphs.md", "Images/sample.png", "Sample notes.md", "Other/Planning.md"].iter().map(|s| s.to_string()).collect();
+        let got: Vec<String> = matches(&files, &[], "sam", true).into_iter().map(|(f, _)| f).collect();
+        assert_eq!(got, vec!["Algo/Sample.md", "Sample notes.md", "Images/sample.png"]);
+        let got: Vec<String> = matches(&files, &[], "sam", false).into_iter().map(|(f, _)| f).collect();
+        assert_eq!(got, vec!["Algo/Sample.md", "Sample notes.md"]);
+        let got: Vec<String> = matches(&files, &[], "algo gra", false).into_iter().map(|(f, _)| f).collect();
+        assert_eq!(got, vec!["Algo/Graphs.md"], "words can match the folder");
+        let recent = vec!["Other/Planning.md".to_string(), "Gone.md".to_string()];
         assert_eq!(matches(&files, &recent, "", false).len(), 1, "empty query: existing recent notes");
     }
 }

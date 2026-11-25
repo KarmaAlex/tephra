@@ -261,7 +261,7 @@ fn appearance_page(cx: &App) -> SettingPage {
         v_flex()
             .gap_2()
             .w_full()
-            .child(div().text_xs().text_color(muted).child("Only CSS variables apply here: rules that style elements directly (h1 { … }, table td { … }), @media and @font-face are ignored. Snippets are read from .obsidian/snippets; class-scoped variables (e.g. .NoBorder) apply to notes listing the class in cssclasses, even when the snippet is off."))
+            .child(div().text_xs().text_color(muted).child("Only CSS variables apply here: rules that style elements directly (h1 { … }, table td { … }), @media and @font-face are ignored. Snippets are read from .obsidian/snippets; class-scoped variables (e.g. .Plain) apply to notes listing the class in cssclasses, even when the snippet is off."))
             .children(reports.iter().filter(|r| r.ignored > 0).map(|r| {
                 v_flex()
                     .gap_0p5()

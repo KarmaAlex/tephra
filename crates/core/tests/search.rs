@@ -1,5 +1,4 @@
-//! Full-text search (HANDOFF §5.4): query syntax and matching. Written before the
-//! implementation (delegated leaf task, see docs/delegation-log.md).
+//! Full-text search: query syntax and matching.
 
 use tephra_core::search::{fold, parse_query, search, Expr, FileHit, SearchDoc, Term};
 
@@ -25,7 +24,7 @@ fn w(s: &str) -> Expr {
 
 #[test]
 fn fold_keeps_byte_offsets() {
-    assert_eq!(fold("Calcolabilità ÀÈ Δx"), "calcolabilità àè δx");
+    assert_eq!(fold("Caffè ÀÈ Δx"), "caffè àè δx");
     for s in ["İstanbul", "ẞ straße", "ΣΑΣ", "ǅ", "K"] {
         assert_eq!(fold(s).len(), s.len(), "{s}");
     }
@@ -36,9 +35,9 @@ fn fold_keeps_byte_offsets() {
 fn parse_words_phrases_or_not_groups() {
     assert_eq!(parse_query(""), None);
     assert_eq!(parse_query("   "), None);
-    assert_eq!(parse_query("Grafo"), Some(w("grafo")));
+    assert_eq!(parse_query("Graph"), Some(w("graph")));
     assert_eq!(parse_query("a b"), Some(Expr::And(vec![w("a"), w("b")])));
-    assert_eq!(parse_query("\"Minimum Spanning\" tree"), Some(Expr::And(vec![Expr::Term(Term::Phrase("minimum spanning".into())), w("tree")])));
+    assert_eq!(parse_query("\"divide and conquer\" sort"), Some(Expr::And(vec![Expr::Term(Term::Phrase("divide and conquer".into())), w("sort")])));
     assert_eq!(parse_query("a b OR c"), Some(Expr::Or(vec![Expr::And(vec![w("a"), w("b")]), w("c")])));
     assert_eq!(parse_query("a -b"), Some(Expr::And(vec![w("a"), Expr::Not(Box::new(w("b")))])));
     assert_eq!(parse_query("a (b OR c)"), Some(Expr::And(vec![w("a"), Expr::Or(vec![w("b"), w("c")])])));
@@ -50,12 +49,12 @@ fn parse_words_phrases_or_not_groups() {
 #[test]
 fn parse_operators_and_leniency() {
     assert_eq!(parse_query("path:Algo"), Some(Expr::Term(Term::Path("algo".into()))));
-    assert_eq!(parse_query("PATH:\"Primo semestre\""), Some(Expr::Term(Term::Path("primo semestre".into()))));
-    assert_eq!(parse_query("file:MST"), Some(Expr::Term(Term::File("mst".into()))));
-    assert_eq!(parse_query("tag:#Uni/Algo"), Some(Expr::Term(Term::Tag("uni/algo".into()))));
-    assert_eq!(parse_query("tag:esame"), Some(Expr::Term(Term::Tag("esame".into()))));
+    assert_eq!(parse_query("PATH:\"Spring term\""), Some(Expr::Term(Term::Path("spring term".into()))));
+    assert_eq!(parse_query("file:sor"), Some(Expr::Term(Term::File("sor".into()))));
+    assert_eq!(parse_query("tag:#Work/CS"), Some(Expr::Term(Term::Tag("work/cs".into()))));
+    assert_eq!(parse_query("tag:exam"), Some(Expr::Term(Term::Tag("exam".into()))));
     assert_eq!(parse_query("content:x"), Some(Expr::Term(Term::Content("x".into()))));
-    assert_eq!(parse_query("-path:Altro"), Some(Expr::Not(Box::new(Expr::Term(Term::Path("altro".into()))))));
+    assert_eq!(parse_query("-path:other"), Some(Expr::Not(Box::new(Expr::Term(Term::Path("other".into()))))));
     // unknown operator: the whole token is a word
     assert_eq!(parse_query("http://x.org"), Some(w("http://x.org")));
     // empty operator value, lone '-', stray ')' and empty groups are ignored
@@ -71,9 +70,9 @@ fn parse_operators_and_leniency() {
 
 fn vault() -> Vec<SearchDoc> {
     vec![
-        doc("Uni/Algoritmi/The MST problem.md", "# MST\nIl problema del Minimum Spanning Tree.\nUsa Borůvka.\n", &["uni/algo"]),
-        doc("Uni/Calcolabilità.md", "Macchine di Turing\nCalcolabilità e decidibilità\n", &["uni"]),
-        doc("Altro/Thesis.md", "Planning the thesis.\nA tree of ideas, tree everywhere.\n", &[]),
+        doc("Work/Algorithms/Sorting.md", "# Sorting\nThe comparison sorting problem.\nUses divide and conquer.\n", &["work/cs"]),
+        doc("Work/Theory.md", "Turing machines\nDecidability\n", &["work"]),
+        doc("Other/Planning.md", "Planning the project.\nA tree of ideas, tree everywhere.\n", &[]),
         doc("b.md", "nothing here", &["uniform"]),
     ]
 }
@@ -81,10 +80,10 @@ fn vault() -> Vec<SearchDoc> {
 #[test]
 fn matching_is_case_insensitive_and_and_by_default() {
     let v = vault();
-    assert_eq!(paths(&run("tree", &v)), vec!["Uni/Algoritmi/The MST problem.md", "Altro/Thesis.md"]);
-    assert_eq!(paths(&run("TREE minimum", &v)), vec!["Uni/Algoritmi/The MST problem.md"]);
-    assert_eq!(paths(&run("calcolabilità", &v)), vec!["Uni/Calcolabilità.md"]);
-    assert_eq!(paths(&run("borůvka", &v)), vec!["Uni/Algoritmi/The MST problem.md"]);
+    assert_eq!(paths(&run("tree", &v)), vec!["Other/Planning.md"]);
+    assert_eq!(paths(&run("TREE project", &v)), vec!["Other/Planning.md"]);
+    assert_eq!(paths(&run("decidability", &v)), vec!["Work/Theory.md"]);
+    assert_eq!(paths(&run("sorting", &v)), vec!["Work/Algorithms/Sorting.md"]);
     assert!(run("tree turing", &v).is_empty());
 }
 
@@ -97,54 +96,53 @@ fn results_sorted_by_file_name_then_path() {
 #[test]
 fn words_also_match_the_path() {
     let v = vault();
-    // "thesis" is in Thesis.md's text and path; "altro" only in its path
-    assert_eq!(paths(&run("altro", &v)), vec!["Altro/Thesis.md"]);
-    let hits = run("altro", &v);
+    // "planning" is in Planning.md's text and path; "other" only in its path
+    assert_eq!(paths(&run("other", &v)), vec!["Other/Planning.md"]);
+    let hits = run("other", &v);
     assert!(hits[0].lines.is_empty(), "a path-only match lists no lines");
 }
 
 #[test]
 fn phrases_or_not_and_operators() {
     let v = vault();
-    assert_eq!(paths(&run("\"spanning tree\"", &v)), vec!["Uni/Algoritmi/The MST problem.md"]);
-    assert!(run("\"tree spanning\"", &v).is_empty());
-    assert_eq!(paths(&run("turing OR borůvka", &v)), vec!["Uni/Calcolabilità.md", "Uni/Algoritmi/The MST problem.md"]);
-    assert_eq!(paths(&run("tree -thesis", &v)), vec!["Uni/Algoritmi/The MST problem.md"]);
-    assert_eq!(paths(&run("tree path:altro", &v)), vec!["Altro/Thesis.md"]);
-    assert_eq!(paths(&run("file:mst", &v)), vec!["Uni/Algoritmi/The MST problem.md"]);
-    assert!(run("file:algoritmi", &v).is_empty(), "file: is the file name only");
-    assert_eq!(paths(&run("content:altro", &v)), Vec::<&str>::new());
-    assert_eq!(paths(&run("-path:uni", &v)), vec!["b.md", "Altro/Thesis.md"]);
+    assert_eq!(paths(&run("\"divide and conquer\"", &v)), vec!["Work/Algorithms/Sorting.md"]);
+    assert!(run("\"conquer divide\"", &v).is_empty());
+    assert_eq!(paths(&run("turing OR sorting", &v)), vec!["Work/Algorithms/Sorting.md", "Work/Theory.md"]);
+    assert_eq!(paths(&run("tree -sorting", &v)), vec!["Other/Planning.md"]);
+    assert_eq!(paths(&run("tree path:other", &v)), vec!["Other/Planning.md"]);
+    assert_eq!(paths(&run("file:sor", &v)), vec!["Work/Algorithms/Sorting.md"]);
+    assert!(run("file:algorithms", &v).is_empty(), "file: is the file name only");
+    assert_eq!(paths(&run("content:other", &v)), Vec::<&str>::new());
+    assert_eq!(paths(&run("-path:work", &v)), vec!["b.md", "Other/Planning.md"]);
 }
 
 #[test]
 fn tags_match_exactly_or_as_parent() {
     let v = vault();
-    assert_eq!(paths(&run("tag:#uni", &v)), vec!["Uni/Calcolabilità.md", "Uni/Algoritmi/The MST problem.md"]);
-    assert_eq!(paths(&run("tag:uni/algo", &v)), vec!["Uni/Algoritmi/The MST problem.md"]);
-    assert!(run("tag:algo", &v).is_empty(), "only whole leading segments match");
+    assert_eq!(paths(&run("tag:#work", &v)), vec!["Work/Algorithms/Sorting.md", "Work/Theory.md"]);
+    assert_eq!(paths(&run("tag:work/cs", &v)), vec!["Work/Algorithms/Sorting.md"]);
+    assert!(run("tag:cs", &v).is_empty(), "only whole leading segments match");
     assert_eq!(paths(&run("tag:UNIFORM", &v)), vec!["b.md"]);
 }
 
 #[test]
 fn line_hits_with_merged_ranges() {
-    let text = "# MST\nIl problema del Minimum Spanning Tree.\nUsa Borůvka.\ntree, TREE e treetop\n";
+    let text = "# Sorting\nA tree of cases, TREE and treetop.\nUses divide and conquer.\n";
     let v = vec![doc("n.md", text, &[])];
-    let hits = run("tree OR borůvka", &v);
+    let hits = run("tree OR conquer", &v);
     assert_eq!(hits.len(), 1);
     let lines: Vec<(usize, usize, Vec<&str>)> = hits[0].lines.iter().map(|l| (l.line, l.start, l.ranges.iter().map(|r| &text[r.clone()]).collect())).collect();
     assert_eq!(
         lines,
         vec![
-            (1, 6, vec!["Tree"]),
-            (2, 45, vec!["Borůvka"]),
-            (3, 59, vec!["tree", "TREE", "tree"]),
+            (1, 10, vec!["tree", "TREE", "tree"]),
+            (2, 45, vec!["conquer"]),
         ]
     );
     // overlapping matches of different terms merge into one range
-    let v = vec![doc("n.md", "spanning tree", &[])];
-    let hits = run("\"spanning tree\" tree", &v);
-    assert_eq!(hits[0].lines[0].ranges, vec![0..13]);
+    let v = vec![doc("n.md", "divide and conquer", &[])];
+    let hits = run("\"divide and conquer\" conquer", &v);
+    assert_eq!(hits[0].lines[0].ranges, vec![0..18]);
     // negated terms are not highlighted; a file matched only through tag/path lists no lines
     let v = vec![doc("n.md", "alpha beta\ngamma", &["t"])];
     let hits = run("alpha -gamma", &v);
@@ -159,21 +157,21 @@ fn line_hits_with_merged_ranges() {
 
 #[test]
 fn crlf_lines_and_last_line_without_newline() {
-    let text = "uno\r\ndue tre\r\ntre";
+    let text = "one\r\ntwo red\r\nred";
     let v = vec![doc("n.md", text, &[])];
-    let hits = run("tre", &v);
+    let hits = run("red", &v);
     let lines: Vec<(usize, usize)> = hits[0].lines.iter().map(|l| (l.line, l.start)).collect();
     assert_eq!(lines, vec![(1, 5), (2, 14)]);
-    assert_eq!(&text[hits[0].lines[0].ranges[0].clone()], "tre");
+    assert_eq!(&text[hits[0].lines[0].ranges[0].clone()], "red");
 }
 
 #[test]
 fn large_vault_is_fast() {
-    // ~1.2 MB like the fixture; one query must stay far below the 100 ms budget
-    let para = "Sia G=(V,E) un grafo connesso; il minimum spanning tree si trova con Kruskal o Borůvka. ";
+    // ~1.2 MB of text; one query must stay far below the 100 ms budget
+    let para = "Pack my box with five dozen liquor jugs, and a few more words to pad the line. ";
     let docs: Vec<SearchDoc> = (0..240).map(|i| doc(&format!("d{i}/n{i}.md"), &para.repeat(57), &[])).collect();
     let refs: Vec<&SearchDoc> = docs.iter().collect();
-    let q = parse_query("grafo kruskal -dijkstra").unwrap();
+    let q = parse_query("box liquor -zebra").unwrap();
     let t = std::time::Instant::now();
     let hits = search(&q, &refs);
     let ms = t.elapsed().as_secs_f64() * 1000.0;

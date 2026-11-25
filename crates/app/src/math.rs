@@ -1,6 +1,6 @@
 //! Math typesetting: RaTeX (native KaTeX port) rasterised at device scale, cached.
 //! The few formulas RaTeX rejects fall back to MathJax running in an embedded QuickJS,
-//! loaded only the first time it is needed (4 of 10,914 formulas in the corpus).
+//! loaded only the first time it is needed.
 
 use std::collections::HashMap;
 use std::sync::{mpsc, Arc, Mutex, OnceLock};

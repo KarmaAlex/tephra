@@ -338,28 +338,28 @@ mod tests {
     #[test]
     fn toggle_group_rename_and_titles() {
         let mut s = Store::memory(json!({ "items": [
-            { "type": "group", "ctime": 1, "title": "Esami", "items": [{ "type": "file", "ctime": 2, "path": "Algo/MST.md" }] },
-            { "type": "search", "ctime": 3, "query": "tag:#uni" },
-            { "type": "heading", "ctime": 4, "path": "Algo/MST.md", "subpath": "#Kruskal", "extra": true },
+            { "type": "group", "ctime": 1, "title": "Group", "items": [{ "type": "file", "ctime": 2, "path": "Algo/Graphs.md" }] },
+            { "type": "search", "ctime": 3, "query": "tag:#work" },
+            { "type": "heading", "ctime": 4, "path": "Algo/Graphs.md", "subpath": "#Intro", "extra": true },
             { "type": "folder", "ctime": 5, "path": "Algo" },
         ] }));
-        assert!(s.has_file("Algo/MST.md"), "found inside a group");
+        assert!(s.has_file("Algo/Graphs.md"), "found inside a group");
         let titles: Vec<String> = flatten(&s.data).iter().map(|r| format!("{}{}", "  ".repeat(r.0), title(&r.2))).collect();
-        assert_eq!(titles, vec!["Esami", "  MST", "tag:#uni", "MST › Kruskal", "Algo"]);
-        assert!(s.renamed("Algo/MST.md", "Grafi/MST.md"));
-        assert_eq!(s.data["items"][0]["items"][0]["path"], "Grafi/MST.md");
-        assert_eq!(s.data["items"][2]["path"], "Grafi/MST.md");
+        assert_eq!(titles, vec!["Group", "  Graphs", "tag:#work", "Graphs › Intro", "Algo"]);
+        assert!(s.renamed("Algo/Graphs.md", "Graphs/Graphs.md"));
+        assert_eq!(s.data["items"][0]["items"][0]["path"], "Graphs/Graphs.md");
+        assert_eq!(s.data["items"][2]["path"], "Graphs/Graphs.md");
         assert_eq!(s.data["items"][2]["extra"], true, "unknown fields kept");
         assert_eq!(s.data["items"][3]["path"], "Algo", "a file leaving a folder doesn't move the folder");
-        assert!(s.renamed("Algo", "Algoritmi"));
-        assert_eq!(s.data["items"][3]["path"], "Algoritmi", "folder moved");
+        assert!(s.renamed("Algo", "Courses"));
+        assert_eq!(s.data["items"][3]["path"], "Courses", "folder moved");
         assert!(s.toggle_path("B.md", false));
         assert!(s.has_file("B.md"));
         assert!(!s.toggle_path("B.md", false));
         assert!(!s.has_file("B.md"));
         assert!(!s.renamed("Alg", "X"), "a prefix that isn't a folder boundary");
         s.remove(&[0, 0]);
-        assert!(!s.has_file("Grafi/MST.md"));
+        assert!(!s.has_file("Graphs/Graphs.md"));
         assert_eq!(s.data["items"][0]["items"].as_array().unwrap().len(), 0);
     }
 }

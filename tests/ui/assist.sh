@@ -6,9 +6,9 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
-mkdir -p "$TMP/Algoritmi"
-printf '# Grafi\n## Cammini minimi\n' > "$TMP/Algoritmi/Grafi.md"
-printf 'x\n' > "$TMP/Algoritmi/Alberi.md"
+mkdir -p "$TMP/Courses"
+printf '# Graphs\n## Basics\n' > "$TMP/Courses/Graphs.md"
+printf 'x\n' > "$TMP/Courses/Trees.md"
 : > "$TMP/n.md"
 OUT=$(TEPHRA_SCRIPT=tests/ui/assist.script timeout 60 target/release/tephra "$TMP/n.md" | grep -E "STATE|SUGGEST")
 echo "$OUT"
@@ -17,11 +17,11 @@ expect_re() { grep -qE -- "$1" <<<"$OUT" || { echo "ui-assist: FAILED, expected 
 expect 'text="f(x|)"'
 expect 'text="f(x)|"'
 expect 'text="f(x) |"'
-expect 'SUGGEST sel=0 ["Grafi", '
-expect 'text="[[gra|]]"'
-expect 'text="[[Grafi]]|"'
-expect 'SUGGEST sel=0 ["Cammini minimi"]'
-expect 'text="[[Grafi]] [[Grafi#Cammini minimi]]|"'
+expect 'SUGGEST sel=0 ["Graphs"]'
+expect 'text="[[grap|]]"'
+expect 'text="[[Graphs]]|"'
+expect 'SUGGEST sel=0 ["Basics"]'
+expect 'text="[[Graphs]] [[Graphs#Basics]]|"'
 expect 'SUGGEST none'
 expect_re 'line=3 .* text="```\|"$'
 expect_re 'line=4 .* text="```\|"$' # the closing fence, added on typing the opener

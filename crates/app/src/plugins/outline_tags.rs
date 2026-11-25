@@ -1,8 +1,8 @@
 //! Outline and Tags (Obsidian core plugins), right sidebar views.
 //! - Outline: the active note's headings as you type; the section holding the caret is marked;
 //!   clicking a heading moves the caret there.
-//! - Tags: every tag in the vault with its count, nested tags (`uni/algo`) under their parent;
-//!   clicking one searches for it (`tag:#uni/algo`).
+//! - Tags: every tag in the vault with its count, nested tags (`work/cs`) under their parent;
+//!   clicking one searches for it (`tag:#work/cs`).
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -241,11 +241,11 @@ mod tests {
 
     #[test]
     fn nested_tag_tree() {
-        let tags = vec![("esame".to_string(), 1), ("uni".to_string(), 2), ("uni/algo".to_string(), 3), ("uni/reti".to_string(), 1)];
+        let tags = vec![("exam".to_string(), 1), ("work".to_string(), 2), ("work/cs".to_string(), 3), ("work/net".to_string(), 1)];
         let rows = tag_rows(&tags, false);
         let rows: Vec<(usize, &str, usize)> = rows.iter().map(|r| (r.0, r.2.as_str(), r.3)).collect();
-        assert_eq!(rows, vec![(0, "esame", 1), (0, "uni", 6), (1, "algo", 3), (1, "reti", 1)]);
+        assert_eq!(rows, vec![(0, "exam", 1), (0, "work", 6), (1, "cs", 3), (1, "net", 1)]);
         let by_count: Vec<String> = tag_rows(&tags, true).into_iter().map(|r| r.1).collect();
-        assert_eq!(by_count, vec!["uni", "uni/algo", "uni/reti", "esame"]);
+        assert_eq!(by_count, vec!["work", "work/cs", "work/net", "exam"]);
     }
 }

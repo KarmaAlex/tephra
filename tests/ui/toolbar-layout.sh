@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# M8: the editing toolbar's layout edited in the app, and its colour pickers.
+# The editing toolbar's layout edited in the app, and its colour pickers.
 # - Settings opens at the toolbar's page from the command and from the bar's right-click menu.
 # - Dragging rows reorders them and moves them into a menu; a command dragged in from the
 #   list lands where it is dropped; + adds at the end; × removes. The bar follows at once.

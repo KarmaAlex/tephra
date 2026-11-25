@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# M8: moving notes, attachments and folders by dragging them in the file list. Links are
+# Moving notes, attachments and folders by dragging them in the file list. Links are
 # updated as on rename, an open note follows its file, and impossible moves (a folder into a
 # folder inside it) do nothing.
 set -euo pipefail

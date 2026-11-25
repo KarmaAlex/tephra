@@ -312,20 +312,20 @@ mod tests {
     fn note_heading_and_block_suggestions() {
         let root = std::env::temp_dir().join(format!("ol-suggest-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join("Algoritmi")).unwrap();
+        std::fs::create_dir_all(root.join("Courses")).unwrap();
         std::fs::create_dir_all(root.join("Images")).unwrap();
-        std::fs::write(root.join("Algoritmi/Grafi.md"), "# Grafi\n## Cammini minimi\ntesto ^blk1\n").unwrap();
-        std::fs::write(root.join("Algoritmi/Alberi di copertura.md"), "x").unwrap();
+        std::fs::write(root.join("Courses/Graphs.md"), "# Graphs\n## Basics\ntext ^blk1\n").unwrap();
+        std::fs::write(root.join("Courses/Trees.md"), "x").unwrap();
         std::fs::write(root.join("Note.md"), "x").unwrap();
-        std::fs::write(root.join("Images/grafo.png"), "x").unwrap();
+        std::fs::write(root.join("Images/graph.png"), "x").unwrap();
         let idx = VaultIndex::build(&root);
         let labels = |q: &str| suggestions(&idx, "Note.md", q, 10).into_iter().map(|s| s.label).collect::<Vec<_>>();
-        assert_eq!(labels("graf"), vec!["Grafi", "grafo.png"], "notes before attachments");
-        assert_eq!(labels("cop"), vec!["Alberi di copertura"], "start of a word");
-        assert_eq!(labels("alg gr")[0], "Grafi", "fuzzy over the path");
-        assert_eq!(suggestions(&idx, "Note.md", "Grafi", 1)[0].insert, "Grafi", "shortest link");
-        assert_eq!(labels("Grafi#cam"), vec!["Cammini minimi"]);
-        assert_eq!(suggestions(&idx, "Note.md", "Grafi#^", 5)[0].insert, "Grafi#^blk1");
+        assert_eq!(labels("grap"), vec!["Graphs", "graph.png"], "notes before attachments");
+        assert_eq!(labels("tre"), vec!["Trees"], "start of a word");
+        assert_eq!(labels("cou gra")[0], "Graphs", "fuzzy over the path");
+        assert_eq!(suggestions(&idx, "Note.md", "Graphs", 1)[0].insert, "Graphs", "shortest link");
+        assert_eq!(labels("Graphs#bas"), vec!["Basics"]);
+        assert_eq!(suggestions(&idx, "Note.md", "Graphs#^", 5)[0].insert, "Graphs#^blk1");
         let _ = std::fs::remove_dir_all(&root);
     }
 }

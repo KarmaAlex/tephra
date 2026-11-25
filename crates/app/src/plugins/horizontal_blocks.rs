@@ -1116,7 +1116,7 @@ mod tests {
         assert!(t.contains("columns: (240 * u_, 2.0 * u_, 1fr, 2.0 * u_, 1fr)"), "{t}");
         assert!(t.contains("<a>") && t.contains("<c>") && t.contains("fill: rgb(255, 0, 0)"), "{t}");
         assert!(t.contains("(left: 2.0 * u_ + c_.accent)"), "solid divider in the accent colour: {t}");
-        // the spike's Typst compiler checks this output (see docs/milestones/M2-feedback.md)
+        // the Typst output is compile-checked in the tests below
         if let Ok(dir) = std::env::var("TEPHRA_TYPST_OUT") {
             let body = Columns(Rc::new(shared(Map::new()))).typst("=== Left\nSome *bold* text.\n---\n=== Right\n- a list", &|m: &str| m.to_string());
             let pre = "#let u_ = 0.75pt\n#let c_ = (text: rgb(34, 34, 34), accent: rgb(138, 92, 245))\n";

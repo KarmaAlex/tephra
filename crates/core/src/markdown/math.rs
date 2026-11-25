@@ -1,6 +1,6 @@
-//! `$…$` / `$$…$$` detection with Obsidian's rules. Rust port of
-//! `tools/corpus/mathRanges.ts`, whose rules were validated against the bench task t4
-//! reference tests and the full vault corpus.
+//! `$…$` / `$$…$$` detection with Obsidian's rules: code blocks/spans are skipped,
+//! `\$` escapes, callout `> ` prefixes are stripped from display math, `\|` is
+//! unescaped in table cells.
 
 use std::ops::Range;
 

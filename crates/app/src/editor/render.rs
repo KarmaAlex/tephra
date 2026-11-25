@@ -1,5 +1,5 @@
 //! Drawing projected nodes that gpui-kit does not draw itself: callouts (core Obsidian look, or
-//! a plugin's style per D7), plugin-rendered code blocks, and noted blocks.
+//! a plugin's callout style), plugin-rendered code blocks, and noted blocks.
 
 use std::collections::HashMap;
 
@@ -207,7 +207,7 @@ pub struct Host<'a> {
 /// Renders a projected node; gpui-kit renders plain blocks.
 pub fn render_node(node: &ProjNode, ix: usize, host: &Host, rcx: &RenderContext, window: &mut Window, cx: &mut App) -> AnyElement {
     match node {
-        // drawn here, not by gpui-kit, so table border settings (`.NoBorder`) leave rules alone
+        // drawn here, not by gpui-kit, so table border settings (`.Plain`) leave rules alone
         ProjNode::Block(BlockNode::HorizontalRule { .. }) => {
             let (color, w) = crate::theme::hr(cx, host.classes);
             div().w_full().py_3().child(div().w_full().h(px(w.max(0.5))).bg(color)).into_any_element()

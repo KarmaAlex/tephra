@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Themes and snippets: the base colour scheme from .tephra/app.json (light, then dark);
-# a theme's variables apply; a note-specific snippet (.NoBorder) applies to notes listing the
+# a theme's variables apply; a note-specific snippet (.Plain) applies to notes listing the
 # class in cssclasses even though the snippet is not enabled; rules that aren't variables are
 # counted as ignored. Themes are installed once for every vault: the app reads them from
 # `themes/` in its global config folder ($TEPHRA_CONFIG_DIR here), never from a vault's
@@ -11,13 +11,13 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 export TEPHRA_CONFIG_DIR="$TMP/cfg"
 mkdir -p "$TMP/.obsidian/snippets" "$TMP/.obsidian/themes/Hue" "$TMP/.tephra" "$TEPHRA_CONFIG_DIR/themes/Hue"
-printf '.NoBorder {\n--table-border-width: 0px;\n--table-white-space: normal;\n}\n' > "$TMP/.obsidian/snippets/table_border.css"
+printf '.Plain {\n--table-border-width: 0px;\n--table-white-space: normal;\n}\n' > "$TMP/.obsidian/snippets/plain.css"
 printf '.theme-dark { --accent-h: 120; }\n.markdown-preview-view h1 { text-transform: uppercase; }\n' > "$TEPHRA_CONFIG_DIR/themes/Hue/theme.css"
 # the vault's own copy (hue 200) must be ignored: installed themes are per user now
 printf '.theme-dark { --accent-h: 200; }\n' > "$TMP/.obsidian/themes/Hue/theme.css"
 echo '{"cssTheme": "Hue"}' > "$TMP/.obsidian/appearance.json"
 printf '| a | b |\n|---|---|\n| 1 | 2 |\n' > "$TMP/T.md"
-printf -- '---\ncssclasses: NoBorder\n---\n| a | b |\n|---|---|\n| 1 | 2 |\n' > "$TMP/N.md"
+printf -- '---\ncssclasses: Plain\n---\n| a | b |\n|---|---|\n| 1 | 2 |\n' > "$TMP/N.md"
 cat > "$TMP/s.script" <<'SCRIPT'
 wait 800
 theme
@@ -31,8 +31,8 @@ echo '{"baseTheme": "light"}' > "$TMP/.tephra/app.json"
 OUT=$(run); echo "$OUT"
 fail() { echo "ui-theme: $1"; exit 1; }
 grep -qF 'THEME dark=false bg=#ffffff classes=[] table-border=Some(1.0) accent=Some("hsl(258, 88%, 66%)")' <<<"$OUT" || fail "light, plain note"
-grep -qF 'THEME dark=false bg=#ffffff classes=["NoBorder"] table-border=Some(0.0)' <<<"$OUT" || fail "NoBorder note"
-grep -qF 'THEME-FILE table_border theme=false on=false global=0 class=2 ["NoBorder"] ignored=0' <<<"$OUT" || fail "snippet report"
+grep -qF 'THEME dark=false bg=#ffffff classes=["Plain"] table-border=Some(0.0)' <<<"$OUT" || fail "Plain note"
+grep -qF 'THEME-FILE plain theme=false on=false global=0 class=2 ["Plain"] ignored=0' <<<"$OUT" || fail "snippet report"
 grep -qF 'THEME-FILE Hue theme=true on=true global=1 class=0 [] ignored=1' <<<"$OUT" || fail "theme report"
 echo '{"baseTheme": "dark"}' > "$TMP/.tephra/app.json"
 OUT=$(run); echo "$OUT"

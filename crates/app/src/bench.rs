@@ -87,11 +87,11 @@ pub fn start(editor: Entity<Editor>, _window: &mut Window, cx: &mut App) {
         });
         cx.background_executor().timer(Duration::from_millis(200)).await;
         let (math_lat, math_work) = type_text(&weak, cx, "+\\frac{a}{b}^{2}").await;
-        // 3. search across the vault (HANDOFF §6: < 100 ms) and a full re-index (< 2 s)
+        // 3. search across the vault (< 100 ms budget, see AGENTS.md) and a full re-index (< 2 s)
         let (search_ms, index_ms) = weak
             .update(cx, |e, _| {
                 let v = e.vault.borrow();
-                let queries = ["kruskal", "grafo", "a", "\"minimum spanning\"", "albero -grafo", "path:Secondo matrice", "tag:#corso", "dimostrazione OR teorema", "file:mst"];
+                let queries = ["graph", "tree", "a", "\"divide and conquer\"", "note -draft", "path:examples", "tag:#work", "proof OR lemma", "file:readme"];
                 let mut ms = Vec::new();
                 for _ in 0..5 {
                     for q in queries {

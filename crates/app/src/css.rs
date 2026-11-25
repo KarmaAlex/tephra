@@ -391,11 +391,11 @@ mod tests {
 
     #[test]
     fn stylesheets() {
-        let css = "/* hi */ @import url(x.css);\n.NoBorder {\n--table-border-width: 0px;\n--x: a;b; }\n@media (max-width: 10px) { body { --y: 1 } }\n.a, .b > c { color: red; background: url('a;b') }";
+        let css = "/* hi */ @import url(x.css);\n.Plain {\n--table-border-width: 0px;\n--x: a;b; }\n@media (max-width: 10px) { body { --y: 1 } }\n.a, .b > c { color: red; background: url('a;b') }";
         let s = parse_sheet(css);
         assert_eq!(s.at_rules, ["@import url(x.css)", "@media (max-width: 10px)"]);
         assert_eq!(s.rules.len(), 2);
-        assert_eq!(s.rules[0].selectors, [".NoBorder"]);
+        assert_eq!(s.rules[0].selectors, [".Plain"]);
         assert_eq!(s.rules[0].decls[0], ("--table-border-width".to_string(), "0px".to_string()));
         assert_eq!(s.rules[1].selectors, [".a", ".b > c"]);
         assert_eq!(s.rules[1].decls[1].1, "url('a;b')");

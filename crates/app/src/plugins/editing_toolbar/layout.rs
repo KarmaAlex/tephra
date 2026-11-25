@@ -1,4 +1,4 @@
-//! The toolbar's layout as you edit it in the app (M8): buttons, submenus and dividers, in
+//! The toolbar's layout as you edit it in the app: buttons, submenus and dividers, in
 //! the JSON shape of the Editing Toolbar plugin's `menuCommands`, so a layout saved here reads
 //! like one saved by the plugin. Fields this app doesn't use (the plugin's `icon`) are kept.
 //! Commands this app doesn't have stay in the layout (shown as unavailable) unless you remove

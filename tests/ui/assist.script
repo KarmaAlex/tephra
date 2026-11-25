@@ -9,20 +9,20 @@ type  (
 key backspace
 state
 key enter
-type [[gra
+type [[grap
 wait 200
 suggest
 state
 key enter
 wait 100
 state
-type  [[Grafi#cam
+type  [[Graphs#bas
 wait 200
 suggest
 key tab
 wait 100
 state
-type  [[al
+type  [[tre
 wait 200
 key escape
 wait 100

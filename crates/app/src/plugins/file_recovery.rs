@@ -1,7 +1,7 @@
 //! File recovery (Obsidian core plugin): local snapshots of notes, to get back text lost to a
 //! bad edit, a sync conflict or a deleted note.
 //!
-//! Snapshots live outside the vault, on this machine only (your choice, M6): not synced,
+//! Snapshots live outside the vault, on this machine only: not synced,
 //! like Obsidian's own (it keeps them in its local database). One folder per vault:
 //!   $XDG_DATA_HOME/tephra/recovery/<vault name>-<hash of its path>/<hash of note path>/
 //!     path          the note's vault path

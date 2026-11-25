@@ -3,7 +3,7 @@
 pub mod compile;
 pub mod typst;
 
-/// Every note of the fixture converts and compiles (HANDOFF §7 style corpus check).
+/// Every note of the fixture converts and compiles (corpus-style check).
 /// `cargo test --release -p tephra fixture_notes_export -- --ignored` (a few minutes).
 #[cfg(test)]
 mod fixture {
@@ -16,7 +16,10 @@ mod fixture {
     #[test]
     #[ignore]
     fn fixture_notes_export() {
-        let root = std::path::Path::new(&std::env::var("HOME").unwrap()).join("dev/vault-fixture");
+        let root = std::env::var_os("VAULT")
+            .map(std::path::PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| std::path::Path::new(&h).join("dev/vault-fixture")))
+            .unwrap_or_default();
         if !root.is_dir() {
             return eprintln!("no fixture: skipped");
         }

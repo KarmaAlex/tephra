@@ -1,5 +1,5 @@
 //! Academic Notes (replaces the community plugin of the same name; reimplemented from its
-//! observed behaviour, none of its code): callout styling for its environments (D7) with the
+//! observed behaviour, none of its code): callout styling for its environments with the
 //! vault's palettes, numbering per section, references (`[[#^lemma1]]` shows "lem 1.1"),
 //! algorithm pseudocode with line numbers, the end-of-proof mark, numbered figures, tables and
 //! referenced equations, and the ```` ```academic-toc ```` contents block.
@@ -529,51 +529,3 @@ mod tests {
     }
 }
 
-/// Pseudocode keywords and line counts against Academic Notes' rendering of the fixture
-/// (`reports/m3-reference.jsonl`; skipped when absent).
-#[cfg(test)]
-mod algorithm_reference {
-    use super::algorithm::{parse, Part};
-    use tephra_core::markdown::{callouts::flatten, parse_blocks, parse_quote, BlockKind};
-
-    #[test]
-    fn pseudocode_matches_academic_notes() {
-        let report = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../reports/m3-reference.jsonl");
-        let Ok(lines) = std::fs::read_to_string(&report) else { return eprintln!("no reference report: skipped") };
-        let fixture = std::path::Path::new(&std::env::var("HOME").unwrap()).join("dev/vault-fixture");
-        let (mut algs, mut wrong) = (0, Vec::new());
-        for l in lines.lines() {
-            let Ok(d) = serde_json::from_str::<serde_json::Value>(l) else { continue };
-            let note = d["note"].as_str().unwrap_or_default();
-            let Ok(text) = std::fs::read_to_string(fixture.join(note)) else { continue };
-            let strs = |k: &str| -> Vec<String> {
-                d["sections"].as_array().into_iter().flatten().flat_map(|s| s["an"][k].as_array().cloned().unwrap_or_default()).filter_map(|v| v.as_str().map(|s| s.trim().to_string())).collect()
-            };
-            let (their_kw, their_nums) = (strs("an-algorithm-keyword"), strs("an-algorithm-line-number").len());
-            let (mut our_kw, mut our_nums) = (Vec::new(), 0);
-            for b in parse_blocks(&text).into_iter().filter(|b| b.kind == BlockKind::Quote) {
-                for c in flatten(&parse_quote(&text, b.range.clone())) {
-                    if c.kind != "algorithm" {
-                        continue;
-                    }
-                    algs += 1;
-                    let body: Vec<String> = text[c.header.end..c.range.end].lines().skip(1).map(|l| l.trim_start_matches(|ch: char| ch == '>' || ch == ' ').to_string()).collect();
-                    let src: Vec<&str> = body.iter().map(String::as_str).filter(|l| !(l.trim().starts_with('^') && !l.trim().contains(' '))).collect();
-                    let parsed = parse(&src);
-                    if super::algorithm_numbered(&c.meta, true) {
-                        our_nums += parsed.len();
-                    }
-                    our_kw.extend(parsed.iter().flat_map(|l| l.parts.iter().filter_map(|p| if let Part::Keyword(k) = p { Some(k.clone()) } else { None })));
-                }
-            }
-            if our_kw != their_kw {
-                wrong.push(format!("{note}: keywords {our_kw:?} vs {their_kw:?}"));
-            }
-            if our_nums != their_nums {
-                wrong.push(format!("{note}: {our_nums} numbered lines vs {their_nums}"));
-            }
-        }
-        eprintln!("{algs} algorithms compared");
-        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
-    }
-}

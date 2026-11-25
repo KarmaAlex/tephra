@@ -1,20 +1,44 @@
 #!/usr/bin/env bash
-# `make perf`: measure idle memory (all processes), cold start, typing and scroll for the
-# candidates, plus the Obsidian baseline (OBSIDIAN=1). Results -> reports/perf-<timestamp>.jsonl
-# (gitignored); docs/perf.md holds the summarised numbers.
+# `make perf`: measure idle memory (all processes), cold start, typing, search and indexing.
+# Results -> reports/perf-<timestamp>.jsonl (gitignored); AGENTS.md holds the summarised numbers.
+#
+# VAULT: vault to measure on. When empty, a synthetic benchmark vault (one math-heavy note)
+# is generated in the scratch dir. NOTE: note inside the vault to open (default: the
+# benchmark note). OBSIDIAN=1 also measures Obsidian on the same vault (isolated profile).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-VAULT="${VAULT:-$HOME/dev/vault-fixture}"
-NOTE="${NOTE:-AICoNDA primo anno/Primo semestre/Distributed computing/The MST problem.md}"
 RUNS="${RUNS:-3}"
 OUT="reports/perf-$(date +%Y%m%d-%H%M%S).jsonl"
 SCRATCH="${SCRATCH:-${TMPDIR:-/tmp}/tephra-perf}"
 mkdir -p reports "$SCRATCH"
-# keep the fixture from becoming the last opened vault in your real config (src/vaults.rs)
+# scripted/benchmark runs must not replace the real last-opened vault (src/vaults.rs)
 export TEPHRA_CONFIG_DIR="$SCRATCH/config"
+
+if [[ -z "${VAULT:-}" ]]; then
+  # synthetic benchmark vault: one math-heavy note (a few hundred formulas)
+  VAULT="$SCRATCH/vault"
+  NOTE="bench note.md"
+  mkdir -p "$VAULT/.obsidian" "$VAULT/Images"
+  {
+    echo "# Benchmark note"
+    echo
+    for i in $(seq 1 200); do
+      echo "Inline formula \$x_{$i} + \\frac{a_{$i}}{b_{$i}} = \\sqrt{c_{$i}}\$ and a display block:"
+      echo
+      echo '$$'
+      echo "\\begin{pmatrix} $i & 0 \\\\ 0 & $i \\end{pmatrix} + \\sum_{k=1}^{n} k^2"
+      echo '$$'
+      echo
+    done
+    echo "![[img.png]]"
+  } > "$VAULT/$NOTE"
+  printf 'PNG' > "$VAULT/Images/img.png"
+else
+  NOTE="${NOTE:-bench note.md}"
+fi
 tag() { python3 -c "import json,sys; d=json.load(sys.stdin); d.pop('log_tail',None); d['label']=sys.argv[1]; print(json.dumps(d))" "$1"; }
 
-# the app itself (M1a+): idle memory, start-up, and the typing benchmark (never saves)
+# the app itself: idle memory, start-up, and the typing benchmark (never saves)
 if [[ -x target/release/tephra ]]; then
   for i in $(seq "$RUNS"); do
     python3 tools/perf/proctree.py --settle 6 -- target/release/tephra "$VAULT/$NOTE" | tag tephra-idle >> "$OUT"

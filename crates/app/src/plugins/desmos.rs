@@ -1,4 +1,4 @@
-//! Desmos: not built yet (HANDOFF §5.3 "don't build yet"). The slot exists so the toggle and the
+//! Desmos: not built yet; the slot exists so the toggle and the
 //! `desmos-graph` code-block hook are in place; blocks show as code with a note.
 
 use serde_json::{Map, Value};

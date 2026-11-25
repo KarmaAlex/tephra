@@ -1,5 +1,5 @@
-//! Runs against the private vault fixture (HANDOFF §2.2), never the real vault.
-//! Skips (passes) when the fixture is absent. Path: $VAULT or ~/dev/vault-fixture.
+//! Runs against a local vault fixture, never a real vault.
+//! Skips (passes) when no fixture is present. Path: $VAULT or ~/dev/vault-fixture.
 //! Reports only counts and paths, never note content.
 
 use std::path::{Path, PathBuf};
@@ -49,7 +49,7 @@ fn roundtrip_blocks_and_math_over_fixture() {
     let tmp = std::env::temp_dir().join(format!("tephra-fixture-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).unwrap();
     let ns = notes(&root);
-    assert!(ns.len() >= 200, "expected the full fixture, found {} notes", ns.len());
+    assert!(ns.len() >= 100, "expected a sizeable fixture, found {} notes", ns.len());
     let (mut total_math, mut mismatches) = (0usize, Vec::new());
     for (i, path) in ns.iter().enumerate() {
         let rel = path.strip_prefix(&root).unwrap().display().to_string();
@@ -122,7 +122,7 @@ fn embeds<'a>(v: &'a [Inline], out: &mut Vec<&'a Inline>) {
     }
 }
 
-/// HANDOFF §7: every `![[…]]` in the fixture resolves.
+/// Every `![[…]]` in the fixture resolves.
 #[test]
 fn every_embed_resolves() {
     let Some(root) = fixture() else { return };
@@ -149,11 +149,11 @@ fn every_embed_resolves() {
         }
     }
     eprintln!("{total} embeds, {} unresolved", missing.len());
-    assert!(total >= 1000, "expected the fixture's ~1,283 embeds, found {total}");
+    assert!(total >= 100, "expected a sizeable fixture, found {total} embeds");
     assert!(missing.is_empty(), "unresolved embeds:\n{}", missing.join("\n"));
 }
 
-/// Vault index: builds within the §6 budget, and rename plans keep every link pointing at the
+/// Vault index: builds within the performance budget (see AGENTS.md), and rename plans keep every link pointing at the
 /// same (moved) file. Runs in memory; the fixture is not modified.
 #[test]
 fn index_build_and_rename_plans() {
@@ -175,7 +175,7 @@ fn index_build_and_rename_plans() {
             if name.starts_with('.') { 0 } else if p.is_dir() { md_files(&p) } else { usize::from(name.ends_with(".md")) }
         }).sum()
     }
-    assert!(notes.len() >= 233);
+    assert!(notes.len() >= 100);
     assert_eq!(notes.len(), md_files(&root));
     let links: usize = notes.iter().map(|n| n.links.len()).sum();
     let unresolved: Vec<String> = notes.iter().flat_map(|n| n.links.iter().filter(|l| l.resolved.is_none()).map(move |l| format!("{}: line {}", n.path, l.line + 1))).collect();
@@ -196,7 +196,7 @@ fn index_build_and_rename_plans() {
         .map(|(p, l)| format!("{p}: line {}", l.line + 1))
         .collect();
     assert!(wrong.is_empty(), "links to existing files left unresolved:\n{}", wrong.join("\n"));
-    assert!(callouts >= 199, "callouts went missing (grep finds 199 in the snapshot)");
+    assert!(callouts > 0, "callouts went missing");
 
     // rename a sample of targets (notes and images) and check every link still resolves
     let mut targets: Vec<String> = idx.files().filter(|f| !idx.backlinks(f).is_empty()).cloned().collect();
@@ -204,7 +204,7 @@ fn index_build_and_rename_plans() {
     let sample: Vec<String> = targets.iter().step_by((targets.len() / 25).max(1)).cloned().collect();
     for old in sample {
         let (dir, name) = old.rsplit_once('/').unwrap_or(("", &old));
-        let new = format!("{}Rinominato {name}", if dir.is_empty() { String::new() } else { format!("{dir}/") });
+        let new = format!("{}Renamed {name}", if dir.is_empty() { String::new() } else { format!("{dir}/") });
         let moves = vec![(old.clone(), new.clone())];
         let plan = idx.rename_plan(&moves);
         let after = Resolver::new(idx.files().map(|f| if *f == old { new.as_str() } else { f.as_str() }));

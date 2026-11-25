@@ -1,4 +1,4 @@
-//! Typesetting an exported note with Typst, in-process (the M0 spike's approach): formulas go
+//! Typesetting an exported note with Typst, in-process : formulas go
 //! through MathJax (SVG, the engine with no failures on your corpus), then Typst compiles the
 //! document to PDF, plus one PNG per page for the preview. Runs off the UI thread.
 

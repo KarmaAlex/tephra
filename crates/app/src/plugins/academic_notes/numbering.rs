@@ -5,7 +5,7 @@
 //! the first H2 it is `0.n`; a note without H2 headings numbers plainly (`n`). Proofs,
 //! remarks and observations are not numbered.
 //!
-//! Also observed (M3 follow-up, `tools/m3/observe.mjs` on a synthetic vault):
+//! Also observed on a synthetic vault:
 //! - `[!figure]` and `[!table]` callouts: "Figure 1.2" / "Table 1.1" (own counters, same
 //!   sections); `[!subfigure]`s inside a figure are (a), (b)…
 //! - Equations (`equationMode: referenced`): a `$$…$$` block is numbered "(1.2)" only if a link
@@ -380,80 +380,6 @@ mod tests {
         let n = number(&items_of_text(t));
         assert_eq!(at_line(&n, 3).map(|n| n.short.as_str()), Some("lem 1.1"));
         assert!(at_line(&n, 5).is_none());
-    }
-}
-
-/// Compares with what Academic Notes itself rendered for every fixture note with callouts
-/// (`reports/m3-reference.jsonl`, made by `tools/m3/observe.mjs` + `tools/m3/reference.py`; gitignored as it holds note
-/// text). Skipped when the report or the fixture is absent.
-#[cfg(test)]
-mod reference {
-    use super::*;
-
-    #[test]
-    fn numbering_matches_academic_notes() {
-        let report = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../reports/m3-reference.jsonl");
-        let Ok(lines) = std::fs::read_to_string(&report) else { return eprintln!("no reference report: skipped") };
-        let fixture = std::path::Path::new(&std::env::var("HOME").unwrap()).join("dev/vault-fixture");
-        let (mut checked, mut wrong) = (0, Vec::new());
-        for l in lines.lines() {
-            let d = match serde_json::from_str::<serde_json::Value>(l) { Ok(d) => d, Err(e) => { eprintln!("bad line: {e}"); continue } };
-            let note = d["note"].as_str().unwrap_or_default();
-            let Ok(text) = std::fs::read_to_string(fixture.join(note)) else { continue };
-            let observed: Vec<(String, String)> = d["sections"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .flat_map(|s| s["callouts"].as_array().cloned().unwrap_or_default())
-                .map(|c| (c["type"].as_str().unwrap_or("").to_lowercase(), c["title"].as_str().unwrap_or("").to_string()))
-                .collect();
-            let ours = number(&items_of_text(&text));
-            let mut it = ours.iter();
-            for (kind, title) in &observed {
-                match env(kind) {
-                    Some((_, _, _, true)) => {
-                        checked += 1;
-                        match it.next() {
-                            // a digit right after the label must be the title's own ("1/2-approximation")
-                            Some(n) if title.starts_with(&n.label) && {
-                                let src_title = text.lines().nth(n.line).and_then(|h| h.split_once(']')).map(|(_, t)| t.trim_start_matches(['-', '+']).trim()).unwrap_or("");
-                                let after = &title[n.label.len()..];
-                                !after.starts_with(|c: char| c.is_ascii_digit() || c == '.') || src_title.starts_with(|c: char| c.is_ascii_digit())
-                            } => {}
-                            other => wrong.push(format!("{note}: {kind} shown as {title:?}, ours {:?}", other.map(|n| &n.label))),
-                        }
-                    }
-                    _ => {
-                        if title.split_whitespace().nth(1).is_some_and(|w| w.chars().next().is_some_and(|c| c.is_ascii_digit())) && env(kind).is_some() {
-                            wrong.push(format!("{note}: {kind} is numbered there: {title:?}"));
-                        }
-                    }
-                }
-            }
-        }
-        eprintln!("{checked} numbered callouts compared");
-        assert!(wrong.is_empty(), "{} differences:\n{}", wrong.len(), wrong.join("\n"));
-        // references: `[[#^id]]` shown as "lem 1.1"
-        let mut refs = 0;
-        for l in lines.lines() {
-            let Ok(d) = serde_json::from_str::<serde_json::Value>(l) else { continue };
-            let note = d["note"].as_str().unwrap_or_default();
-            let Ok(text) = std::fs::read_to_string(fixture.join(note)) else { continue };
-            let nums = number(&items_of_text(&text));
-            for r in d["sections"].as_array().into_iter().flatten().flat_map(|s| s["refs"].as_array().cloned().unwrap_or_default()) {
-                let (href, shown) = (r[0].as_str().unwrap_or(""), r[1].as_str().unwrap_or(""));
-                let Some(id) = href.strip_prefix("#^") else { continue };
-                refs += 1;
-                let line = text.lines().position(|l| l.trim_end().ends_with(&format!("^{id}")));
-                let ours = line.and_then(|l| at_line(&nums, l)).map(|n| n.short.clone());
-                if ours.as_deref() != Some(shown) {
-                    wrong.push(format!("{note}: [[{href}]] shown as {shown:?}, ours {ours:?}"));
-                }
-            }
-        }
-        eprintln!("{refs} references compared");
-        assert!(wrong.is_empty(), "{} differences:\n{}", wrong.len(), wrong.join("\n"));
-        assert!(checked > 100);
     }
 }
 

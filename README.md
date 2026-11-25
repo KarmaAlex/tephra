@@ -85,6 +85,11 @@ Per vault: `<vault>/.tephra/` (app settings, plugin settings, workspace layout).
 `TEPHRA_CONFIG_DIR`, `TEPHRA_DATA_DIR`, `TEPHRA_LOG`, `TEPHRA_LOG_LEVEL`, `TEPHRA_SCRIPT`,
 `TEPHRA_BENCH`.
 
+## Contributing
+
+See [AGENTS.md](AGENTS.md) for the project mission, the architecture, guidelines for working
+on the repo, and the performance targets with the current measured numbers.
+
 ## License
 
 MIT — see [LICENSE](LICENSE). The embedded UI fonts (DejaVu, IBM Plex Sans) carry their own

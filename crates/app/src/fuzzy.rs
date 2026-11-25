@@ -70,17 +70,17 @@ mod tests {
     #[test]
     fn ranks_prefix_word_start_substring_then_subsequence() {
         let c = |q: &str, t: &str| score(q, t).map(|s| s.0);
-        assert_eq!(c("mst", "MST problem"), Some(0));
-        assert_eq!(c("prob", "The MST problem"), Some(1));
-        assert_eq!(c("blem", "The MST problem"), Some(3));
-        assert_eq!(c("tmp", "The MST problem"), Some(8 + 6), "t..m...p: 6 letters skipped");
-        assert!(c("mp", "MST problem") < c("mp", "Maximum independent set problem"), "compact first");
-        assert_eq!(c("xyz", "The MST problem"), None);
+        assert_eq!(c("sam", "sample note"), Some(0));
+        assert_eq!(c("note", "The sample note"), Some(1));
+        assert_eq!(c("mple", "The sample note"), Some(3));
+        assert_eq!(c("sne", "The sample note"), Some(8 + 8), "s..n..e: 8 letters skipped");
+        assert!(c("sn", "a short note") < c("sn", "the sample note"), "compact first");
+        assert_eq!(c("xyz", "The sample note"), None);
         assert_eq!(c("", "anything"), Some(0));
-        assert_eq!(c("calcolab", "Calcolabilità"), Some(0));
+        assert_eq!(c("caff", "Caffè"), Some(0));
         assert!(c("insert template", "Templates: Insert template") < c("insert template", "Templates: Insert current date"), "the phrase first");
-        let (_, r) = score("mst prob", "The MST problem").unwrap();
-        assert_eq!(r, vec![4..7, 8..12]);
-        assert_eq!(c("mst prob", "The MST problem"), Some(2), "phrase: no penalty");
+        let (_, r) = score("sam note", "The sample note").unwrap();
+        assert_eq!(r, vec![4..7, 11..15]);
+        assert_eq!(c("sam note", "The sample note"), Some(4), "phrase: no penalty");
     }
 }

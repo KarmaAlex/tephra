@@ -547,18 +547,18 @@ mod tests {
     #[test]
     fn metadata_links_and_backlinks() {
         let (root, idx) = vault(&[
-            ("A.md", "---\ncssclasses: NoBorder\n---\n# Titolo\nvedi [[B#Sez|qui]] e ![[img.png]] e [[Manca]] #tag\n> [!thm|x=1] Teorema\n> testo ^blk\n"),
-            ("sub/B.md", "## Sez\n[[A]]"),
+            ("A.md", "---\ncssclasses: Plain\n---\n# Title\nsee [[B#Sec|here]] and ![[img.png]] and [[Missing]] #tag\n> [!thm|x=1] Theorem\n> testo ^blk\n"),
+            ("sub/B.md", "## Sec\n[[A]]"),
             ("Images/img.png", ""),
         ]);
         let a = idx.note("A.md").unwrap();
-        assert_eq!(a.frontmatter.as_deref(), Some("cssclasses: NoBorder"));
-        assert_eq!(a.headings[0].text, "Titolo");
+        assert_eq!(a.frontmatter.as_deref(), Some("cssclasses: Plain"));
+        assert_eq!(a.headings[0].text, "Title");
         let r: Vec<_> = a.links.iter().map(|l| (l.target.as_str(), l.resolved.as_deref())).collect();
-        assert_eq!(r, vec![("B#Sez", Some("sub/B.md")), ("img.png", Some("Images/img.png")), ("Manca", None)]);
+        assert_eq!(r, vec![("B#Sec", Some("sub/B.md")), ("img.png", Some("Images/img.png")), ("Missing", None)]);
         assert_eq!(a.tags, vec!["tag"]);
         assert_eq!(a.block_ids, vec![("blk".to_string(), 6)]);
-        assert_eq!((a.callouts[0].kind.as_str(), a.callouts[0].meta.as_str(), a.callouts[0].title.as_str()), ("thm", "x=1", "Teorema"));
+        assert_eq!((a.callouts[0].kind.as_str(), a.callouts[0].meta.as_str(), a.callouts[0].title.as_str()), ("thm", "x=1", "Theorem"));
         assert_eq!(idx.backlinks("sub/B.md"), &[Backlink { source: "A.md".into(), link: 0 }]);
         assert_eq!(idx.backlinks("A.md")[0].source, "sub/B.md");
         assert_eq!(idx.resolve("#^blk", "A.md").as_deref(), Some("A.md"));
@@ -568,15 +568,15 @@ mod tests {
     #[test]
     fn rename_keeps_subpath_alias_and_uses_shortest_path() {
         let (root, idx) = vault(&[
-            ("A.md", "[[B#Sez|qui]] ![[img.png]] [[B]] [[B#^lem1]]"),
+            ("A.md", "[[B#Sec|here]] ![[img.png]] [[B]] [[B#^lem1]]"),
             ("sub/B.md", "x"),
             ("other/B2.md", ""),
             ("Images/img.png", ""),
         ]);
-        let plan = idx.rename_plan(&[("sub/B.md".into(), "sub/Nuovo nome.md".into())]);
+        let plan = idx.rename_plan(&[("sub/B.md".into(), "sub/New name.md".into())]);
         assert_eq!(plan.len(), 1);
         let a = std::fs::read_to_string(root.join("A.md")).unwrap();
-        assert_eq!(apply_edits(&a, &plan[0].edits), "[[Nuovo nome#Sez|qui]] ![[img.png]] [[Nuovo nome]] [[Nuovo nome#^lem1]]", "references keep their block id");
+        assert_eq!(apply_edits(&a, &plan[0].edits), "[[New name#Sec|here]] ![[img.png]] [[New name]] [[New name#^lem1]]", "references keep their block id");
         // a move that creates a name clash needs a longer path
         let (root2, idx2) = vault(&[("A.md", "[[B]]"), ("x/B.md", ""), ("y/C.md", "")]);
         let plan = idx2.rename_plan(&[("y/C.md".into(), "B.md".into()), ("x/B.md".into(), "x/B.md".into())]);
@@ -598,16 +598,16 @@ mod tests {
 
     #[test]
     fn frontmatter_tags_and_search() {
-        assert_eq!(frontmatter_tags("tags: [uni, \"#esame\"]\ncssclasses: x"), vec!["uni", "esame"]);
+        assert_eq!(frontmatter_tags("tags: [work, \"#exam\"]\ncssclasses: x"), vec!["work", "exam"]);
         assert_eq!(frontmatter_tags("tags:\n  - a/b\n  - c\naliases: x"), vec!["a/b", "c"]);
         assert_eq!(frontmatter_tags("tag: a, b"), vec!["a", "b"]);
-        assert!(frontmatter_tags("cssclasses: NoBorder").is_empty());
-        let (root, mut idx) = vault(&[("A.md", "---\ntags: [corso]\n---\nGrafi #Corso e alberi"), ("B.md", "grafi")]);
-        assert_eq!(idx.tags(), vec![("corso".to_string(), 2)]);
-        let q = crate::search::parse_query("grafi tag:corso").unwrap();
+        assert!(frontmatter_tags("cssclasses: Plain").is_empty());
+        let (root, mut idx) = vault(&[("A.md", "---\ntags: [course]\n---\nGraphs #Course and trees"), ("B.md", "graphs")]);
+        assert_eq!(idx.tags(), vec![("course".to_string(), 2)]);
+        let q = crate::search::parse_query("graphs tag:course").unwrap();
         assert_eq!(idx.search(&q).iter().map(|h| h.path.as_str()).collect::<Vec<_>>(), vec!["A.md"]);
         let g = idx.generation();
-        std::fs::write(root.join("B.md"), "grafi #corso").unwrap();
+        std::fs::write(root.join("B.md"), "graphs #course").unwrap();
         idx.refresh("B.md");
         assert!(idx.generation() > g);
         assert_eq!(idx.search(&q).len(), 2, "search sees the new text");
@@ -616,13 +616,13 @@ mod tests {
 
     #[test]
     fn incremental_updates() {
-        let (root, mut idx) = vault(&[("A.md", "[[Nuova]]")]);
+        let (root, mut idx) = vault(&[("A.md", "[[New]]")]);
         assert_eq!(idx.note("A.md").unwrap().links[0].resolved, None);
-        std::fs::write(root.join("Nuova.md"), "").unwrap();
-        idx.refresh("Nuova.md");
-        assert_eq!(idx.note("A.md").unwrap().links[0].resolved.as_deref(), Some("Nuova.md"));
-        std::fs::remove_file(root.join("Nuova.md")).unwrap();
-        idx.refresh("Nuova.md");
+        std::fs::write(root.join("New.md"), "").unwrap();
+        idx.refresh("New.md");
+        assert_eq!(idx.note("A.md").unwrap().links[0].resolved.as_deref(), Some("New.md"));
+        std::fs::remove_file(root.join("New.md")).unwrap();
+        idx.refresh("New.md");
         assert_eq!(idx.note("A.md").unwrap().links[0].resolved, None);
         let _ = std::fs::remove_dir_all(root);
     }
@@ -646,8 +646,8 @@ mod tests {
 
     #[test]
     fn css_classes_from_frontmatter() {
-        assert_eq!(cssclasses("---\ncssclasses: NoBorder\n---\n# x"), ["NoBorder"]);
-        assert_eq!(cssclasses("---\ntitle: a\ncssclasses: [wide, \"NoBorder\"]\n---\n"), ["wide", "NoBorder"]);
+        assert_eq!(cssclasses("---\ncssclasses: Plain\n---\n# x"), ["Plain"]);
+        assert_eq!(cssclasses("---\ntitle: a\ncssclasses: [wide, \"Plain\"]\n---\n"), ["wide", "Plain"]);
         assert_eq!(cssclasses("---\ncssclasses:\n  - a\n  - b\ntags: x\n---\n"), ["a", "b"]);
         assert_eq!(cssclasses("---\ncssclass: old\n---\n"), ["old"]);
         assert!(cssclasses("# no frontmatter\ncssclasses: x").is_empty());

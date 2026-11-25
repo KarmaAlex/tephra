@@ -2,7 +2,7 @@
 //! bar above the editor. Its layout starts as the one saved by the Obsidian plugin
 //! (`.obsidian/plugins/editing-toolbar/data.json`, `menuCommands`; read, never written), with
 //! the same command ids, so buttons, submenus and dropdowns come out as you arranged them.
-//! You change it in Settings → Editing toolbar (M8); that copy is saved in
+//! You change it in Settings → Editing toolbar; that copy is saved in
 //! `.tephra/plugins/editing-toolbar.json`.
 //! Every action is also a command (palette, hotkeys: Ctrl+B / Ctrl+I / Ctrl+K as in Obsidian).
 //! The colour buttons have a picker next to them; the colour you pick is applied and becomes

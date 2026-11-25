@@ -478,67 +478,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(c.words_file.parent().unwrap());
     }
 
-    /// Spell-checks every fixture note with the system en_US + it_IT dictionaries and writes the
-    /// flagged words (unique, with counts) to $TEPHRA_SPELL_REPORT. Run on demand:
-    /// `TEPHRA_SPELL_REPORT=reports/spell.txt cargo test -p tephra fixture_spell -- --ignored`
-    #[test]
-    #[ignore]
-    fn fixture_spell_report() {
-        let out = std::env::var("TEPHRA_SPELL_REPORT").expect("set TEPHRA_SPELL_REPORT");
-        let home = std::env::var("HOME").unwrap();
-        let root = Path::new(&home).join("dev/vault-fixture");
-        let t = std::time::Instant::now();
-        let mut v = Vec::new();
-        for l in ["en_US", "it_IT"] {
-            let t1 = std::time::Instant::now();
-            v.push((l.to_string(), load_dictionary(Path::new(&format!("/usr/share/hunspell/{l}.dic"))).unwrap()));
-            eprintln!("load {l}: {} ms", t1.elapsed().as_millis());
-        }
-        let dicts = Arc::new(OnceLock::new());
-        let _ = dicts.set(v);
-        let c = Checker { dicts, ignore_caps: true, ignore_mixed: true, custom: RefCell::new(HashSet::new()), revision: Cell::new(0), words_file: std::env::temp_dir().join("unused.txt") };
-        eprintln!("both loaded: {} ms", t.elapsed().as_millis());
-        for w in ["perchè", "qualcosa", "efficente", "algoritmo", "propietà", "sopratutto", "recieve"] {
-            let t = std::time::Instant::now();
-            let ctx = if w == "recieve" { "we will recieve the packet" } else { "il grafo e la sua struttura" };
-            eprintln!("SUGGEST {w}: ok={} {:?} ({} ms)", c.is_correct(w), c.suggest(w, ctx), t.elapsed().as_millis());
-        }
-        fn md(d: &Path, out: &mut Vec<PathBuf>) {
-            for e in std::fs::read_dir(d).into_iter().flatten().flatten() {
-                let p = e.path();
-                if e.file_name().to_string_lossy().starts_with('.') {
-                    continue;
-                }
-                if p.is_dir() { md(&p, out) } else if p.extension().is_some_and(|x| x == "md") { out.push(p) }
-            }
-        }
-        let mut files = Vec::new();
-        md(&root, &mut files);
-        let mut flagged: std::collections::BTreeMap<String, usize> = Default::default();
-        let mut accepted: std::collections::BTreeSet<String> = Default::default();
-        let (mut total, mut bad) = (0usize, 0usize);
-        let t2 = std::time::Instant::now();
-        for f in &files {
-            let text = std::fs::read_to_string(f).unwrap_or_default();
-            for r in words(&text) {
-                total += 1;
-                let w = &text[r];
-                if !c.is_correct(w) {
-                    bad += 1;
-                    *flagged.entry(w.to_string()).or_default() += 1;
-                } else if !w.contains(['\'', '’']) {
-                    accepted.insert(w.to_string());
-                }
-            }
-        }
-        let ms = t2.elapsed().as_millis();
-        eprintln!("{} notes, {total} words checked in {ms} ms, {bad} flagged ({} unique)", files.len(), flagged.len());
-        let mut list: Vec<(String, usize)> = flagged.into_iter().collect();
-        list.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-        std::fs::write(&out, list.iter().map(|(w, n)| format!("{n}\t{w}\n")).collect::<String>()).unwrap();
-        std::fs::write(format!("{out}.accepted"), accepted.into_iter().collect::<Vec<_>>().join("\n") + "\n").unwrap();
-    }
-
     /// With the system's en_US + it_IT installed: Italian text, elisions, mixed languages.
     #[test]
     fn system_italian_and_english() {
@@ -549,9 +488,9 @@ mod tests {
         let dicts = Arc::new(OnceLock::new());
         let _ = dicts.set(vec![("en_US".to_string(), en), ("it_IT".to_string(), it)]);
         let c = Checker { dicts, ignore_caps: true, ignore_mixed: true, custom: RefCell::new(HashSet::new()), revision: Cell::new(0), words_file: std::env::temp_dir().join("unused.txt") };
-        let t = "Dell'albero l'algoritmo calcola il cammino minimo, perché è efficiente: the shortest path tree.";
+        let t = "Il testo in italiano è corretto, perché è scritto bene: the English part is fine too.";
         assert!(c.misspelled(t).is_empty(), "{:?}", c.misspelled(t).iter().map(|r| &t[r.clone()]).collect::<Vec<_>>());
-        let t = "il grafo è connesso perchè l'algoritmo è efficente";
+        let t = "perchè ed efficente, in questa frase";
         let bad: Vec<&str> = c.misspelled(t).into_iter().map(|r| &t[r]).collect();
         assert_eq!(bad, vec!["perchè", "efficente"]);
         assert_eq!(c.suggest("perchè", t).first().map(String::as_str), Some("perché"));
