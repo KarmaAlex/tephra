@@ -82,7 +82,7 @@ impl MarkdownPlugin for ImagePlugin {
         // images grow with the UI scale, as with Obsidian's zoom, up to the pane's width
         let scale = crate::theme::ui_scale(cx);
         let (w, h) = a.size.map(|(w, h)| (w as f32 * scale, h as f32 * scale)).unwrap_or((320.0 * scale, 200.0 * scale));
-        let max = CONTENT_WIDTH.with(|c| c.get()).clamp(120.0, MAX_IMAGE_WIDTH * scale);
+        let max = CONTENT_WIDTH.with(|c| c.get()).clamp(32.0, MAX_IMAGE_WIDTH * scale);
         let scale = (max / w).min(1.0);
         // whole device pixels, so the baseline (= the bottom) never exceeds the measured height
         let (w, h) = (device_snap(w * scale, window), device_snap(h * scale, window));
