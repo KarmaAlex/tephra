@@ -154,7 +154,7 @@ fn appearance_page(cx: &App) -> SettingPage {
                 move |v: SharedString, cx: &mut App| set_and_reload("cssTheme", Value::from(v.to_string()), cx),
             ),
         )
-        .description("Default (Obsidian's own), the built-in Tephra Dark/Light, or a theme from .obsidian/themes. Its CSS variables apply (colours, fonts, sizes); other rules can't."),
+        .description("Default (Obsidian's own), the built-in Tephra (its dark or light variant follows the base color scheme), or a theme from .obsidian/themes. Its CSS variables apply (colours, fonts, sizes); other rules can't."),
     ];
     for r in t.reports.iter().filter(|r| !r.is_theme) {
         let name = r.name.clone();

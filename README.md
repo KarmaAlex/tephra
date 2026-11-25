@@ -12,10 +12,9 @@
   the volcanic ash that settles over everything, kin of the obsidian this app grew out of.</em>
 </p>
 
-Tephra is a native notes app (Rust + GPUI — no Electron, no bundled Chromium) that opens your
+Tephra is a native notes app (Rust + GPUI) that opens your
 existing Obsidian vaults in place and reads `.obsidian/` as read-only, keeping its own settings
-in `.tephra/` inside the vault. It has a live-preview Markdown editor (CodeMirror 6 semantics),
-properly typeset math (MathJax), and the features Obsidian gets from plugins — search, graph,
+in `.tephra/` inside the vault. It has a live-preview Markdown editor, typeset math (MathJax), and the features Obsidian gets from plugins — search, graph,
 backlinks, daily notes, templates, spellcheck, PDF export and more — built in as toggleable
 plugins.
 
@@ -58,12 +57,14 @@ One command per platform, output in `dist/` (see `packaging/README.md`):
 
 ## Themes
 
-The default look follows Obsidian's own light/dark variables. Two built-in themes ship with the
-app as secondary choices (Settings → Appearance): **Tephra Dark** and **Tephra Light**, a
-volcanic-ash palette (warm basalt greys, ember accent) with dark and light variants. Their
-sources live in `themes/`; copy a folder into `<vault>/.obsidian/themes/` to install it into a
-vault (a vault theme of the same name overrides the bundled one). Any Obsidian theme or CSS
-snippet from the vault works too — only their CSS variables apply.
+The default look follows Obsidian's own light/dark variables. One built-in theme ships with the
+app as a secondary choice (Settings → Appearance): **Tephra**, a volcanic-ash palette (warm
+basalt greys and ember accent in dark mode, warm paper and dark ember in light mode). It is a
+single theme with two variants — the dark or light variant is picked by the base color scheme
+setting (system/light/dark). Its source lives in `themes/Tephra/theme.css`; copy the folder into
+`<vault>/.obsidian/themes/Tephra/` to install it into a vault (a vault theme of the same name
+overrides the bundled one). Any Obsidian theme or CSS snippet from the vault works too — only
+their CSS variables apply.
 
 ## Layout
 

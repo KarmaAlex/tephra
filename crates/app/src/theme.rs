@@ -8,8 +8,8 @@
 //!
 //! Everything else (rules that style elements directly, `@media`, `@font-face`, …) is ignored
 //! and counted, per file, for Settings → Appearance. Under it all sit built-in light and dark
-//! variables following Obsidian's default theme (the default look); the bundled Tephra themes
-//! (dark and light variants, embedded from `themes/`) are secondary choices. Choices live in
+//! variables following Obsidian's default theme (the default look); the bundled Tephra theme
+//! (dark and light variants, embedded from `themes/`) is a secondary choice. Choices live in
 //! `.tephra/app.json` (`baseTheme`, `cssTheme`, `enabledCssSnippets`); the defaults come from
 //! `.obsidian/appearance.json` (read, never written).
 
@@ -92,11 +92,9 @@ body {
 /// Themes bundled with the app (name, CSS), embedded from `themes/` at the repo root. They are
 /// secondary choices, listed in Settings → Appearance next to the default (Obsidian's own light
 /// and dark variables below); a vault theme of the same name (`.obsidian/themes/<name>/theme.css`)
-/// overrides the bundled one.
-pub const BUILTIN_THEMES: &[(&str, &str)] = &[
-    ("Tephra Dark", include_str!("../../../themes/Tephra Dark/theme.css")),
-    ("Tephra Light", include_str!("../../../themes/Tephra Light/theme.css")),
-];
+/// overrides the bundled one. Each bundled theme carries both variants: its `.theme-dark` rules
+/// apply when the base color scheme is dark, its `.theme-light` ones when it is light.
+pub const BUILTIN_THEMES: &[(&str, &str)] = &[("Tephra", include_str!("../../../themes/Tephra/theme.css"))];
 
 /// Where a theme's CSS comes from.
 enum ThemeSrc {
@@ -719,7 +717,7 @@ mod tests {
     }
 
     #[test]
-    fn builtin_themes_are_secondary() {
+    fn builtin_theme_is_secondary_with_both_variants() {
         let dir = std::env::temp_dir().join(format!("tephra-theme-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -728,23 +726,22 @@ mod tests {
         let t = ThemeCss::load(&dir, "", &[], 1);
         assert_eq!(t.var("--color-base-00", true, &none).as_deref(), Some("#1e1e1e"));
         assert_eq!(t.var("--interactive-accent", true, &none).as_deref(), Some("hsl(258, 88%, 66%)"));
-        // the bundled Tephra themes are listed as extra choices
-        assert!(t.themes.iter().any(|n| n == "Tephra Dark") && t.themes.iter().any(|n| n == "Tephra Light"));
-        // the dark variant sets the dark variables, the light one the light variables
-        let t = ThemeCss::load(&dir, "Tephra Dark", &[], 2);
+        // the bundled Tephra theme is listed as an extra choice
+        assert!(t.themes.iter().any(|n| n == "Tephra"));
+        // one theme, both variants: dark variables in dark mode, light ones in light mode
+        let t = ThemeCss::load(&dir, "Tephra", &[], 2);
         assert_eq!(t.var("--color-base-00", true, &none).as_deref(), Some("#1a1816"));
         assert_eq!(t.var("--interactive-accent", true, &none).as_deref(), Some("hsl(16, 84%, 56%)"));
-        assert_eq!(t.var("--color-base-00", false, &none).as_deref(), Some("#ffffff"), "light still Obsidian's default");
-        assert!(t.callout_color("warning", true).is_some());
-        let t = ThemeCss::load(&dir, "Tephra Light", &[], 3);
         assert_eq!(t.var("--color-base-00", false, &none).as_deref(), Some("#faf7f1"));
         assert_eq!(t.var("--interactive-accent", false, &none).as_deref(), Some("hsl(15, 80%, 45%)"));
-        assert_eq!(t.var("--color-base-00", true, &none).as_deref(), Some("#1e1e1e"), "dark still Obsidian's default");
+        assert!(t.callout_color("warning", true).is_some());
+        assert!(t.callout_color("warning", false).is_some());
         // a vault theme of the same name replaces the bundled one entirely
-        std::fs::create_dir_all(dir.join(".obsidian/themes/Tephra Dark")).unwrap();
-        std::fs::write(dir.join(".obsidian/themes/Tephra Dark/theme.css"), ".theme-dark { --color-base-00: #000001; }").unwrap();
-        let t = ThemeCss::load(&dir, "Tephra Dark", &[], 4);
+        std::fs::create_dir_all(dir.join(".obsidian/themes/Tephra")).unwrap();
+        std::fs::write(dir.join(".obsidian/themes/Tephra/theme.css"), ".theme-dark { --color-base-00: #000001; }").unwrap();
+        let t = ThemeCss::load(&dir, "Tephra", &[], 3);
         assert_eq!(t.var("--color-base-00", true, &none).as_deref(), Some("#000001"));
+        assert_eq!(t.var("--color-base-00", false, &none).as_deref(), Some("#ffffff"), "light falls back to the base theme");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

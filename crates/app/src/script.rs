@@ -475,6 +475,7 @@ pub fn start(editor: Option<Entity<Editor>>, ws: Option<WeakEntity<crate::worksp
                             t.length("--table-border-width", dark, &classes, 16.0),
                             t.var("--interactive-accent", dark, &classes)
                         );
+                        println!("THEMES {:?}", t.themes);
                         for r in &t.reports {
                             println!("THEME-FILE {} theme={} on={} global={} class={} {:?} ignored={}", r.name, r.is_theme, r.enabled, r.global_vars, r.class_vars, r.classes, r.ignored);
                         }
