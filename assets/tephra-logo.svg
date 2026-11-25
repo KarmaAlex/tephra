@@ -1,45 +1,86 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" fill="none">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#352e27"/>
-      <stop offset="1" stop-color="#14110e"/>
+    
+    <linearGradient id="facetDark" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3A3D45" />
+      <stop offset="100%" stop-color="#1E2025" />
     </linearGradient>
-    <linearGradient id="cone" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ffb257"/>
-      <stop offset="0.45" stop-color="#f0712f"/>
-      <stop offset="1" stop-color="#a83412"/>
+    <linearGradient id="facetMid" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#525661" />
+      <stop offset="100%" stop-color="#2B2E36" />
     </linearGradient>
-    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0" stop-color="#ff9a4d" stop-opacity="0.8"/>
-      <stop offset="1" stop-color="#ff9a4d" stop-opacity="0"/>
+    <linearGradient id="facetRust" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4A322B" />
+      <stop offset="100%" stop-color="#241E22" />
+    </linearGradient>
+    
+    <linearGradient id="rustEdge" x1="20%" y1="10%" x2="90%" y2="90%">
+      <stop offset="0%" stop-color="#8A909E" />
+      <stop offset="50%" stop-color="#E05A2B" />
+      <stop offset="100%" stop-color="#FF7847" />
+    </linearGradient>
+    <radialGradient id="nodeGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#FF6B35" stop-opacity="0.7" />
+      <stop offset="100%" stop-color="#FF6B35" stop-opacity="0" />
     </radialGradient>
   </defs>
 
-  <!-- basalt badge -->
-  <rect x="16" y="16" width="480" height="480" rx="108" fill="url(#bg)"/>
+  
+  <polygon points="128,18 76,66 114,96" fill="url(#facetMid)" />
+  <polygon points="128,18 114,96 178,74" fill="url(#facetDark)" />
+  <polygon points="76,66 48,136 96,142" fill="url(#facetDark)" />
+  <polygon points="76,66 96,142 114,96" fill="url(#facetMid)" />
+  <polygon points="114,96 96,142 154,126" fill="url(#facetRust)" />
+  <polygon points="114,96 154,126 178,74" fill="url(#facetRust)" />
+  <polygon points="178,74 154,126 204,132" fill="url(#facetRust)" />
+  <polygon points="48,136 68,196 112,184" fill="url(#facetDark)" />
+  <polygon points="48,136 112,184 96,142" fill="url(#facetMid)" />
+  <polygon points="96,142 112,184 154,126" fill="url(#facetDark)" />
+  <polygon points="154,126 112,184 186,180" fill="url(#facetRust)" />
+  <polygon points="154,126 186,180 204,132" fill="url(#facetRust)" />
+  <polygon points="68,196 128,238 112,184" fill="url(#facetDark)" />
+  <polygon points="112,184 128,238 186,180" fill="url(#facetRust)" />
 
-  <!-- geological strata under the volcano -->
-  <g stroke="#7a6f60" stroke-width="9" stroke-linecap="round">
-    <line x1="140" y1="442" x2="372" y2="442" opacity="0.75"/>
-    <line x1="170" y1="466" x2="342" y2="466" opacity="0.45"/>
+  
+  <g stroke="url(#rustEdge)" stroke-width="2.2" stroke-linejoin="round">
+    <polygon points="128,18 76,66 48,136 68,196 128,238 186,180 204,132 178,74" />
+    <line x1="128" y1="18" x2="114" y2="96" />
+    <line x1="76" y1="66" x2="114" y2="96" />
+    <line x1="178" y1="74" x2="114" y2="96" />
+    <line x1="76" y1="66" x2="96" y2="142" />
+    <line x1="48" y1="136" x2="96" y2="142" />
+    <line x1="114" y1="96" x2="96" y2="142" />
+    <line x1="114" y1="96" x2="154" y2="126" />
+    <line x1="178" y1="74" x2="154" y2="126" />
+    <line x1="204" y1="132" x2="154" y2="126" />
+    <line x1="96" y1="142" x2="154" y2="126" />
+    <line x1="48" y1="136" x2="112" y2="184" />
+    <line x1="68" y1="196" x2="112" y2="184" />
+    <line x1="96" y1="142" x2="112" y2="184" />
+    <line x1="154" y1="126" x2="112" y2="184" />
+    <line x1="154" y1="126" x2="186" y2="180" />
+    <line x1="112" y1="184" x2="186" y2="180" />
+    <line x1="112" y1="184" x2="128" y2="238" />
   </g>
 
-  <!-- glow behind the crater -->
-  <circle cx="256" cy="188" r="118" fill="url(#glow)"/>
-
-  <!-- volcano cone with a flat crater -->
-  <path d="M 88 416 L 224 188 L 240 170 L 272 170 L 288 188 L 424 416 Z" fill="url(#cone)"/>
-  <!-- lava in the crater and a trickle down the slope -->
-  <ellipse cx="256" cy="175" rx="15" ry="6" fill="#ffd27a"/>
-  <path d="M 263 182 C 269 208 259 232 267 258 C 273 279 263 302 269 326" stroke="#ffc06a" stroke-width="7" stroke-linecap="round" fill="none" opacity="0.9"/>
-
-  <!-- tephra / ash cloud -->
-  <g fill="#e2d9ca">
-    <circle cx="256" cy="118" r="24"/>
-    <circle cx="215" cy="96" r="16" opacity="0.85"/>
-    <circle cx="297" cy="96" r="16" opacity="0.85"/>
-    <circle cx="256" cy="72" r="11" opacity="0.55"/>
-    <circle cx="233" cy="136" r="9" opacity="0.5"/>
-    <circle cx="279" cy="136" r="9" opacity="0.5"/>
+  
+  <g stroke="#E05A2B" stroke-width="1.8" stroke-opacity="0.85">
+    <line x1="154" y1="126" x2="212" y2="92" />
+    <line x1="178" y1="74" x2="212" y2="92" />
+    <line x1="96" y1="142" x2="40" y2="178" />
+    <line x1="68" y1="196" x2="40" y2="178" />
   </g>
+
+  
+  <circle cx="154" cy="126" r="24" fill="url(#nodeGlow)" />
+
+  
+  <circle cx="154" cy="126" r="6" fill="#FF6B35" />
+  <circle cx="114" cy="96" r="4" fill="#9AA0AE" />
+  <circle cx="96" cy="142" r="4.5" fill="#7D8391" />
+  <circle cx="112" cy="184" r="4" fill="#9AA0AE" />
+  <circle cx="212" cy="92" r="4.5" fill="#FF6B35" />
+  <circle cx="40" cy="178" r="4" fill="#7D8391" />
+  <circle cx="216" cy="166" r="2.5" fill="#FF6B35" />
+  <circle cx="46" cy="98" r="2.2" fill="#8A909E" />
 </svg>

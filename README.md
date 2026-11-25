@@ -1,20 +1,13 @@
-<!-- Banner spot: put a wide banner image here when you have one, e.g.
-     <p align="center"><img src="assets/banner.png" alt="Tephra" width="100%"></p> -->
+
+<p align="center"><img src="assets/tephra-banner.png" alt="Tephra banner" height="50%"></p>
 
 <p align="center">
-  <img src="assets/tephra-logo.png" alt="Tephra logo" width="128">
-</p>
-
-<h1 align="center">Tephra</h1>
-
-<p align="center">
-  <em>A lightweight, Obsidian-compatible notes app for the desktop — named for tephra,
-  the volcanic ash that settles over everything, kin of the obsidian this app grew out of.</em>
+  <em>A lightweight, Obsidian-compatible notes app for the desktop</em>
 </p>
 
 Tephra is a native notes app (Rust + GPUI) that opens your
-existing Obsidian vaults in place and reads `.obsidian/` as read-only, keeping its own settings
-in `.tephra/` inside the vault. It has a live-preview Markdown editor, typeset math (MathJax), and the features Obsidian gets from plugins — search, graph,
+existing Obsidian vaults in place and reads `.obsidian/`, keeping its own settings
+in `.tephra/` inside the vault. It has a live-preview Markdown editor, typeset math (RaTeX, MathJax fallback), and the features Obsidian gets from plugins — search, graph,
 backlinks, daily notes, templates, spellcheck, PDF export and more — built in as toggleable
 plugins.
 
