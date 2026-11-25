@@ -18,6 +18,7 @@ use gpui_kit::base::text::MarkdownNode;
 use gpui_kit::Hsla;
 use obsidilight_core::markdown::callouts::{parse_quote, Callout, QuoteItem};
 use obsidilight_core::markdown::{parse_blocks, parse_inline, parse_table, Align, BlockKind, Inline, InlineKind};
+use obsidilight_core::markdown::{blocks::continues_table, tables::is_table_start};
 use obsidilight_core::Selection;
 
 pub const ATOM: &str = "\u{FFFC}";
@@ -768,11 +769,14 @@ impl QuoteCtx<'_> {
         let text = self.text;
         // each line's range without its quote prefix
         let mut lines: Vec<Range<usize>> = Vec::new();
+        // lazy continuation lines (no `>`) cannot start or continue a table
+        let mut quoted: Vec<bool> = Vec::new();
         let mut ls = r.start;
         for raw in text[r.clone()].split('\n') {
             let full = ls..ls + raw.strip_suffix('\r').unwrap_or(raw).len();
             let pre = text[full.clone()].len() - text[full.clone()].trim_start_matches(|c: char| c == '>' || c == ' ' || c == '\t').len();
             lines.push(full.start + pre..full.end);
+            quoted.push(text[full.clone()].trim_start().starts_with('>'));
             ls += raw.len() + 1;
         }
         let line_start = |i: usize| text[..lines[i].start].rfind('\n').map_or(0, |p| p + 1).max(r.start);
@@ -780,14 +784,13 @@ impl QuoteCtx<'_> {
         let mut cur = r.start;
         let mut i = 0;
         while i + 1 < lines.len() {
-            let is_row = |j: usize| lines.get(j).is_some_and(|l| text[l.clone()].contains('|'));
-            let delim = obsidilight_core::markdown::tables::parse_table_lines(text, &lines[i..i + 2]).is_some();
-            if !(is_row(i) && delim) {
+            // GFM: header + matching delimiter row, then rows up to a blank line or another block
+            if !(quoted[i] && quoted[i + 1] && is_table_start(&text[lines[i].clone()], &text[lines[i + 1].clone()])) {
                 i += 1;
                 continue;
             }
             let mut j = i + 2;
-            while is_row(j) {
+            while j < lines.len() && quoted[j] && continues_table(&text[lines[j].clone()]) {
                 j += 1;
             }
             let (ts, te) = (line_start(i), lines[j - 1].end);
@@ -1354,6 +1357,23 @@ mod tests {
         // caret in the table (so in the callout): the callout's source, as for any callout
         let p = proj(t, t.find("| 1").unwrap() + 2);
         assert!(!matches!(p.blocks[0].node, ProjNode::Callout(_)));
+    }
+
+    #[test]
+    fn callout_tables_follow_gfm() {
+        let tables = |t: &str| {
+            let p = proj(t, t.len());
+            let ProjNode::Callout(c) = &p.blocks[0].node else { panic!("callout") };
+            let n = c.children.iter().filter(|n| matches!(n, ProjNode::Block(BlockNode::Table(_)))).count();
+            let cells: Vec<String> = p.leaves.iter().map(|(_, m)| t[m.src.clone()].to_string()).collect();
+            (n, cells)
+        };
+        // a quoted text line right below the table is a row; the table interrupts a paragraph
+        let (n, cells) = tables("> [!note] N\n> intro\n> | a | b |\n> |---|---|\n> after\n\nz");
+        assert_eq!(n, 1);
+        assert!(cells.iter().any(|c| c == "after"), "{cells:?}");
+        // header/delimiter cell counts differ: not a table
+        assert_eq!(tables("> [!note] N\n> | a | b |\n> |---|\n\nz").0, 0);
     }
 
     #[test]

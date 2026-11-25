@@ -6,6 +6,8 @@
 
 use std::ops::Range;
 
+use super::tables::is_table_start;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BlockKind {
     Frontmatter,
@@ -166,8 +168,15 @@ fn is_quote(s: &str) -> bool {
     let (ib, ic) = indent_of(s);
     ic <= 3 && s[ib..].starts_with('>')
 }
-fn is_table_row(s: &str) -> bool {
-    s.trim_start().starts_with('|')
+/// GFM: once a table has started, every following line is a row until a blank line or a line
+/// that starts another block (so plain text right below a table becomes a row).
+pub fn continues_table(s: &str) -> bool {
+    !s.trim().is_empty() && !interrupts(s)
+}
+
+/// A quote line without its `>` markers.
+fn quote_inner(s: &str) -> &str {
+    s.trim_start().trim_start_matches(|c: char| c == '>' || c == ' ' || c == '\t')
 }
 fn starts_math_block(s: &str) -> bool {
     s.trim_start().starts_with("$$")
@@ -175,10 +184,11 @@ fn starts_math_block(s: &str) -> bool {
 
 /// Does this line start a block that interrupts a paragraph or list item?
 /// CommonMark's lazy continuation: a plain text line right after a quote line that holds
-/// paragraph text continues that paragraph, so it stays in the quote (`^block-id` lines too).
+/// paragraph text continues that paragraph, so it stays in the quote (`^block-id` lines too,
+/// and pipe lines: a lazy line cannot start a table).
 fn lazy_quote_line(prev: &str, next: &str) -> bool {
-    let inner = prev.trim_start().trim_start_matches(|c: char| c == '>' || c == ' ' || c == '\t');
-    !next.trim().is_empty() && !interrupts(next) && !is_table_row(next) && !inner.is_empty() && fence_open(inner).is_none() && !inner.starts_with("$$")
+    let inner = quote_inner(prev);
+    !next.trim().is_empty() && !interrupts(next) && !inner.is_empty() && fence_open(inner).is_none() && !inner.starts_with("$$")
 }
 
 fn interrupts(s: &str) -> bool {
@@ -220,8 +230,10 @@ pub fn parse_blocks(text: &str) -> Vec<Block> {
     let ls = lines(text);
     let line = |i: usize| &text[ls[i].start..ls[i].end];
     let mut out = Vec::new();
+    // GFM: a table starts at a header line followed by a delimiter row with as many cells
+    let table_at = |k: usize| k + 1 < ls.len() && is_table_start(line(k), line(k + 1));
     let mut i = 0;
-    let push = |out: &mut Vec<Block>, kind, a: usize, b: usize, content: Range<usize>, marker: Range<usize>, indent| {
+    let push =|out: &mut Vec<Block>, kind, a: usize, b: usize, content: Range<usize>, marker: Range<usize>, indent| {
         out.push(Block { kind, range: ls[a].start..ls[b].end, content, marker, indent });
     };
     while i < ls.len() {
@@ -273,17 +285,29 @@ pub fn parse_blocks(text: &str) -> Vec<Block> {
             continue;
         }
         if is_quote(s) {
+            // a table inside the quote is not a paragraph, so no lazy line can follow it
+            let quoted = |k: usize| k < ls.len() && is_quote(line(k));
+            let starts = |k: usize| quoted(k + 1) && is_table_start(quote_inner(line(k)), quote_inner(line(k + 1)));
+            let mut in_table = starts(i);
             let mut j = i;
-            while j + 1 < ls.len() && (is_quote(line(j + 1)) || ends_in_open_display(&text[st..ls[j].end]) || lazy_quote_line(line(j), line(j + 1))) {
-                j += 1;
+            while j + 1 < ls.len() {
+                let n = j + 1;
+                if quoted(n) {
+                    in_table = (in_table && continues_table(quote_inner(line(n)))) || starts(n);
+                } else if ends_in_open_display(&text[st..ls[j].end]) {
+                    in_table = false;
+                } else if in_table || !lazy_quote_line(line(j), line(n)) {
+                    break;
+                }
+                j = n;
             }
             push(&mut out, BlockKind::Quote, i, j, st..ls[j].end, 0..0, 0);
             i = j + 1;
             continue;
         }
-        if is_table_row(s) {
-            let mut j = i;
-            while j + 1 < ls.len() && is_table_row(line(j + 1)) {
+        if list_item(s).is_none() && table_at(i) {
+            let mut j = i + 1;
+            while j + 1 < ls.len() && continues_table(line(j + 1)) {
                 j += 1;
             }
             push(&mut out, BlockKind::Table, i, j, st..ls[j].end, 0..0, 0);
@@ -295,7 +319,9 @@ pub fn parse_blocks(text: &str) -> Vec<Block> {
             // lazy / indented continuation lines belong to the item
             while j + 1 < ls.len() {
                 let n = line(j + 1);
-                if (n.trim().is_empty() || interrupts(n) || is_table_row(n)) && !ends_in_open_display(&text[st..ls[j].end]) {
+                // a table interrupts the item only when indented into it (a lazy line cannot start one)
+                let table = table_at(j + 1) && indent_of(n).1 > ic + 1;
+                if (n.trim().is_empty() || interrupts(n) || table) && !ends_in_open_display(&text[st..ls[j].end]) {
                     break;
                 }
                 j += 1;
@@ -308,7 +334,7 @@ pub fn parse_blocks(text: &str) -> Vec<Block> {
         let mut j = i;
         while j + 1 < ls.len() {
             let n = line(j + 1);
-            if (n.trim().is_empty() || interrupts(n) || is_table_row(n)) && !ends_in_open_display(&text[st..ls[j].end]) {
+            if (n.trim().is_empty() || interrupts(n) || table_at(j + 1)) && !ends_in_open_display(&text[st..ls[j].end]) {
                 break;
             }
             j += 1;
@@ -343,7 +369,7 @@ mod tests {
 
     #[test]
     fn kinds_in_order() {
-        let s = "---\na: 1\n---\n# Tìtolo\n\npara a\npara b\n- x\n  cont\n- [x] fatto\n2) due\n```c++\nint x;\n```\n$$\nx\n$$\n> q\n| a |\n***\n";
+        let s = "---\na: 1\n---\n# Tìtolo\n\npara a\npara b\n- x\n  cont\n- [x] fatto\n2) due\n```c++\nint x;\n```\n$$\nx\n$$\n> q\n\n| a |\n|---|\n***\n";
         let k: Vec<_> = kinds(s).into_iter().map(|(k, _)| k).collect();
         assert_eq!(
             k,
@@ -358,6 +384,7 @@ mod tests {
                 BlockKind::Code { lang: "c++".into(), closed: true },
                 BlockKind::MathBlock,
                 BlockKind::Quote,
+                BlockKind::Blank,
                 BlockKind::Table,
                 BlockKind::Rule,
                 BlockKind::Blank,
@@ -425,5 +452,43 @@ mod tests {
     fn hashtag_is_not_heading_and_dash_rule_is_not_list() {
         let k: Vec<_> = kinds("#tag\n---\n- - -").into_iter().map(|(k, _)| k).collect();
         assert_eq!(k, vec![BlockKind::Paragraph, BlockKind::Rule, BlockKind::Rule]);
+    }
+
+    /// Reference outputs from cmark-gfm 0.29 (`cmark-gfm -e table`).
+    #[test]
+    fn gfm_table_boundaries() {
+        let k = |s: &str| kinds(s).into_iter().map(|(k, s)| (k, s.to_string())).collect::<Vec<_>>();
+        let (t, p, b) = (BlockKind::Table, BlockKind::Paragraph, BlockKind::Blank);
+        // plain text right below a table is one more row; a blank line ends the table
+        assert_eq!(k("| a | b |\n|---|---|\n| 1 | 2 |\nafter\n\nbar"), vec![(t.clone(), "| a | b |\n|---|---|\n| 1 | 2 |\nafter".into()), (b.clone(), "".into()), (p.clone(), "bar".into())]);
+        // rows and header need no outer pipes
+        assert_eq!(k("a | b\n--- | ---\n1 | 2"), vec![(t.clone(), "a | b\n--- | ---\n1 | 2".into())]);
+        assert_eq!(k("| a | b |\n|---|---|\n1 | 2"), vec![(t.clone(), "| a | b |\n|---|---|\n1 | 2".into())]);
+        // a table interrupts a paragraph; its header is the line before the delimiter row
+        assert_eq!(k("p1\np2\n| a |\n|---|"), vec![(p.clone(), "p1\np2".into()), (t.clone(), "| a |\n|---|".into())]);
+        // not tables: cell count mismatch, no delimiter row, setext underline
+        assert_eq!(k("| a | b |\n|---|\n| 1 | 2 |"), vec![(p.clone(), "| a | b |\n|---|\n| 1 | 2 |".into())]);
+        assert_eq!(k("| a |\n| b |"), vec![(p.clone(), "| a |\n| b |".into())]);
+        assert_eq!(k("| a |\n---").into_iter().map(|(k, _)| k).collect::<Vec<_>>(), vec![p.clone(), BlockKind::Rule]);
+        // other blocks end a table
+        let ends = |s: &str| kinds(s).into_iter().map(|(k, _)| k).collect::<Vec<_>>();
+        assert_eq!(ends("| a |\n|---|\n# H"), vec![t.clone(), BlockKind::Heading { level: 1 }]);
+        assert_eq!(ends("| a |\n|---|\n- x"), vec![t.clone(), BlockKind::ListItem { ordered: false, task: None }]);
+        assert_eq!(ends("| a |\n|---|\n> q"), vec![t.clone(), BlockKind::Quote]);
+        assert_eq!(ends("| a |\n|---|\n***"), vec![t.clone(), BlockKind::Rule]);
+        assert_eq!(ends("| a |\n|---|\n```\nx\n```"), vec![t.clone(), BlockKind::Code { lang: String::new(), closed: true }]);
+        // a list item line is never a table header
+        assert_eq!(ends("- a | b\n--- | ---"), vec![BlockKind::ListItem { ordered: false, task: None }]);
+    }
+
+    #[test]
+    fn lazy_lines_cannot_start_a_table() {
+        let ends = |s: &str| kinds(s).into_iter().map(|(k, _)| k).collect::<Vec<_>>();
+        assert_eq!(ends("- x\n| a | b |\n|---|---|"), vec![BlockKind::ListItem { ordered: false, task: None }]);
+        assert_eq!(ends("- x\n  | a | b |\n  |---|---|"), vec![BlockKind::ListItem { ordered: false, task: None }, BlockKind::Table]);
+        assert_eq!(ends("> q\n| a | b |\n|---|---|"), vec![BlockKind::Quote]);
+        // a table in a quote takes no lazy lines; a quoted paragraph does
+        assert_eq!(ends("> | a | b |\n> |---|---|\n> | 1 | 2 |\nlazy"), vec![BlockKind::Quote, BlockKind::Paragraph]);
+        assert_eq!(ends("> q\n> | a |\n> |---|\n>\n> r\nlazy"), vec![BlockKind::Quote]);
     }
 }

@@ -82,6 +82,17 @@ fn delimiter_aligns(text: &str, cs: &[Range<usize>]) -> Option<Vec<Align>> {
         .collect()
 }
 
+/// GFM: does a table start at `header`, i.e. is `delim` a delimiter row with exactly as many
+/// cells as the header? A pipe-less run of dashes (`---`) is a setext underline, not a delimiter.
+pub fn is_table_start(header: &str, delim: &str) -> bool {
+    let d = delim.trim();
+    if !d.contains('|') && d.chars().all(|c| c == '-') {
+        return false;
+    }
+    let n = cells(header, 0..header.len()).len();
+    delimiter_aligns(delim, &cells(delim, 0..delim.len())).is_some_and(|a| a.len() == n)
+}
+
 /// Parses the table block `r`; None if its second line is not a delimiter row.
 pub fn parse_table(text: &str, r: Range<usize>) -> Option<Table> {
     let mut lines = Vec::new();
@@ -97,7 +108,7 @@ pub fn parse_table(text: &str, r: Range<usize>) -> Option<Table> {
 /// Parses a table from its line ranges (without line breaks), e.g. the lines of a table inside
 /// a callout with their `> ` prefixes left out. None if the second line is not a delimiter row.
 pub fn parse_table_lines(text: &str, lines: &[Range<usize>]) -> Option<Table> {
-    if lines.len() < 2 {
+    if lines.len() < 2 || !is_table_start(&text[lines[0].clone()], &text[lines[1].clone()]) {
         return None;
     }
     let header = cells(text, lines[0].clone());
@@ -130,6 +141,20 @@ mod tests {
         let tb = parse_table(t, 0..t.len()).unwrap();
         assert_eq!(tb.rows[1].iter().map(|r| &t[r.clone()]).collect::<Vec<_>>(), vec!["1", "2"]);
         assert!(parse_table("| a |\n| b |", 0..11).is_none());
+    }
+
+    #[test]
+    fn delimiter_must_match_header_cell_count() {
+        assert!(is_table_start("| a | b |", "|---|:-:|"));
+        assert!(is_table_start("foo", "|---|"));
+        assert!(is_table_start("foo", ":-"));
+        assert!(is_table_start("| a \\| b |", "|---|"), "escaped pipe is not a separator");
+        assert!(!is_table_start("| a | b |", "|---|"));
+        assert!(!is_table_start("foo", "-|-"));
+        assert!(!is_table_start("| a |", "---"), "setext underline");
+        assert!(!is_table_start("| a |", " --- "));
+        let t = "| a | b |\n|---|\n| 1 | 2 |";
+        assert!(parse_table(t, 0..t.len()).is_none());
     }
 
     #[test]
