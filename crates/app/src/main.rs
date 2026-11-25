@@ -36,6 +36,7 @@ mod vaults;
 mod watcher;
 mod welcome;
 mod workspace;
+mod workspace_state;
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -104,7 +105,8 @@ fn open_vault(arg: PathBuf, t0: Instant, cx: &mut App) {
         theme::apply(Some(window), cx);
         let ws = cx.new(|cx| workspace::Workspace::new(root, window, cx));
         window.on_next_frame(move |_, _| println!("READY {:.1}", t0.elapsed().as_secs_f64() * 1000.0));
-        let editor = note.map(|note| ws.update(cx, |ws, cx| ws.open_path(note, false, window, cx)));
+        // a note named on the command line opens on top of the remembered tabs
+        let editor = note.map(|note| ws.update(cx, |ws, cx| ws.open_path(note, true, window, cx)));
         script::start(editor.clone(), Some(ws.downgrade()), window, cx);
         if let Some(editor) = editor.filter(|_| std::env::var_os("TEPHRA_BENCH").is_some()) {
             bench::start(editor, window, cx);

@@ -179,6 +179,8 @@ pub enum EditorEvent {
     Saved(PathBuf),
     /// Ctrl+click on an internal link (`target` = link text without alias).
     OpenLink { target: String, new_tab: bool },
+    /// Live preview, source or reading view: the workspace saves it with the open note.
+    ModeChanged,
 }
 
 impl EventEmitter<EditorEvent> for Editor {}
@@ -574,6 +576,7 @@ impl Editor {
     pub fn toggle_mode(&mut self, mode: ViewMode, cx: &mut Context<Self>) {
         self.mode = if self.mode == mode { ViewMode::LivePreview } else { mode };
         self.autoscroll = true;
+        cx.emit(EditorEvent::ModeChanged);
         cx.notify();
     }
 

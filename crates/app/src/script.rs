@@ -14,6 +14,8 @@
 //!   ws-order                   the file list's rows in display order
 //!   clickk <key> [dx] [dy]     click a probed element's centre (plus an offset)
 //!   rclickk <key> [dx] [dy]    right-click it (context menus)
+//!   ws-panes                   the files open in each pane (`ws-panes`)
+//!   ws-modes                   each pane's active tab and its view mode
 //!   fonts                      theme font families + embedded-family resolution
 //!   dragk <from-key> <to-key> [dy] [ms] [shot.png]   drag from one probed element's centre to
 //!                             another's (dy: offset from the target's centre); then hold the
@@ -435,6 +437,23 @@ pub fn start(editor: Option<Entity<Editor>>, ws: Option<WeakEntity<crate::worksp
                             out.push(format!("{}{:?}", if id == focused { "*" } else { "" }, tabs));
                         }
                         println!("PANES {}", out.join(" | "));
+                    });
+                }
+                "ws-modes" => {
+                    // ws-modes: each pane's active tab and how it is shown (live, source, reading)
+                    let _ = ws.update(cx, |ws, cx| {
+                        let mut out = Vec::new();
+                        for id in ws.pane_ids() {
+                            let tabs = ws.pane_tabs(id);
+                            let active = ws.pane_active(id);
+                            let shown = match tabs.get(active.min(tabs.len().saturating_sub(1))) {
+                                Some(crate::workspace::Tab::Note(e)) => format!("{}:{}", tab_name(&crate::workspace::Tab::Note(e.clone()), &ws.vault.borrow().root.clone(), cx), e.read(cx).mode.id()),
+                                Some(t) => tab_name(t, &ws.vault.borrow().root.clone(), cx),
+                                None => "-".to_string(),
+                            };
+                            out.push(format!("{}{shown}", if id == ws.pane { "*" } else { "" }));
+                        }
+                        println!("MODES {}", out.join(" | "));
                     });
                 }
                 "graph-click" | "graph-move" => {

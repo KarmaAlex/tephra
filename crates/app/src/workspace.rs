@@ -27,6 +27,7 @@ use crate::file_drag::{self, TreeDrag};
 use crate::embeds::{SharedVault, Vault};
 use crate::plugins::api::{OpenAt, Side, ViewCtx, WorkspaceHandle};
 use crate::plugins::{run_action, MenuTarget, PluginHost};
+use crate::workspace_state::{Direction, Leaf, Node, Saved};
 
 actions!(workspace, [CloseTab, NextTab, PrevTab, NewNote, NewFolder, OpenInNewTab, RenameItem, DeleteItem, ToggleSidebar, ToggleRightSidebar, OpenSettings]);
 
@@ -41,6 +42,14 @@ pub fn bind_keys(_cx: &mut App) {}
 pub enum Layout {
     Pane(usize),
     Split { id: usize, axis: Axis, children: Vec<Layout> },
+}
+
+/// A pane of the saved workspace while it is being reopened: its id, the tab that was active and
+/// the tabs themselves.
+struct SavedPane {
+    id: usize,
+    active: usize,
+    leaves: Vec<Leaf>,
 }
 
 impl Layout {
@@ -175,6 +184,12 @@ pub struct Workspace {
     view_args: HashMap<String, String>,
     /// Recently opened notes, most recent first (vault paths; the quick switcher shows them).
     pub recent: Vec<String>,
+    /// What the last run left open (`.tephra/workspace.json`), reopened once the tree is built.
+    saved: Option<Saved>,
+    /// True while [`restore_layout`](Self::restore_layout) reopens it, so half of it is not saved.
+    restoring: bool,
+    /// The file's text as last read or written: an unchanged window writes nothing.
+    saved_json: RefCell<Option<String>>,
     /// Files shown in the tree after the last rebuild (for UI tests).
     pub tree_files: Vec<String>,
     /// The file list's order (saved as `fileSortOrder` in the app settings).
@@ -236,6 +251,9 @@ impl Workspace {
             right_view: None,
             view_args: HashMap::new(),
             recent: Vec::new(),
+            saved: None,
+            restoring: false,
+            saved_json: RefCell::new(None),
             tree_files: Vec::new(),
             sort: initial_sort_order(&root, cx),
             tree_order: Vec::new(),
@@ -259,7 +277,15 @@ impl Workspace {
         if std::env::var_os("TEPHRA_TIMING").is_some() {
             eprintln!("TIMING watcher {tw:.1} ms, tree {:.1} ms", t.elapsed().as_secs_f64() * 1000.0 - tw);
         }
-        window.focus(&this.focus, cx);
+        // the notes the last run had open, in their panes
+        let t = std::time::Instant::now();
+        this.restore_layout(window, cx);
+        if std::env::var_os("TEPHRA_TIMING").is_some() {
+            eprintln!("TIMING restore {:.1} ms", t.elapsed().as_secs_f64() * 1000.0);
+        }
+        if this.tabs.is_empty() {
+            window.focus(&this.focus, cx);
+        }
         this
     }
 
@@ -280,6 +306,11 @@ impl Workspace {
     /// The tabs of pane `id`.
     pub fn pane_tabs(&self, id: usize) -> Vec<Tab> {
         if id == self.pane { self.tabs.clone() } else { self.parked.get(&id).map(|p| p.0.clone()).unwrap_or_default() }
+    }
+
+    /// The active tab of pane `id`.
+    pub fn pane_active(&self, id: usize) -> usize {
+        if id == self.pane { self.active } else { self.parked.get(&id).map(|p| p.1).unwrap_or(0) }
     }
 
     /// Pane ids in layout order.
@@ -303,6 +334,7 @@ impl Workspace {
             window.focus(&f, cx);
         }
         self.select_active_in_tree(cx);
+        self.save_layout(cx);
         cx.notify();
     }
 
@@ -320,6 +352,7 @@ impl Workspace {
         if let Some(p) = note {
             self.open_path(p, true, window, cx);
         }
+        self.save_layout(cx);
         cx.notify();
     }
 
@@ -347,6 +380,7 @@ impl Workspace {
         self.focus_pane(next, window, cx);
         self.parked.remove(&gone);
         self.layout.remove(gone);
+        self.save_layout(cx);
         cx.notify();
     }
 
@@ -373,7 +407,7 @@ impl Workspace {
             .child(self.render_file_menu(cx))
             .child(crate::ui::icon_button("ribbon-files", gpui_kit::assets::IconName::PanelLeft).tooltip("Left sidebar (Ctrl+Shift+B)").on_click(cx.listener(|ws, _, _, cx| {
                 ws.sidebar = !ws.sidebar;
-                ws.save_layout();
+                ws.save_layout(cx);
                 cx.notify();
             })))
             .children(items.into_iter().enumerate().map(|(i, it)| {
@@ -387,7 +421,7 @@ impl Workspace {
             .when(has_views, |d| {
                 d.child(crate::ui::icon_button("ribbon-right", gpui_kit::assets::IconName::PanelRight).tooltip("Right sidebar").on_click(cx.listener(|ws, _, _, cx| {
                     ws.right_sidebar = !ws.right_sidebar;
-                    ws.save_layout();
+                    ws.save_layout(cx);
                     cx.notify();
                 })))
             })
@@ -465,7 +499,7 @@ impl Workspace {
                     let id = v.id.clone();
                     crate::ui::icon_button(("right-view", i), v.icon).selected(i == ix).tooltip(v.title.clone()).on_click(cx.listener(move |ws, _, _, cx| {
                         ws.right_view = Some(id.clone());
-                        ws.save_layout();
+                        ws.save_layout(cx);
                         cx.notify();
                     }))
                 })))
@@ -509,7 +543,7 @@ impl Workspace {
         } else {
             self.right_sidebar = !self.right_sidebar;
         }
-        self.save_layout();
+        self.save_layout(cx);
         cx.notify();
     }
 
@@ -545,7 +579,7 @@ impl Workspace {
     pub(crate) fn reveal_active(&mut self, cx: &mut Context<Self>) {
         self.sidebar = true;
         self.left_view = None;
-        self.save_layout();
+        self.save_layout(cx);
         self.select_active_in_tree(cx);
         cx.notify();
     }
@@ -844,6 +878,7 @@ impl Workspace {
         self.tabs.push(Tab::View(ViewTab { kind: id.to_string(), arg, title: title.into(), view, focus: focus.clone() }));
         self.active = self.tabs.len() - 1;
         window.focus(&focus, cx);
+        self.save_layout(cx);
         cx.notify();
     }
 
@@ -878,52 +913,190 @@ impl Workspace {
                 self.right_view = Some(id.to_string());
             }
         }
-        self.save_layout();
+        self.save_layout(cx);
         cx.notify();
     }
 
     fn note_recent(&mut self, cx: &mut Context<Self>) {
+        if self.restoring {
+            return; // the reopened notes are the ones already at the top of the list
+        }
         let Some(e) = self.active_editor() else { return };
         let rel = self.rel(&e.read(cx).path);
         self.recent.retain(|r| *r != rel);
         self.recent.insert(0, rel);
         self.recent.truncate(50);
-        self.save_layout();
+        self.save_layout(cx);
     }
 
     // ---- layout (`.tephra/workspace.json`) --------------------------------------
+    //
+    // What the window has open, in the shape Obsidian's `.obsidian/workspace.json` uses (that
+    // file stays read-only): splits of tab panes whose leaves are notes. See `workspace_state`.
 
     fn layout_path(&self) -> PathBuf {
         self.vault.borrow().root.join(".tephra/workspace.json")
     }
 
     fn load_layout(&mut self) {
-        let Some(v) = std::fs::read_to_string(self.layout_path()).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()) else { return };
+        let Some(text) = std::fs::read_to_string(self.layout_path()).ok() else { return };
+        let Some(v) = serde_json::from_str::<serde_json::Value>(&text).ok() else { return };
         let s = |k: &str| v.get(k).and_then(|x| x.as_str()).map(String::from);
         self.left_view = s("leftView");
         self.right_view = s("rightView");
         self.sidebar = v.get("leftSidebar").and_then(|x| x.as_bool()).unwrap_or(true);
         self.right_sidebar = v.get("rightSidebar").and_then(|x| x.as_bool()).unwrap_or(false);
         self.recent = v.get("recent").and_then(|x| x.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
+        self.saved = Some(Saved {
+            main: v.get("main").and_then(crate::workspace_state::from_json),
+            active: v.get("active").and_then(|x| x.as_u64()).unwrap_or(0) as usize,
+        });
+        *self.saved_json.borrow_mut() = Some(text);
     }
 
-    fn save_layout(&self) {
+    fn save_layout(&self, cx: &App) {
         // benchmarks and UI tests run on throwaway copies, but never write while benchmarking
-        if std::env::var_os("TEPHRA_BENCH").is_some() {
+        if std::env::var_os("TEPHRA_BENCH").is_some() || self.restoring {
             return;
         }
-        let v = serde_json::json!({
+        let mut v = serde_json::json!({
             "leftSidebar": self.sidebar, "leftView": self.left_view,
             "rightSidebar": self.right_sidebar, "rightView": self.right_view,
             "recent": self.recent,
         });
+        // the panes and their tabs, when anything is open (an empty window has nothing to save)
+        if let Some(main) = self.node_of_layout(&self.layout, cx) {
+            v["main"] = crate::workspace_state::to_json(&main);
+            v["active"] = serde_json::json!(self.pane_ids().iter().position(|p| *p == self.pane).unwrap_or(0));
+        }
+        // the window changes on every click in a pane; only a real change reaches the disk
+        let text = serde_json::to_string_pretty(&v).unwrap_or_default();
+        if self.saved_json.borrow().as_deref() == Some(text.as_str()) {
+            return;
+        }
         let p = self.layout_path();
         if let Some(d) = p.parent() {
             let _ = std::fs::create_dir_all(d);
         }
         let tmp = p.with_extension("json.tephra-tmp");
-        if std::fs::write(&tmp, serde_json::to_string_pretty(&v).unwrap_or_default()).is_ok() {
+        if std::fs::write(&tmp, &text).is_ok() {
             let _ = std::fs::rename(&tmp, &p);
+            *self.saved_json.borrow_mut() = Some(text);
+        }
+    }
+
+    /// The arrangement as saved: each pane's tabs, empty panes left out.
+    fn node_of_layout(&self, layout: &Layout, cx: &App) -> Option<Node> {
+        match layout {
+            Layout::Pane(id) => {
+                let (tabs, active) = if *id == self.pane { (self.tabs.clone(), self.active) } else { self.parked.get(id).cloned().unwrap_or_default() };
+                let leaves: Vec<Leaf> = tabs.iter().filter_map(|t| self.leaf_of(t, cx)).collect();
+                if leaves.is_empty() {
+                    return None;
+                }
+                Some(Node::Tabs { active: active.min(leaves.len() - 1), leaves })
+            }
+            Layout::Split { axis, children, .. } => {
+                let children: Vec<Node> = children.iter().filter_map(|c| self.node_of_layout(c, cx)).collect();
+                let direction = match axis {
+                    Axis::Horizontal => Direction::Horizontal,
+                    Axis::Vertical => Direction::Vertical,
+                };
+                match children.len() {
+                    0 => None,
+                    1 => children.into_iter().next(),
+                    _ => Some(Node::Split { direction, children }),
+                }
+            }
+        }
+    }
+
+    fn leaf_of(&self, tab: &Tab, cx: &App) -> Option<Leaf> {
+        Some(match tab {
+            Tab::Note(e) => {
+                let e = e.read(cx);
+                Leaf::File { path: self.rel(&e.path), mode: e.mode }
+            }
+            Tab::View(v) => Leaf::View { view: v.kind.clone(), arg: v.arg.clone() },
+        })
+    }
+
+    /// The layout tree a saved node names, handing out pane ids and collecting each pane's tabs
+    /// (and its active one).
+    fn layout_of(node: &Node, next: &mut usize, panes: &mut Vec<SavedPane>) -> Option<Layout> {
+        let id = *next;
+        *next += 1;
+        match node {
+            Node::Tabs { active, leaves } => {
+                panes.push(SavedPane { id, active: *active, leaves: leaves.clone() });
+                Some(Layout::Pane(id))
+            }
+            Node::Split { direction, children } => {
+                let axis = match direction {
+                    Direction::Horizontal => Axis::Horizontal,
+                    Direction::Vertical => Axis::Vertical,
+                };
+                let children: Vec<Layout> = children.iter().filter_map(|c| Self::layout_of(c, next, panes)).collect();
+                match children.len() {
+                    0 => None,
+                    1 => children.into_iter().next(),
+                    _ => Some(Layout::Split { id, axis, children }),
+                }
+            }
+        }
+    }
+
+    /// Reopens the notes, images and plugin views the last run had open, in the same panes, with
+    /// the same active tab and view mode. Files that are gone are dropped (and are then saved
+    /// away); the bench and the very first start (no file) open nothing.
+    fn restore_layout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(saved) = self.saved.take() else { return };
+        if std::env::var_os("TEPHRA_BENCH").is_some() {
+            return; // the benchmark always measures the same thing: one note, opened by its argument
+        }
+        let Some(mut main) = saved.main else { return };
+        let root = self.vault.borrow().root.clone();
+        crate::workspace_state::retain_existing(&mut main, &root);
+        if main.is_empty() {
+            return;
+        }
+        let mut panes: Vec<SavedPane> = Vec::new();
+        let mut next = 0;
+        let Some(layout) = Self::layout_of(&main, &mut next, &mut panes) else { return };
+        let Some(first) = panes.first().map(|p| p.id) else { return };
+        self.restoring = true;
+        // the first pane is the focused one; the others wait in `parked` until they are focused
+        self.layout = layout;
+        self.pane = first;
+        self.tabs = Vec::new();
+        self.active = 0;
+        self.parked = panes[1..].iter().map(|p| (p.id, (Vec::new(), 0))).collect();
+        self.next_pane = next + 2;
+        for p in &panes {
+            self.focus_pane(p.id, window, cx);
+            for leaf in &p.leaves {
+                self.restore_leaf(leaf, window, cx);
+            }
+            self.active = p.active.min(self.tabs.len().saturating_sub(1));
+        }
+        // the pane that had the focus
+        let pane = panes.get(saved.active.min(panes.len() - 1)).map(|p| p.id).unwrap_or(0);
+        self.focus_pane(pane, window, cx);
+        self.restoring = false;
+        self.save_layout(cx);
+        cx.notify();
+    }
+
+    fn restore_leaf(&mut self, leaf: &Leaf, window: &mut Window, cx: &mut Context<Self>) {
+        let root = self.vault.borrow().root.clone();
+        match leaf {
+            // one tab each: the restored tabs are the pane's own
+            Leaf::File { path, mode } => {
+                if let Some(e) = self.open_file(root.join(path), true, window, cx) {
+                    e.update(cx, |e, _| e.mode = *mode);
+                }
+            }
+            Leaf::View { view, arg } => self.open_view(view, arg.clone(), window, cx),
         }
     }
 
@@ -935,6 +1108,7 @@ impl Workspace {
             window.focus(&f, cx);
             self.select_active_in_tree(cx);
             self.note_recent(cx);
+            self.save_layout(cx);
             cx.notify();
         }
     }
@@ -959,6 +1133,7 @@ impl Workspace {
             let a = self.active;
             self.activate(a, window, cx);
         }
+        self.save_layout(cx);
         cx.notify();
     }
 
@@ -1058,6 +1233,7 @@ impl Workspace {
                     }
                 }
             }
+            EditorEvent::ModeChanged => self.save_layout(cx),
             EditorEvent::OpenLink { target, new_tab } => {
                 let from = editor.read(cx).path.clone();
                 let sub = target.split_once('#').map(|(_, s)| s.to_string());
@@ -1231,7 +1407,7 @@ impl Workspace {
                 *r = n.clone();
             }
         }
-        self.save_layout();
+        self.save_layout(cx);
         let listeners: Vec<_> = cx.try_global::<PluginHost>().map(|h| h.reg.vault_listeners.iter().map(|(_, l)| l.clone()).collect()).unwrap_or_default();
         for l in listeners {
             l.renamed(old, &new, &moves, cx);
@@ -1413,7 +1589,7 @@ impl Workspace {
         self.vault.borrow_mut().index = fresh;
         let prefix = format!("{rel}/");
         self.recent.retain(|r| r != rel && !r.starts_with(&prefix));
-        self.save_layout();
+        self.save_layout(cx);
         let listeners: Vec<_> = cx.try_global::<PluginHost>().map(|h| h.reg.vault_listeners.iter().map(|(_, l)| l.clone()).collect()).unwrap_or_default();
         for l in listeners {
             l.deleted(rel, cx);
@@ -1599,14 +1775,14 @@ impl Workspace {
         let theme = cx.theme().clone();
         let mut tabs = vec![crate::ui::icon_button("left-files", IconName::Folder).selected(current.is_none()).tooltip("Files").on_click(cx.listener(|ws, _, _, cx| {
             ws.left_view = None;
-            ws.save_layout();
+            ws.save_layout(cx);
             cx.notify();
         }))];
         for (i, v) in views.iter().enumerate() {
             let id = v.id.clone();
             tabs.push(crate::ui::icon_button(("left-view", i), v.icon).selected(current == Some(i)).tooltip(v.title.clone()).on_click(cx.listener(move |ws, _, _, cx| {
                 ws.left_view = Some(id.clone());
-                ws.save_layout();
+                ws.save_layout(cx);
                 cx.notify();
             })));
         }
@@ -2020,12 +2196,12 @@ impl Render for Workspace {
             .on_action(cx.listener(|_, _: &OpenSettings, w, cx| crate::settings_ui::open(w, cx)))
             .on_action(cx.listener(|ws, _: &ToggleRightSidebar, _, cx| {
                 ws.right_sidebar = !ws.right_sidebar;
-                ws.save_layout();
+                ws.save_layout(cx);
                 cx.notify();
             }))
             .on_action(cx.listener(|ws, _: &ToggleSidebar, _, cx| {
                 ws.sidebar = !ws.sidebar;
-                ws.save_layout();
+                ws.save_layout(cx);
                 cx.notify();
             }))
             .on_action(cx.listener(|ws, _: &NewNote, w, cx| {

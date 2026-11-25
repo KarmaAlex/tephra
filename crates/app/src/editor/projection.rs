@@ -1016,6 +1016,27 @@ pub enum ViewMode {
     Reading,
 }
 
+impl ViewMode {
+    /// The id saved in the workspace file (`.tephra/workspace.json`).
+    pub fn id(self) -> &'static str {
+        match self {
+            ViewMode::LivePreview => "live",
+            ViewMode::Source => "source",
+            ViewMode::Reading => "reading",
+        }
+    }
+
+    /// The mode an id names; also reads Obsidian's `preview` (its old name for reading view).
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "live" => Some(ViewMode::LivePreview),
+            "source" => Some(ViewMode::Source),
+            "reading" | "preview" => Some(ViewMode::Reading),
+            _ => None,
+        }
+    }
+}
+
 pub struct ProjectionInput<'a> {
     pub text: &'a str,
     pub sel: Selection,
