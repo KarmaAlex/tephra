@@ -116,7 +116,7 @@ fn appearance_page(cx: &App) -> SettingPage {
     let bundled: Vec<&str> = crate::theme::BUILTIN_THEMES.iter().map(|(n, _)| *n).collect();
     let mut themes: Vec<(SharedString, SharedString)> = vec![("".into(), "Default".into())];
     themes.extend(t.themes.iter().map(|n| {
-        let label = if bundled.contains(&n.as_str()) { format!("{n} (built-in)") } else { n.clone() };
+        let label = if bundled.contains(&n.as_str()) { format!("{n}") } else { n.clone() };
         (SharedString::from(n.clone()), SharedString::from(label))
     }));
     let mut items = vec![
