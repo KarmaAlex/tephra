@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::setting::{SettingGroup, SettingItem, SettingPage};
-use gpui_kit::component::{h_flex, ActiveTheme as _, Sizable as _, WindowExt as _};
+use gpui_kit::component::{h_flex, v_flex, ActiveTheme as _, Sizable as _, WindowExt as _};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -142,23 +142,46 @@ fn row(id: &str, name: &str, cx: &App) -> AnyElement {
             }))
     });
     let (id_rec, id_reset) = (id.clone(), id.clone());
+    // the same two columns as every other setting: the command and its warnings on the left, its
+    // hotkeys right-aligned in the field column (wrapping onto a second line when there are many)
     h_flex()
         .w_full()
-        .gap_2()
-        .py_1()
-        .child(div().flex_1().min_w_0().text_sm().child(name.to_string()).when(!clashes.is_empty(), |d| d.child(div().text_xs().text_color(theme.danger).child(format!("Same hotkey as: {}", clashes.join(", "))))))
-        .children(chips)
-        .child(if rec {
-            div().text_xs().text_color(theme.primary).child("Press keys…").into_any_element()
-        } else {
-            Button::new(SharedString::from(format!("rec-{id}"))).ghost().xsmall().label("+").tooltip("Add a hotkey").on_click(move |_, _, cx| {
-                cx.global_mut::<Recording>().0 = Some(id_rec.to_string());
-                cx.refresh_windows();
-            }).into_any_element()
-        })
-        .when(overridden, |d| {
-            d.child(Button::new(SharedString::from(format!("reset-{id}"))).ghost().xsmall().label("Reset").tooltip("Back to the default").on_click(move |_, _, cx| PluginHost::set_hotkeys(cx, &id_reset, None)))
-        })
+        .items_start()
+        .gap_6()
+        .child(
+            v_flex()
+                .flex_1()
+                .min_w_0()
+                .gap_0p5()
+                .child(div().text_sm().child(name.to_string()))
+                .when(!clashes.is_empty(), |d| d.child(div().text_xs().text_color(theme.danger).child(format!("Same hotkey as: {}", clashes.join(", "))))),
+        )
+        .child(
+            div()
+                .relative()
+                .w(crate::ui::r(crate::settings_row::FIELD))
+                .flex_none()
+                .child(
+                    h_flex()
+                        .w_full()
+                        .flex_wrap()
+                        .justify_end()
+                        .gap_1()
+                        .children(chips)
+                        .child(if rec {
+                            div().text_xs().text_color(theme.primary).child("Press keys…").into_any_element()
+                        } else {
+                            Button::new(SharedString::from(format!("rec-{id}"))).ghost().xsmall().label("+").tooltip("Add a hotkey").on_click(move |_, _, cx| {
+                                cx.global_mut::<Recording>().0 = Some(id_rec.to_string());
+                                cx.refresh_windows();
+                            }).into_any_element()
+                        })
+                        .when(overridden, |d| {
+                            d.child(Button::new(SharedString::from(format!("reset-{id}"))).ghost().xsmall().label("Reset").tooltip("Back to the default").on_click(move |_, _, cx| PluginHost::set_hotkeys(cx, &id_reset, None)))
+                        }),
+                )
+                .children(crate::script::probe(move || format!("hotkeys:{id}:field"), cx)),
+        )
         .into_any_element()
 }
 

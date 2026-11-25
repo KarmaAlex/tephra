@@ -29,6 +29,7 @@ mod math;
 mod moment;
 mod plugins;
 mod script;
+mod settings_row;
 mod settings_ui;
 mod theme;
 mod ui;

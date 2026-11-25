@@ -44,7 +44,7 @@ export-check: $(BUNDLES) ## every fixture note converts to Typst and compiles to
 	cargo test --release -p tephra fixture_notes_export -- --ignored --nocapture
 
 ui-smoke: build  ## scripted UI tests (need a display; windows open briefly)
-	for t in smoke links watcher idle snippets assist academic m4 tasks hotkeys panes sync toolbar pdf daily composer recovery preview graph theme files focus toolbar-layout move firstline caret emptyfolder fonts vaults mathpreview sort hblocks workspace; do tests/ui/$$t.sh || exit 1; done
+	for t in smoke links watcher idle snippets assist academic m4 tasks hotkeys panes sync toolbar pdf daily composer recovery preview graph theme settings files focus toolbar-layout move firstline caret emptyfolder fonts vaults mathpreview sort hblocks workspace; do tests/ui/$$t.sh || exit 1; done
 
 # --- packages (all land in dist/) -------------------------------------------------------------------
 dist: arch deb windows ## all packages: Arch .pkg.tar.zst, Debian/Ubuntu .deb, Windows .zip
